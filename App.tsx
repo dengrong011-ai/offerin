@@ -3,13 +3,20 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { analyzeResumeStream, translateResume, FileData, extractTextFromFile } from './services/geminiService';
 import MarkdownRenderer from './components/MarkdownRenderer';
 import InterviewChat from './components/InterviewChat';
-import { FileText, Target, Send, Loader2, RefreshCw, ChevronRight, Upload, X, Paperclip, Image as ImageIcon, File, AlertCircle, PenTool, ArrowLeft, Maximize2, Minimize2, ZoomIn, ZoomOut, CheckCircle2, AlertTriangle, AlignJustify, Languages, Globe, ArrowRight, Sparkles, MessageSquare, Mic, Play, Users } from 'lucide-react';
+import { LoginModal, UserAvatar } from './components/LoginModal';
+import { useAuth } from './contexts/AuthContext';
+import { checkUsageLimit, logUsage } from './services/authService';
+import { FileText, Target, Send, Loader2, RefreshCw, ChevronRight, Upload, X, Paperclip, Image as ImageIcon, File, AlertCircle, PenTool, ArrowLeft, Maximize2, Minimize2, ZoomIn, ZoomOut, CheckCircle2, AlertTriangle, AlignJustify, Languages, Globe, ArrowRight, Sparkles, MessageSquare, Mic, Play, Users, Lock } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 
 type Step = 'INPUT' | 'UPLOAD' | 'ANALYSIS' | 'EDITOR' | 'ENGLISH_VERSION' | 'INTERVIEW';
 
 const App: React.FC = () => {
+  const { user, profile } = useAuth();
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [usageLimitError, setUsageLimitError] = useState<string | null>(null);
+  
   const [step, setStep] = useState<Step>('INPUT');
   
   const [jd, setJd] = useState('');
@@ -247,6 +254,19 @@ const App: React.FC = () => {
       return;
     }
 
+    // 检查登录状态
+    if (!user) {
+      setShowLoginModal(true);
+      return;
+    }
+
+    // 检查使用限制
+    const limitCheck = await checkUsageLimit(user.id, 'diagnosis');
+    if (!limitCheck.allowed) {
+      setUsageLimitError(`今日免费次数已用完（${limitCheck.limit}次/天）。升级 VIP 解锁无限使用！`);
+      return;
+    }
+
     // 取消之前的请求（如果有）
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -283,7 +303,10 @@ const App: React.FC = () => {
             setResumeContent(prev => prev + chunk);
           },
           onDiagnosisComplete: (content) => {
-            // 诊断完成
+            // 诊断完成，记录使用
+            if (user) {
+              logUsage(user.id, 'diagnosis');
+            }
           },
           onResumeComplete: (content) => {
             // 简历完成
@@ -329,7 +352,7 @@ const App: React.FC = () => {
         setIsAnalyzing(false);
       }
     }
-  }, [jd, resume, aspiration, jdFile, resumeFile]);
+  }, [jd, resume, aspiration, jdFile, resumeFile, user]);
 
   const generateTranslation = async () => {
     if (!editableResume) return;
@@ -623,9 +646,49 @@ const App: React.FC = () => {
                 开始优化
               </button>
             )}
+            <UserAvatar onLoginClick={() => setShowLoginModal(true)} />
           </div>
         </div>
       </header>
+
+      {/* 登录弹窗 */}
+      <LoginModal isOpen={showLoginModal} onClose={() => setShowLoginModal(false)} />
+
+      {/* 使用限制提示弹窗 */}
+      {usageLimitError && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setUsageLimitError(null)} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center">
+                <Lock className="text-amber-600" size={24} />
+              </div>
+              <div>
+                <h3 className="font-semibold text-zinc-900">使用次数已达上限</h3>
+                <p className="text-sm text-zinc-500">升级会员解锁更多功能</p>
+              </div>
+            </div>
+            <p className="text-zinc-600 text-sm mb-6">{usageLimitError}</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setUsageLimitError(null)}
+                className="flex-1 px-4 py-2.5 border border-zinc-200 rounded-lg text-sm font-medium text-zinc-600 hover:bg-zinc-50 transition-colors"
+              >
+                稍后再说
+              </button>
+              <button
+                onClick={() => {
+                  setUsageLimitError(null);
+                  // TODO: 跳转到升级页面
+                }}
+                className="flex-1 px-4 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 rounded-lg text-sm font-medium text-white hover:from-amber-600 hover:to-orange-600 transition-colors"
+              >
+                升级 VIP
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* --- HERO --- */}
       {step === 'INPUT' && (
