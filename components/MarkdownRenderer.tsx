@@ -150,18 +150,31 @@ const MarkdownRenderer: React.FC<Props> = ({
     html = html.replace(/\*{2,4}(?:\s*\*{2,4})*/g, '');
     html = html.replace(/匹配评分[:：]\s*$/gm, '');
 
-    // === 2. 评分卡片（保持特殊样式）===
+    // === 2. 评分卡片（按分数范围显示不同颜色）===
     html = html.replace(/(?:匹配评分[:：]\s*)?(\d+)\/100/g, (match, score) => {
       const numScore = parseInt(score);
-      let barColor = '#ef4444';
-      if (numScore >= 80) barColor = '#18181b';
-      else if (numScore >= 60) barColor = '#71717a';
+      let barColor = '#ef4444';  // 红色 - <70分
+      let bgColor = '#fef2f2';   // 浅红背景
+      let borderColor = '#fecaca'; // 红色边框
+      let scoreColor = '#ef4444'; // 分数红色
+      
+      if (numScore >= 85) {
+        barColor = '#16a34a';    // 绿色
+        bgColor = '#f0fdf4';     // 浅绿背景
+        borderColor = '#bbf7d0'; // 绿色边框
+        scoreColor = '#16a34a';  // 分数绿色
+      } else if (numScore >= 70) {
+        barColor = '#ca8a04';    // 黄色
+        bgColor = '#fefce8';     // 浅黄背景
+        borderColor = '#fef08a'; // 黄色边框
+        scoreColor = '#ca8a04';  // 分数琥珀色
+      }
 
       return `
-        <div style="margin: 16px 0; padding: 16px; background: #fafafa; border: 1px solid #e4e4e7; border-radius: 6px;">
+        <div style="margin: 16px 0; padding: 16px; background: ${bgColor}; border: 1px solid ${borderColor}; border-radius: 6px;">
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
             <span style="font-size: 12px; font-weight: 500; color: #71717a; text-transform: uppercase; letter-spacing: 0.05em;">匹配评分</span>
-            <span style="font-size: 20px; font-weight: 700; color: ${headingColor};">${score}<span style="font-size: 12px; color: #a1a1aa; font-weight: 400;">/100</span></span>
+            <span style="font-size: 20px; font-weight: 700; color: ${scoreColor};">${score}<span style="font-size: 12px; color: #a1a1aa; font-weight: 400;">/100</span></span>
           </div>
           <div style="width: 100%; height: 4px; background: #e4e4e7; border-radius: 2px; overflow: hidden;">
             <div style="height: 100%; background: ${barColor}; width: ${score}%; transition: width 1s ease-out;"></div>
@@ -178,6 +191,12 @@ const MarkdownRenderer: React.FC<Props> = ({
     html = html.replace(/^###\s+(.+)$/gm, `<div style="margin-top: 20px; margin-bottom: 8px;"><span style="font-size: ${fontSize}; font-weight: 700; color: ${headingColor};">$1</span></div>`);
 
     // === 4. 列表处理 ===
+    // Gap 标题特殊处理 - 加粗显示 (匹配 "* Gap 1: xxx" 或 "- Gap 1: xxx" 格式)
+    html = html.replace(/^[-*]\s+\*\*(Gap\s*\d+)\*\*\s*[:：]\s*(.+)$/gm, `<div style="display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; margin-top: 12px; font-size: ${fontSize}; line-height: ${lineHeight}; color: ${textColor};"><span style="margin-top: 8px; width: 4px; height: 4px; border-radius: 50%; background: #a1a1aa; flex-shrink: 0;"></span><span style="flex: 1;"><strong style="font-weight: 700; color: ${headingColor};">$1：</strong>$2</span></div>`);
+    
+    // Gap 标题 - 纯文本格式 (匹配 "* Gap 1: xxx" 或 "- Gap 1：xxx" 无加粗)
+    html = html.replace(/^[-*]\s+(Gap\s*\d+)\s*[:：]\s*(.+)$/gm, `<div style="display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; margin-top: 12px; font-size: ${fontSize}; line-height: ${lineHeight}; color: ${textColor};"><span style="margin-top: 8px; width: 4px; height: 4px; border-radius: 50%; background: #a1a1aa; flex-shrink: 0;"></span><span style="flex: 1;"><strong style="font-weight: 700; color: ${headingColor};">$1：</strong>$2</span></div>`);
+
     // 有序列表
     html = html.replace(/^(\d+)\.\s+(.+)$/gm, `<div style="display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; font-size: ${fontSize}; line-height: ${lineHeight}; color: ${textColor};"><span style="font-weight: 700; color: ${headingColor}; flex-shrink: 0;">$1.</span><span style="flex: 1;">$2</span></div>`);
     
@@ -191,17 +210,23 @@ const MarkdownRenderer: React.FC<Props> = ({
     // 行内代码
     html = html.replace(/`([^`]+)`/g, `<code style="background: #f4f4f5; color: ${headingColor}; padding: 2px 6px; border-radius: 3px; font-size: ${fontSize}; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;">$1</code>`);
 
-    // 简历亮点标签 (Highlights) - 绿色，放在前面优先匹配
-    html = html.replace(/\*\*(简历亮点[^*]*)\*\*/g, `<span style="display: inline-block; padding: 2px 8px; background: #f0fdf4; color: #15803d; border-radius: 4px; font-size: ${fontSize}; font-weight: 700; border: 1px solid #bbf7d0; margin: 4px 0;">$1</span>`);
+    // 简历亮点标签 - 支持多种格式（加粗格式）
+    html = html.replace(/\*\*(简历亮点[^*]*)\*\*/g, `<span style="display: inline-flex; align-items: center; gap: 4px; color: #ca8a04; font-size: ${fontSize}; font-weight: 700; margin: 4px 0;">✨ $1</span>`);
     
-    // 潜在不足标签 (Lowlights) - 橙色（不是红色，因为不是真的硬伤）
-    html = html.replace(/\*\*(潜在不足[^*]*)\*\*/g, `<span style="display: inline-block; padding: 2px 8px; background: #fff7ed; color: #c2410c; border-radius: 4px; font-size: ${fontSize}; font-weight: 700; border: 1px solid #fed7aa; margin: 4px 0;">$1</span>`);
+    // 简历亮点标签 - 支持纯文本格式（非加粗）
+    html = html.replace(/(简历亮点\s*\(Highlights\)\s*[:：])/g, `<span style="display: inline-flex; align-items: center; gap: 4px; color: #ca8a04; font-size: ${fontSize}; font-weight: 700; margin: 8px 0 4px 0;">✨ $1</span>`);
+    
+    // 潜在不足标签 - 支持多种格式（加粗格式）
+    html = html.replace(/\*\*(潜在不足[^*]*)\*\*/g, `<span style="display: inline-flex; align-items: center; gap: 4px; color: #ca8a04; font-size: ${fontSize}; font-weight: 700; margin: 4px 0;">⚠️ $1</span>`);
+    
+    // 潜在不足标签 - 支持纯文本格式（非加粗）
+    html = html.replace(/(潜在不足\s*\(Lowlights\)\s*[:：])/g, `<span style="display: inline-flex; align-items: center; gap: 4px; color: #ca8a04; font-size: ${fontSize}; font-weight: 700; margin: 8px 0 4px 0;">⚠️ $1</span>`);
     
     // 兼容旧版：硬伤标签 -> 潜在不足样式
-    html = html.replace(/\*\*(硬伤[^*]*)\*\*/g, `<span style="display: inline-block; padding: 2px 8px; background: #fff7ed; color: #c2410c; border-radius: 4px; font-size: ${fontSize}; font-weight: 700; border: 1px solid #fed7aa; margin: 4px 0;">$1</span>`);
+    html = html.replace(/\*\*(硬伤[^*]*)\*\*/g, `<span style="display: inline-flex; align-items: center; gap: 4px; color: #ca8a04; font-size: ${fontSize}; font-weight: 700; margin: 4px 0;">⚠️ $1</span>`);
     
     // 兼容旧版：潜在亮点标签 -> 简历亮点样式
-    html = html.replace(/\*\*(潜在亮点[^*]*)\*\*/g, `<span style="display: inline-block; padding: 2px 8px; background: #f0fdf4; color: #15803d; border-radius: 4px; font-size: ${fontSize}; font-weight: 700; border: 1px solid #bbf7d0; margin: 4px 0;">$1</span>`);
+    html = html.replace(/\*\*(潜在亮点[^*]*)\*\*/g, `<span style="display: inline-flex; align-items: center; gap: 4px; color: #ca8a04; font-size: ${fontSize}; font-weight: 700; margin: 4px 0;">✨ $1</span>`);
 
     // 普通加粗
     html = html.replace(/\*\*(.+?)\*\*/g, `<strong style="font-weight: 700; color: ${headingColor};">$1</strong>`);

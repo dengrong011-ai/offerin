@@ -4,6 +4,13 @@ import type { InterviewMessage, InterviewSettings, InterviewMode } from '../type
 
 const getApiKey = () => process.env.API_KEY || process.env.GEMINI_API_KEY || '';
 
+// 文件数据类型
+export interface FileData {
+  name: string;
+  data: string;
+  mimeType: string;
+}
+
 // 面试官系统提示词
 const getInterviewerPrompt = (
   jobDescription: string,

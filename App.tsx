@@ -1,6 +1,6 @@
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { analyzeResumeStream, translateResume, FileData } from './services/geminiService';
+import { analyzeResumeStream, translateResume, FileData, extractTextFromFile } from './services/geminiService';
 import MarkdownRenderer from './components/MarkdownRenderer';
 import InterviewChat from './components/InterviewChat';
 import { FileText, Target, Send, Loader2, RefreshCw, ChevronRight, Upload, X, Paperclip, Image as ImageIcon, File, AlertCircle, PenTool, ArrowLeft, Maximize2, Minimize2, ZoomIn, ZoomOut, CheckCircle2, AlertTriangle, AlignJustify, Languages, Globe, ArrowRight, Sparkles, MessageSquare, Mic, Play, Users } from 'lucide-react';
@@ -41,6 +41,7 @@ const App: React.FC = () => {
   const jdFileInputRef = useRef<HTMLInputElement>(null);
   const resumeFileInputRef = useRef<HTMLInputElement>(null);
   const inputSectionRef = useRef<HTMLDivElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const A4_WIDTH_PX = 794;
   const A4_HEIGHT_PX = 1123; 
@@ -72,6 +73,7 @@ const App: React.FC = () => {
 
   const compressImage = (file: File): Promise<{data: string, mime: string}> => {
     return new Promise((resolve, reject) => {
+      // PDF 文件处理
       if (file.type === 'application/pdf') {
          if (file.size > 10 * 1024 * 1024) { 
            reject(new Error('PDF文件过大，请上传小于10MB的文件'));
@@ -88,6 +90,25 @@ const App: React.FC = () => {
          return;
       }
 
+      // Word 文档处理（.doc 和 .docx）
+      if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+          file.type === 'application/msword') {
+        if (file.size > 10 * 1024 * 1024) { 
+          reject(new Error('Word文件过大，请上传小于10MB的文件'));
+          return;
+        }
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => {
+          let base64String = (reader.result as string).split(',')[1];
+          base64String = base64String.replace(/\s/g, '');
+          resolve({ data: base64String, mime: file.type });
+        };
+        reader.onerror = error => reject(error);
+        return;
+      }
+
+      // 图片文件处理
       const reader = new FileReader();
       reader.readAsDataURL(file);
       reader.onload = (event) => {
@@ -135,8 +156,19 @@ const App: React.FC = () => {
     if (!file) return;
     e.target.value = '';
 
-    if (!['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic'].includes(file.type)) {
-      setError('格式错误：目前仅支持 PDF、JPG、PNG 或 WebP。');
+    // 支持更多文件类型
+    const supportedTypes = [
+      'application/pdf', 
+      'image/jpeg', 
+      'image/png', 
+      'image/webp', 
+      'image/heic',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+      'application/msword' // .doc
+    ];
+    
+    if (!supportedTypes.includes(file.type)) {
+      setError('格式错误：目前支持 PDF、Word（.doc/.docx）、JPG、PNG 或 WebP。');
       return;
     }
 
@@ -145,8 +177,24 @@ const App: React.FC = () => {
 
     try {
       const { data, mime } = await compressImage(file);
-      if (type === 'jd') setJdFile({ name: file.name, data, mime });
-      else setResumeFile({ name: file.name, data, mime });
+      
+      // 保存文件信息
+      if (type === 'jd') {
+        setJdFile({ name: file.name, data, mime });
+      } else {
+        setResumeFile({ name: file.name, data, mime });
+      }
+      
+      // 自动提取文本内容
+      const extractedText = await extractTextFromFile({ data, mimeType: mime });
+      
+      if (extractedText && extractedText.trim()) {
+        if (type === 'jd') {
+          setJd(extractedText.trim());
+        } else {
+          setResume(extractedText.trim());
+        }
+      }
     } catch (err: any) {
       setError(err.message || '文件处理失败。');
     } finally {
@@ -165,8 +213,24 @@ const App: React.FC = () => {
             setError(null);
             const { data, mime } = await compressImage(file);
             const fileName = `pasted-image-${new Date().getTime()}.jpg`;
-            if (type === 'jd') setJdFile({ name: fileName, data, mime });
-            else setResumeFile({ name: fileName, data, mime });
+            
+            // 保存文件信息
+            if (type === 'jd') {
+              setJdFile({ name: fileName, data, mime });
+            } else {
+              setResumeFile({ name: fileName, data, mime });
+            }
+            
+            // 自动提取文本内容
+            const extractedText = await extractTextFromFile({ data, mimeType: mime });
+            
+            if (extractedText && extractedText.trim()) {
+              if (type === 'jd') {
+                setJd(extractedText.trim());
+              } else {
+                setResume(extractedText.trim());
+              }
+            }
           } catch (err: any) {
             setError('粘贴图片处理失败：' + err.message);
           } finally {
@@ -182,6 +246,15 @@ const App: React.FC = () => {
       setError('请提供 JD 或 简历内容。');
       return;
     }
+
+    // 取消之前的请求（如果有）
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    
+    // 创建新的 AbortController
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
 
     setIsAnalyzing(true);
     setError(null);
@@ -200,9 +273,13 @@ const App: React.FC = () => {
         aspiration,
         {
           onDiagnosisChunk: (chunk) => {
+            // 检查是否已被取消
+            if (abortController.signal.aborted) return;
             setDiagnosisContent(prev => prev + chunk);
           },
           onResumeChunk: (chunk) => {
+            // 检查是否已被取消
+            if (abortController.signal.aborted) return;
             setResumeContent(prev => prev + chunk);
           },
           onDiagnosisComplete: (content) => {
@@ -220,6 +297,11 @@ const App: React.FC = () => {
       );
       
     } catch (err: any) {
+      // 如果是取消导致的错误，不显示错误信息
+      if (abortController.signal.aborted) {
+        return;
+      }
+      
       const msg = err.message || '';
       if (msg === 'ENTITY_NOT_FOUND') {
         setError('系统配置错误：API Key 无效或未启用计费，请检查服务器环境变量设置。');
@@ -242,7 +324,10 @@ const App: React.FC = () => {
         setError(`分析失败：${displayMsg.length > 100 ? displayMsg.substring(0, 100) + '...' : displayMsg}`);
       }
     } finally {
-      setIsAnalyzing(false);
+      // 只有当前请求没有被取消时才设置状态
+      if (!abortController.signal.aborted) {
+        setIsAnalyzing(false);
+      }
     }
   }, [jd, resume, aspiration, jdFile, resumeFile]);
 
@@ -262,6 +347,12 @@ const App: React.FC = () => {
   };
 
   const resetAll = () => {
+    // 取消正在进行的分析请求
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setIsAnalyzing(false);
     setJd('');
     setResume('');
     setAspiration('');
@@ -275,6 +366,18 @@ const App: React.FC = () => {
     setIsFullscreen(false);
     setDensityMultiplier(1.0);
     setEnglishResume('');
+  };
+
+  // 用于取消分析并返回上传页面
+  const cancelAnalysisAndGoBack = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setIsAnalyzing(false);
+    setDiagnosisContent('');
+    setResumeContent('');
+    setStep('UPLOAD');
   };
 
   const handleProceedToEditor = () => {
@@ -440,29 +543,38 @@ const App: React.FC = () => {
   const zoomIn = () => setPreviewScale(prev => Math.min(prev + 0.1, 1.5));
   const zoomOut = () => setPreviewScale(prev => Math.max(prev - 0.1, 0.4));
 
-  const FileChip = ({ name, mime, onRemove, isLoading }: { name: string, mime: string, onRemove: () => void, isLoading?: boolean }) => (
-    <div className="flex items-center gap-2 px-3 py-1.5 bg-zinc-50 border border-zinc-200 rounded-md text-xs text-zinc-600">
-      {isLoading ? (
-        <Loader2 size={13} className="animate-spin text-zinc-400" />
-      ) : (
-        mime.includes('image') ? <ImageIcon size={13} className="text-zinc-400" /> : mime.includes('pdf') ? <File size={13} className="text-zinc-400" /> : <Paperclip size={13} className="text-zinc-400" />
-      )}
-      <span className="truncate max-w-[120px]">{name}</span>
-      {!isLoading && (
-         <>
-            <CheckCircle2 size={13} className="text-zinc-400" />
-            <button onClick={onRemove} className="hover:text-zinc-900 transition-colors ml-0.5">
-               <X size={13} />
-            </button>
-         </>
-      )}
-    </div>
-  );
+  const FileChip = ({ name, mime, onRemove, isLoading }: { name: string, mime: string, onRemove: () => void, isLoading?: boolean }) => {
+    const getFileIcon = () => {
+      if (mime.includes('image')) return <ImageIcon size={13} className="text-zinc-400" />;
+      if (mime.includes('pdf')) return <File size={13} className="text-zinc-400" />;
+      if (mime.includes('word') || mime.includes('document')) return <FileText size={13} className="text-zinc-400" />;
+      return <Paperclip size={13} className="text-zinc-400" />;
+    };
+
+    return (
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-zinc-50 border border-zinc-200 rounded-md text-xs text-zinc-600">
+        {isLoading ? (
+          <Loader2 size={13} className="animate-spin text-zinc-400" />
+        ) : (
+          getFileIcon()
+        )}
+        <span className="truncate max-w-[150px]">{isLoading ? '正在识别文件内容...' : name}</span>
+        {!isLoading && (
+           <>
+              <CheckCircle2 size={13} className="text-green-500" />
+              <button onClick={onRemove} className="hover:text-zinc-900 transition-colors ml-0.5">
+                 <X size={13} />
+              </button>
+           </>
+        )}
+      </div>
+    );
+  };
 
   const getCapacityStatus = () => {
     const percentage = (resumeHeight / A4_HEIGHT_PX) * 100;
-    if (percentage <= 94) return { status: 'optimal', label: '1 页' };  // 最佳状态，绿色
-    if (percentage <= 100) return { status: 'warning', label: '1 页' }; // 接近满页，橙色警告
+    if (percentage <= 95) return { status: 'optimal', label: '1 页' };  // 最佳状态，绿色
+    if (percentage <= 100) return { status: 'warning', label: '1 页' }; // 接近满页，橙色警告（>95%）
     if (percentage <= 110) return { status: 'overflow', label: '溢出' }; // 轻微溢出
     return { status: 'danger', label: '超 1 页' };  // 严重超出
   };
@@ -820,7 +932,7 @@ const App: React.FC = () => {
                       <Upload size={11} /> 上传文件
                     </button>
                   </div>
-                  <input type="file" ref={jdFileInputRef} className="hidden" accept=".pdf,image/*" onChange={(e) => handleFileChange(e, 'jd')} />
+                  <input type="file" ref={jdFileInputRef} className="hidden" accept=".pdf,.doc,.docx,image/*" onChange={(e) => handleFileChange(e, 'jd')} />
                   <textarea
                     value={jd}
                     onChange={(e) => setJd(e.target.value)}
@@ -828,7 +940,7 @@ const App: React.FC = () => {
                     placeholder="粘贴目标岗位描述..."
                     className="w-full h-32 p-4 bg-zinc-50 border border-zinc-200 rounded-md focus:ring-1 focus:ring-zinc-400 focus:border-zinc-400 outline-none transition-all resize-none text-[13px] text-zinc-800 placeholder:text-zinc-400"
                   />
-                  {processingState.jd && <FileChip name="处理中..." mime="" onRemove={() => {}} isLoading={true} />}
+                  {processingState.jd && <FileChip name="" mime="" onRemove={() => {}} isLoading={true} />}
                   {!processingState.jd && jdFile && <FileChip name={jdFile.name} mime={jdFile.mime} onRemove={() => setJdFile(null)} />}
                 </div>
 
@@ -843,7 +955,7 @@ const App: React.FC = () => {
                       <Upload size={11} /> 上传文件
                     </button>
                   </div>
-                  <input type="file" ref={resumeFileInputRef} className="hidden" accept=".pdf,image/*" onChange={(e) => handleFileChange(e, 'resume')} />
+                  <input type="file" ref={resumeFileInputRef} className="hidden" accept=".pdf,.doc,.docx,image/*" onChange={(e) => handleFileChange(e, 'resume')} />
                   <textarea
                     value={resume}
                     onChange={(e) => setResume(e.target.value)}
@@ -851,7 +963,7 @@ const App: React.FC = () => {
                     placeholder="粘贴简历内容，或直接上传/截图粘贴..."
                     className="w-full h-44 p-4 bg-zinc-50 border border-zinc-200 rounded-md focus:ring-1 focus:ring-zinc-400 focus:border-zinc-400 outline-none transition-all resize-none text-[13px] text-zinc-800 placeholder:text-zinc-400"
                   />
-                  {processingState.resume && <FileChip name="处理中..." mime="" onRemove={() => {}} isLoading={true} />}
+                  {processingState.resume && <FileChip name="" mime="" onRemove={() => {}} isLoading={true} />}
                   {!processingState.resume && resumeFile && <FileChip name={resumeFile.name} mime={resumeFile.mime} onRemove={() => setResumeFile(null)} />}
                 </div>
 
@@ -911,7 +1023,7 @@ const App: React.FC = () => {
                     </span>
                   )}
                 </div>
-                <button onClick={() => { setStep('UPLOAD'); setDiagnosisContent(''); setResumeContent(''); }} className="text-[12px] text-zinc-400 hover:text-zinc-900 transition-colors">
+                <button onClick={cancelAnalysisAndGoBack} className="text-[12px] text-zinc-400 hover:text-zinc-900 transition-colors">
                   修改输入
                 </button>
               </div>

@@ -4,7 +4,7 @@ import {
   Briefcase, User, Hash, Info, AlertCircle, Award, 
   Send, Square, Plus, X, FileText, Upload, Settings,
   Download, RefreshCw, Loader2, ArrowLeft, ChevronDown, Image as ImageIcon, FileDown,
-  Play, MessageSquare, Users, Mic, MicOff, StopCircle
+  Play, MessageSquare, Users, Mic, MicOff, StopCircle, CheckCircle2, File, Paperclip
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import html2canvas from 'html2canvas';
@@ -17,7 +17,14 @@ import {
   processUserAnswer,
   InteractiveInterviewState 
 } from '../services/interviewService';
-import { transcribeAudio } from '../services/geminiService';
+import { transcribeAudio, extractTextFromFile } from '../services/geminiService';
+
+// 文件数据类型
+interface FileData {
+  name: string;
+  data: string;
+  mime: string;
+}
 
 interface InterviewChatProps {
   onBack: () => void;
@@ -40,6 +47,14 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
   const [resumeText, setResumeText] = useState(initialResume);
   const [jdText, setJdText] = useState(initialJd);
   const [showInputPanel, setShowInputPanel] = useState(!initialResume);
+  
+  // 文件上传相关状态
+  const [resumeFile, setResumeFile] = useState<FileData | null>(null);
+  const [jdFile, setJdFile] = useState<FileData | null>(null);
+  const [processingState, setProcessingState] = useState({ resume: false, jd: false });
+  const [fileError, setFileError] = useState<string | null>(null);
+  const resumeFileInputRef = useRef<HTMLInputElement>(null);
+  const jdFileInputRef = useRef<HTMLInputElement>(null);
   
   // 人机交互模式状态
   const [interactiveState, setInteractiveState] = useState<InteractiveInterviewState | null>(null);
@@ -401,6 +416,209 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
       }
     }
   }, [resumeText, jdText, settings]);
+
+  // 文件压缩和处理函数
+  const compressImage = (file: File): Promise<{data: string, mime: string}> => {
+    return new Promise((resolve, reject) => {
+      // PDF 文件处理
+      if (file.type === 'application/pdf') {
+        if (file.size > 10 * 1024 * 1024) { 
+          reject(new Error('PDF文件过大，请上传小于10MB的文件'));
+          return;
+        }
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => {
+          let base64String = (reader.result as string).split(',')[1];
+          base64String = base64String.replace(/\s/g, '');
+          resolve({ data: base64String, mime: 'application/pdf' });
+        };
+        reader.onerror = error => reject(error);
+        return;
+      }
+
+      // Word 文档处理（.doc 和 .docx）
+      if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+          file.type === 'application/msword') {
+        if (file.size > 10 * 1024 * 1024) { 
+          reject(new Error('Word文件过大，请上传小于10MB的文件'));
+          return;
+        }
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => {
+          let base64String = (reader.result as string).split(',')[1];
+          base64String = base64String.replace(/\s/g, '');
+          // 对于 Word 文档，我们将其作为 PDF 处理（Gemini 支持）
+          resolve({ data: base64String, mime: file.type });
+        };
+        reader.onerror = error => reject(error);
+        return;
+      }
+
+      // 图片文件处理
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+          
+          const MAX_SIZE = 1024;
+          if (width > height) {
+            if (width > MAX_SIZE) {
+              height *= MAX_SIZE / width;
+              width = MAX_SIZE;
+            }
+          } else {
+            if (height > MAX_SIZE) {
+              width *= MAX_SIZE / height;
+              height = MAX_SIZE;
+            }
+          }
+          
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.fillStyle = "#FFFFFF";
+            ctx.fillRect(0, 0, width, height);
+            ctx.drawImage(img, 0, 0, width, height);
+          }
+          
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+          const base64String = dataUrl.split(',')[1];
+          resolve({ data: base64String, mime: 'image/jpeg' });
+        };
+        img.onerror = () => reject(new Error('图片加载失败，请重试'));
+      };
+      reader.onerror = error => reject(error);
+    });
+  };
+
+  // 处理文件上传
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, type: 'jd' | 'resume') => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+
+    // 支持更多文件类型
+    const supportedTypes = [
+      'application/pdf', 
+      'image/jpeg', 
+      'image/png', 
+      'image/webp', 
+      'image/heic',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+      'application/msword' // .doc
+    ];
+    
+    if (!supportedTypes.includes(file.type)) {
+      setFileError('格式错误：目前支持 PDF、Word（.doc/.docx）、JPG、PNG 或 WebP。');
+      return;
+    }
+
+    setProcessingState(prev => ({ ...prev, [type]: true }));
+    setFileError(null);
+
+    try {
+      const { data, mime } = await compressImage(file);
+      
+      // 保存文件信息
+      if (type === 'jd') {
+        setJdFile({ name: file.name, data, mime });
+      } else {
+        setResumeFile({ name: file.name, data, mime });
+      }
+      
+      // 自动提取文本内容
+      const extractedText = await extractTextFromFile({ data, mimeType: mime });
+      
+      if (extractedText && extractedText.trim()) {
+        if (type === 'jd') {
+          setJdText(extractedText.trim());
+        } else {
+          setResumeText(extractedText.trim());
+        }
+      }
+    } catch (err: any) {
+      setFileError(err.message || '文件处理失败。');
+    } finally {
+      setProcessingState(prev => ({ ...prev, [type]: false }));
+    }
+  };
+
+  // 处理粘贴图片
+  const handlePaste = async (e: React.ClipboardEvent, type: 'jd' | 'resume') => {
+    const items = e.clipboardData.items;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image') !== -1) {
+        const file = items[i].getAsFile();
+        if (file) {
+          setProcessingState(prev => ({ ...prev, [type]: true }));
+          try {
+            setFileError(null);
+            const { data, mime } = await compressImage(file);
+            const fileName = `pasted-image-${new Date().getTime()}.jpg`;
+            
+            // 保存文件信息
+            if (type === 'jd') {
+              setJdFile({ name: fileName, data, mime });
+            } else {
+              setResumeFile({ name: fileName, data, mime });
+            }
+            
+            // 自动提取文本内容
+            const extractedText = await extractTextFromFile({ data, mimeType: mime });
+            
+            if (extractedText && extractedText.trim()) {
+              if (type === 'jd') {
+                setJdText(extractedText.trim());
+              } else {
+                setResumeText(extractedText.trim());
+              }
+            }
+          } catch (err: any) {
+            setFileError('粘贴图片处理失败：' + err.message);
+          } finally {
+            setProcessingState(prev => ({ ...prev, [type]: false }));
+          }
+        }
+      }
+    }
+  };
+
+  // 文件标签组件
+  const FileChip = ({ name, mime, onRemove, isLoading }: { name: string, mime: string, onRemove: () => void, isLoading?: boolean }) => {
+    const getFileIcon = () => {
+      if (mime.includes('image')) return <ImageIcon size={13} className="text-zinc-400" />;
+      if (mime.includes('pdf')) return <File size={13} className="text-zinc-400" />;
+      if (mime.includes('word') || mime.includes('document')) return <FileText size={13} className="text-zinc-400" />;
+      return <Paperclip size={13} className="text-zinc-400" />;
+    };
+
+    return (
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-zinc-50 border border-zinc-200 rounded-md text-xs text-zinc-600 mt-2">
+        {isLoading ? (
+          <Loader2 size={13} className="animate-spin text-zinc-400" />
+        ) : (
+          getFileIcon()
+        )}
+        <span className="truncate max-w-[150px]">{isLoading ? '正在识别文件内容...' : name}</span>
+        {!isLoading && (
+           <>
+              <CheckCircle2 size={13} className="text-green-500" />
+              <button onClick={onRemove} className="hover:text-zinc-900 transition-colors ml-0.5">
+                 <X size={13} />
+              </button>
+           </>
+        )}
+      </div>
+    );
+  };
 
   // 开始面试（根据模式选择）
   const handleStartInterview = useCallback(() => {
@@ -903,36 +1121,82 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
                 </p>
               </div>
 
-              <div>
-                <label className="text-[13px] font-medium text-zinc-700 mb-2 flex items-center gap-1.5">
-                  <FileText size={13} className="text-zinc-400" />
-                  你的简历
-                </label>
+              {/* 错误提示 */}
+              {fileError && (
+                <div className="p-3 bg-red-50 border border-red-100 rounded-md flex items-start gap-2">
+                  <AlertCircle size={14} className="text-red-500 mt-0.5 shrink-0" />
+                  <p className="text-[12px] text-red-600">{fileError}</p>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-[13px] font-medium text-zinc-700 flex items-center gap-1.5">
+                    <FileText size={13} className="text-zinc-400" />
+                    你的简历
+                  </label>
+                  <button 
+                    onClick={() => resumeFileInputRef.current?.click()} 
+                    disabled={processingState.resume} 
+                    className={`text-[12px] text-zinc-400 hover:text-zinc-900 font-medium flex items-center gap-1 transition-colors ${processingState.resume ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    <Upload size={11} /> 上传文件
+                  </button>
+                </div>
+                <input 
+                  type="file" 
+                  ref={resumeFileInputRef} 
+                  className="hidden" 
+                  accept=".pdf,.doc,.docx,image/*" 
+                  onChange={(e) => handleFileChange(e, 'resume')} 
+                />
                 <textarea
                   value={resumeText}
                   onChange={(e) => setResumeText(e.target.value)}
+                  onPaste={(e) => handlePaste(e, 'resume')}
                   placeholder="粘贴你的简历内容..."
                   className="w-full h-40 p-4 bg-zinc-50 border border-zinc-200 rounded-md focus:ring-1 focus:ring-zinc-400 focus:border-zinc-400 outline-none text-[13px] text-zinc-800 placeholder:text-zinc-400 resize-none"
                 />
+                {processingState.resume && <FileChip name="" mime="" onRemove={() => {}} isLoading={true} />}
+                {!processingState.resume && resumeFile && <FileChip name={resumeFile.name} mime={resumeFile.mime} onRemove={() => setResumeFile(null)} />}
               </div>
-              <div>
-                <label className="text-[13px] font-medium text-zinc-700 mb-2 flex items-center gap-1.5">
-                  <Briefcase size={13} className="text-zinc-400" />
-                  目标岗位 JD
-                </label>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-[13px] font-medium text-zinc-700 flex items-center gap-1.5">
+                    <Briefcase size={13} className="text-zinc-400" />
+                    目标岗位 JD
+                  </label>
+                  <button 
+                    onClick={() => jdFileInputRef.current?.click()} 
+                    disabled={processingState.jd} 
+                    className={`text-[12px] text-zinc-400 hover:text-zinc-900 font-medium flex items-center gap-1 transition-colors ${processingState.jd ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    <Upload size={11} /> 上传文件
+                  </button>
+                </div>
+                <input 
+                  type="file" 
+                  ref={jdFileInputRef} 
+                  className="hidden" 
+                  accept=".pdf,.doc,.docx,image/*" 
+                  onChange={(e) => handleFileChange(e, 'jd')} 
+                />
                 <textarea
                   value={jdText}
                   onChange={(e) => setJdText(e.target.value)}
+                  onPaste={(e) => handlePaste(e, 'jd')}
                   placeholder="粘贴目标岗位的职位描述..."
                   className="w-full h-32 p-4 bg-zinc-50 border border-zinc-200 rounded-md focus:ring-1 focus:ring-zinc-400 focus:border-zinc-400 outline-none text-[13px] text-zinc-800 placeholder:text-zinc-400 resize-none"
                 />
+                {processingState.jd && <FileChip name="" mime="" onRemove={() => {}} isLoading={true} />}
+                {!processingState.jd && jdFile && <FileChip name={jdFile.name} mime={jdFile.mime} onRemove={() => setJdFile(null)} />}
               </div>
               <div className="pt-2">
                 <button
                   onClick={handleStartInterview}
-                  disabled={!resumeText.trim() || !jdText.trim()}
+                  disabled={(!resumeText.trim() && !resumeFile) || (!jdText.trim() && !jdFile) || processingState.resume || processingState.jd}
                   className={`w-full py-3 rounded-md text-[14px] font-medium flex items-center justify-center gap-2 transition-colors ${
-                    resumeText.trim() && jdText.trim()
+                    ((resumeText.trim() || resumeFile) && (jdText.trim() || jdFile)) && !processingState.resume && !processingState.jd
                       ? 'bg-zinc-900 text-white hover:bg-zinc-800'
                       : 'bg-zinc-200 text-zinc-400 cursor-not-allowed'
                   }`}
