@@ -1,0 +1,5 @@
+{
+  "name": "Offer-ing",
+  "description": "A high-end resume reconstruction tool powered by Gemini 3 Pro, designed for the Chinese tech market. It decodes JDs and rebuilds resumes using STAR methodology to maximize interview chances.",
+  "requestFramePermissions": []
+}
