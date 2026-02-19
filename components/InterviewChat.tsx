@@ -534,7 +534,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
         setResumeFile({ name: file.name, data, mime });
       }
       
-      // 自动提取文本内容
+      // 自动提取文本内容（面试需要立即识别以便开始）
       const extractedText = await extractTextFromFile({ data, mimeType: mime });
       
       if (extractedText && extractedText.trim()) {

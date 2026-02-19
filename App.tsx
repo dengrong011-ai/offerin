@@ -194,22 +194,11 @@ const App: React.FC = () => {
     try {
       const { data, mime } = await compressImage(file);
       
-      // 保存文件信息
+      // 保存文件信息（不回填文本，提交时再提取，加快速度）
       if (type === 'jd') {
         setJdFile({ name: file.name, data, mime });
       } else {
         setResumeFile({ name: file.name, data, mime });
-      }
-      
-      // 自动提取文本内容
-      const extractedText = await extractTextFromFile({ data, mimeType: mime });
-      
-      if (extractedText && extractedText.trim()) {
-        if (type === 'jd') {
-          setJd(extractedText.trim());
-        } else {
-          setResume(extractedText.trim());
-        }
       }
     } catch (err: any) {
       setError(err.message || '文件处理失败。');
@@ -230,22 +219,11 @@ const App: React.FC = () => {
             const { data, mime } = await compressImage(file);
             const fileName = `pasted-image-${new Date().getTime()}.jpg`;
             
-            // 保存文件信息
+            // 保存文件信息（不回填文本，提交时再提取，加快速度）
             if (type === 'jd') {
               setJdFile({ name: fileName, data, mime });
             } else {
               setResumeFile({ name: fileName, data, mime });
-            }
-            
-            // 自动提取文本内容
-            const extractedText = await extractTextFromFile({ data, mimeType: mime });
-            
-            if (extractedText && extractedText.trim()) {
-              if (type === 'jd') {
-                setJd(extractedText.trim());
-              } else {
-                setResume(extractedText.trim());
-              }
             }
           } catch (err: any) {
             setError('粘贴图片处理失败：' + err.message);
