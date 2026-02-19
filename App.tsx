@@ -1251,25 +1251,23 @@ const App: React.FC = () => {
               {/* Preview Container */}
               <div className={`flex-grow bg-zinc-100 overflow-auto p-4 md:p-6 relative custom-scrollbar border border-zinc-200 border-t-0 ${isFullscreen ? '' : 'rounded-b-lg'}`}>
                 
-                {/* 提示用户修改占位符数据 */}
-                <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 bg-blue-50 text-blue-700 text-[11px] px-3 py-1.5 rounded-md font-medium border border-blue-200 whitespace-nowrap">
-                   <span className="inline-flex items-center gap-1.5">
-                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-                     简历中的 <strong className="text-blue-800">X%</strong> 等数据为占位符，请根据实际情况修改
-                   </span>
-                </div>
-                
-                {capacity.status === 'warning' && (
-                    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-amber-500 text-white text-[11px] px-3 py-1.5 rounded-md font-medium flex items-center gap-1.5">
+                {/* 顶部提示：页面警告优先显示，否则显示占位符提示 */}
+                {capacity.status === 'warning' ? (
+                    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-amber-500 text-white text-[11px] px-3 py-1.5 rounded-md font-medium flex items-center gap-1.5 whitespace-nowrap">
                        <AlertTriangle size={12} /> 接近满页，建议精简内容避免打印分页
                     </div>
-                 )}
-                 
-                 {(capacity.status === 'overflow' || capacity.status === 'danger') && (
-                    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-zinc-900 text-white text-[11px] px-3 py-1.5 rounded-md font-medium flex items-center gap-1.5">
+                ) : (capacity.status === 'overflow' || capacity.status === 'danger') ? (
+                    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-zinc-900 text-white text-[11px] px-3 py-1.5 rounded-md font-medium flex items-center gap-1.5 whitespace-nowrap">
                        <AlertTriangle size={12} /> 内容超出 1 页
                     </div>
-                 )}
+                ) : (
+                    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 bg-blue-50 text-blue-700 text-[11px] px-3 py-1.5 rounded-md font-medium border border-blue-200 whitespace-nowrap">
+                       <span className="inline-flex items-center gap-1.5">
+                         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                         简历中的 <strong className="text-blue-800">X%</strong> 等数据为占位符，请根据实际情况修改
+                       </span>
+                    </div>
+                )}
 
                  <div className="flex justify-center min-w-min"> 
                    <div 

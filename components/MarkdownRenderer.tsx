@@ -83,7 +83,7 @@ const MarkdownRenderer: React.FC<Props> = ({
 
     html = html
       .replace(/^## (.*$)/gm, `
-        <div style="margin-top: ${s.h2Top}; margin-bottom: ${s.h2Bottom}; padding-bottom: 4px; border-bottom: ${s.borderBottom}; width: 100%;">
+        <div style="margin-top: ${s.h2Top}; margin-bottom: ${s.h2Bottom}; padding-bottom: 4px; border-bottom: 1.5px solid #18181b; width: 100%;">
           <h2 class="font-bold text-slate-900 uppercase" style="font-size: 11pt; font-family: ${s.fontFamily}; letter-spacing: 1px; line-height: 1.4; margin: 0;">$1</h2>
         </div>
       `)
@@ -210,23 +210,23 @@ const MarkdownRenderer: React.FC<Props> = ({
     // 行内代码
     html = html.replace(/`([^`]+)`/g, `<code style="background: #f4f4f5; color: ${headingColor}; padding: 2px 6px; border-radius: 3px; font-size: ${fontSize}; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;">$1</code>`);
 
-    // 简历亮点标签 - 支持多种格式（加粗格式）
-    html = html.replace(/\*\*(简历亮点[^*]*)\*\*/g, `<span style="display: inline-flex; align-items: center; gap: 4px; color: #ca8a04; font-size: ${fontSize}; font-weight: 700; margin: 4px 0;">✨ $1</span>`);
+    // 简历亮点标签 - 支持多种格式（加粗格式）- 独立成行
+    html = html.replace(/\*\*(简历亮点[^*]*)\*\*\s*[:：]?/g, `<div style="display: flex; align-items: center; gap: 4px; color: #ca8a04; font-size: ${fontSize}; font-weight: 700; margin: 12px 0 6px 0;">✨ $1：</div>`);
     
     // 简历亮点标签 - 支持纯文本格式（非加粗）
-    html = html.replace(/(简历亮点\s*\(Highlights\)\s*[:：])/g, `<span style="display: inline-flex; align-items: center; gap: 4px; color: #ca8a04; font-size: ${fontSize}; font-weight: 700; margin: 8px 0 4px 0;">✨ $1</span>`);
+    html = html.replace(/(简历亮点\s*\(Highlights\)\s*[:：]?)/g, `<div style="display: flex; align-items: center; gap: 4px; color: #ca8a04; font-size: ${fontSize}; font-weight: 700; margin: 12px 0 6px 0;">✨ 简历亮点 (Highlights)：</div>`);
     
-    // 潜在不足标签 - 支持多种格式（加粗格式）
-    html = html.replace(/\*\*(潜在不足[^*]*)\*\*/g, `<span style="display: inline-flex; align-items: center; gap: 4px; color: #ca8a04; font-size: ${fontSize}; font-weight: 700; margin: 4px 0;">⚠️ $1</span>`);
+    // 潜在不足标签 - 支持多种格式（加粗格式）- 独立成行
+    html = html.replace(/\*\*(潜在不足[^*]*)\*\*\s*[:：]?/g, `<div style="display: flex; align-items: center; gap: 4px; color: #dc2626; font-size: ${fontSize}; font-weight: 700; margin: 12px 0 6px 0;">⚠️ $1：</div>`);
     
     // 潜在不足标签 - 支持纯文本格式（非加粗）
-    html = html.replace(/(潜在不足\s*\(Lowlights\)\s*[:：])/g, `<span style="display: inline-flex; align-items: center; gap: 4px; color: #ca8a04; font-size: ${fontSize}; font-weight: 700; margin: 8px 0 4px 0;">⚠️ $1</span>`);
+    html = html.replace(/(潜在不足\s*\(Lowlights\)\s*[:：]?)/g, `<div style="display: flex; align-items: center; gap: 4px; color: #dc2626; font-size: ${fontSize}; font-weight: 700; margin: 12px 0 6px 0;">⚠️ 潜在不足 (Lowlights)：</div>`);
     
     // 兼容旧版：硬伤标签 -> 潜在不足样式
-    html = html.replace(/\*\*(硬伤[^*]*)\*\*/g, `<span style="display: inline-flex; align-items: center; gap: 4px; color: #ca8a04; font-size: ${fontSize}; font-weight: 700; margin: 4px 0;">⚠️ $1</span>`);
+    html = html.replace(/\*\*(硬伤[^*]*)\*\*\s*[:：]?/g, `<div style="display: flex; align-items: center; gap: 4px; color: #dc2626; font-size: ${fontSize}; font-weight: 700; margin: 12px 0 6px 0;">⚠️ $1：</div>`);
     
     // 兼容旧版：潜在亮点标签 -> 简历亮点样式
-    html = html.replace(/\*\*(潜在亮点[^*]*)\*\*/g, `<span style="display: inline-flex; align-items: center; gap: 4px; color: #ca8a04; font-size: ${fontSize}; font-weight: 700; margin: 4px 0;">✨ $1</span>`);
+    html = html.replace(/\*\*(潜在亮点[^*]*)\*\*\s*[:：]?/g, `<div style="display: flex; align-items: center; gap: 4px; color: #ca8a04; font-size: ${fontSize}; font-weight: 700; margin: 12px 0 6px 0;">✨ $1：</div>`);
 
     // 普通加粗
     html = html.replace(/\*\*(.+?)\*\*/g, `<strong style="font-weight: 700; color: ${headingColor};">$1</strong>`);
