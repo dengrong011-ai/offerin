@@ -13,11 +13,20 @@ import { jsPDF } from 'jspdf';
 type Step = 'INPUT' | 'UPLOAD' | 'ANALYSIS' | 'EDITOR' | 'ENGLISH_VERSION' | 'INTERVIEW';
 
 const App: React.FC = () => {
-  const { user, profile } = useAuth();
+  const { user, profile, loading: authLoading } = useAuth();
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [usageLimitError, setUsageLimitError] = useState<string | null>(null);
   
   const [step, setStep] = useState<Step>('INPUT');
+
+  // 检查登录状态，未登录则弹出登录框
+  const requireLogin = (callback: () => void) => {
+    if (!user) {
+      setShowLoginModal(true);
+      return;
+    }
+    callback();
+  };
   
   const [jd, setJd] = useState('');
   const [resume, setResume] = useState('');
@@ -642,7 +651,7 @@ const App: React.FC = () => {
               </button>
             )}
             {step === 'INPUT' && (
-              <button onClick={() => setStep('UPLOAD')} className="bg-zinc-900 text-white px-5 py-2 rounded-md text-[13px] font-medium hover:bg-zinc-800 transition-colors">
+              <button onClick={() => requireLogin(() => setStep('UPLOAD'))} className="bg-zinc-900 text-white px-5 py-2 rounded-md text-[13px] font-medium hover:bg-zinc-800 transition-colors">
                 开始优化
               </button>
             )}
@@ -702,11 +711,11 @@ const App: React.FC = () => {
               </p>
               
               <div className="flex items-center justify-center gap-3 mb-16">
-                <button onClick={() => setStep('UPLOAD')} className="group inline-flex items-center gap-2 px-6 py-2.5 bg-zinc-900 text-white rounded-md text-[14px] font-medium hover:bg-zinc-800 transition-all">
+                <button onClick={() => requireLogin(() => setStep('UPLOAD'))} className="group inline-flex items-center gap-2 px-6 py-2.5 bg-zinc-900 text-white rounded-md text-[14px] font-medium hover:bg-zinc-800 transition-all">
                    开始优化简历
                    <ArrowRight size={15} className="group-hover:translate-x-0.5 transition-transform" />
                 </button>
-                <button onClick={() => setStep('INTERVIEW')} className="group inline-flex items-center gap-2 px-6 py-2.5 bg-white text-zinc-900 border border-zinc-300 rounded-md text-[14px] font-medium hover:border-zinc-400 hover:bg-zinc-50 transition-all">
+                <button onClick={() => requireLogin(() => setStep('INTERVIEW'))} className="group inline-flex items-center gap-2 px-6 py-2.5 bg-white text-zinc-900 border border-zinc-300 rounded-md text-[14px] font-medium hover:border-zinc-400 hover:bg-zinc-50 transition-all">
                    <Mic size={15} />
                    模拟面试
                 </button>
@@ -717,7 +726,7 @@ const App: React.FC = () => {
                 
                 {/* 板块一：简历优化 */}
                 <button 
-                  onClick={() => setStep('UPLOAD')}
+                  onClick={() => requireLogin(() => setStep('UPLOAD'))}
                   className="rounded-xl border border-zinc-200 bg-white overflow-hidden text-left hover:border-zinc-300 hover:shadow-sm transition-all group"
                 >
                   <div className="px-5 py-4 bg-zinc-50 border-b border-zinc-100 group-hover:bg-zinc-100 transition-colors">
@@ -767,7 +776,7 @@ const App: React.FC = () => {
 
                 {/* 板块二：模拟面试 */}
                 <button 
-                  onClick={() => setStep('INTERVIEW')}
+                  onClick={() => requireLogin(() => setStep('INTERVIEW'))}
                   className="rounded-xl border border-zinc-200 bg-white overflow-hidden text-left hover:border-zinc-300 hover:shadow-sm transition-all group"
                 >
                   <div className="px-5 py-4 bg-zinc-50 border-b border-zinc-100 group-hover:bg-zinc-100 transition-colors">
