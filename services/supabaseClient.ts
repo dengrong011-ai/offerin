@@ -1,15 +1,26 @@
 import { createClient } from '@supabase/supabase-js';
 
 // Supabase 配置
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string || '';
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string || '';
 
-// 检查配置是否有效
-export const isSupabaseConfigured = supabaseUrl && supabaseAnonKey && 
-  supabaseUrl !== 'YOUR_SUPABASE_URL' && 
-  supabaseAnonKey !== 'YOUR_SUPABASE_ANON_KEY';
+// 调试日志（生产环境会被移除）
+if (import.meta.env.DEV) {
+  console.log('Supabase URL:', supabaseUrl ? '已配置' : '未配置');
+  console.log('Supabase Key:', supabaseAnonKey ? '已配置' : '未配置');
+}
 
-// 创建 Supabase 客户端（如果配置无效则使用空字符串，后续会在使用时检查）
+// 检查配置是否有效的函数
+export const checkSupabaseConfigured = (): boolean => {
+  const url = import.meta.env.VITE_SUPABASE_URL as string || '';
+  const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string || '';
+  return !!(url && key && url.includes('supabase.co'));
+};
+
+// 向后兼容的静态检查
+export const isSupabaseConfigured = !!(supabaseUrl && supabaseAnonKey && supabaseUrl.includes('supabase.co'));
+
+// 创建 Supabase 客户端
 export const supabase = createClient(
   supabaseUrl || 'https://placeholder.supabase.co', 
   supabaseAnonKey || 'placeholder-key'
