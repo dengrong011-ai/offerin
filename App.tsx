@@ -952,7 +952,7 @@ const App: React.FC = () => {
                       </div>
                     </div>
                     <button 
-                      onClick={() => setStep('INTERVIEW')}
+                      onClick={() => requireLogin(() => setStep('INTERVIEW'))}
                       className="shrink-0 group inline-flex items-center gap-2 px-5 py-2.5 bg-white text-zinc-900 border border-zinc-300 rounded-lg text-[14px] font-medium hover:border-zinc-400 hover:shadow-sm transition-all"
                     >
                       <Mic size={16} />
