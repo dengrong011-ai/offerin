@@ -1,10 +1,14 @@
-import { supabase, UserProfile, MEMBERSHIP_LIMITS } from './supabaseClient';
+import { supabase, UserProfile, MEMBERSHIP_LIMITS, isSupabaseConfigured } from './supabaseClient';
 import type { User, Session } from '@supabase/supabase-js';
 
 // ============ 认证相关 ============
 
 // 发送邮箱验证码 (6位数字 OTP)
 export const sendOTP = async (email: string): Promise<{ success: boolean; error?: string }> => {
+  if (!isSupabaseConfigured) {
+    return { success: false, error: '登录服务未配置，请联系管理员' };
+  }
+  
   try {
     const { error } = await supabase.auth.signInWithOtp({
       email,

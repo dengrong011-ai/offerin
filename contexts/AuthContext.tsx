@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import type { User, Session } from '@supabase/supabase-js';
-import { supabase, UserProfile } from '../services/supabaseClient';
+import { supabase, UserProfile, isSupabaseConfigured } from '../services/supabaseClient';
 import { getUserProfile, onAuthStateChange } from '../services/authService';
 
 interface AuthContextType {
@@ -39,6 +39,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   useEffect(() => {
+    // 如果 Supabase 未配置，直接设置 loading 为 false
+    if (!isSupabaseConfigured) {
+      console.warn('Supabase 未配置，认证功能不可用');
+      setLoading(false);
+      return;
+    }
+
     // 获取初始会话
     const initAuth = async () => {
       try {

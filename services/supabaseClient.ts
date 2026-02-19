@@ -1,10 +1,19 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Supabase 配置 - 请替换为你的实际值
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'YOUR_SUPABASE_URL';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'YOUR_SUPABASE_ANON_KEY';
+// Supabase 配置
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// 检查配置是否有效
+export const isSupabaseConfigured = supabaseUrl && supabaseAnonKey && 
+  supabaseUrl !== 'YOUR_SUPABASE_URL' && 
+  supabaseAnonKey !== 'YOUR_SUPABASE_ANON_KEY';
+
+// 创建 Supabase 客户端（如果配置无效则使用空字符串，后续会在使用时检查）
+export const supabase = createClient(
+  supabaseUrl || 'https://placeholder.supabase.co', 
+  supabaseAnonKey || 'placeholder-key'
+);
 
 // 用户类型定义
 export interface UserProfile {
