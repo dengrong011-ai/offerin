@@ -1,0 +1,192 @@
+/* 面试评估报告样式优化 */
+.interview-report,
+.interview-questions {
+  line-height: 1.75;
+}
+
+/* 标题样式 */
+.interview-report h1,
+.interview-questions h1 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #18181b;
+  margin-top: 1.5rem;
+  margin-bottom: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid #e4e4e7;
+}
+
+.interview-report h2,
+.interview-questions h2 {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #18181b;
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.interview-report h3,
+.interview-questions h3 {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: #27272a;
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+}
+
+/* 段落样式 */
+.interview-report p,
+.interview-questions p {
+  margin-bottom: 0.875rem;
+  color: #3f3f46;
+}
+
+/* 列表样式 - 增加间距 */
+.interview-report ul,
+.interview-questions ul {
+  margin-top: 0.5rem;
+  margin-bottom: 1rem;
+  padding-left: 1.25rem;
+}
+
+.interview-report ol,
+.interview-questions ol {
+  margin-top: 0.5rem;
+  margin-bottom: 1rem;
+  padding-left: 1.5rem;
+}
+
+.interview-report li,
+.interview-questions li {
+  margin-bottom: 0.625rem;
+  padding-left: 0.25rem;
+  line-height: 1.7;
+}
+
+.interview-report ul > li::marker {
+  color: #a1a1aa;
+}
+
+.interview-report ol > li::marker {
+  color: #71717a;
+  font-weight: 600;
+}
+
+/* 表格样式优化 */
+.interview-report table {
+  width: 100%;
+  margin: 1rem 0 1.5rem 0;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.875rem;
+  border: 1px solid #e4e4e7;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.interview-report thead {
+  background: #f4f4f5;
+}
+
+.interview-report th {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  font-weight: 600;
+  color: #18181b;
+  border-bottom: 1px solid #e4e4e7;
+  white-space: nowrap;
+}
+
+.interview-report td {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #f4f4f5;
+  vertical-align: top;
+}
+
+.interview-report tr:last-child td {
+  border-bottom: none;
+}
+
+.interview-report tbody tr:hover {
+  background: #fafafa;
+}
+
+/* 引用块样式 - 用于提问目的等 */
+.interview-report blockquote,
+.interview-questions blockquote {
+  margin: 0.5rem 0 1rem 0;
+  padding: 0.625rem 1rem;
+  background: #f8f9fa;
+  border-left: 3px solid #d4d4d8;
+  border-radius: 0 6px 6px 0;
+  color: #52525b;
+  font-size: 0.875rem;
+}
+
+.interview-questions blockquote {
+  background: #fffbeb;
+  border-left-color: #fbbf24;
+  color: #78350f;
+}
+
+/* 加粗文本 */
+.interview-report strong,
+.interview-questions strong {
+  font-weight: 700;
+  color: #18181b;
+}
+
+/* 斜体文本 */
+.interview-report em,
+.interview-questions em {
+  font-style: italic;
+  color: #52525b;
+}
+
+/* 行内代码 */
+.interview-report code,
+.interview-questions code {
+  background: #f4f4f5;
+  color: #18181b;
+  padding: 0.125rem 0.375rem;
+  border-radius: 4px;
+  font-size: 0.875em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* 分割线 */
+.interview-report hr {
+  margin: 1.5rem 0;
+  border: none;
+  border-top: 1px solid #e4e4e7;
+}
+
+/* 星级评分样式 */
+.interview-report p:has(⭐),
+.interview-report td:has(⭐) {
+  white-space: nowrap;
+}
+
+/* 评分标签优化 */
+.interview-report strong:has(+) {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+/* 第一个标题不需要顶部边距 */
+.interview-report > h1:first-child,
+.interview-report > h2:first-child,
+.interview-questions > h1:first-child,
+.interview-questions > h2:first-child {
+  margin-top: 0;
+}
+
+/* 最后一个元素不需要底部边距 */
+.interview-report > *:last-child,
+.interview-questions > *:last-child {
+  margin-bottom: 0;
+}

@@ -31,7 +31,7 @@ const MarkdownRenderer: React.FC<Props> = ({
     nameMb: `${Math.round(8 * densityMultiplier)}px`, 
     h2Top: `${Math.round(12 * densityMultiplier)}px`, 
     h2Bottom: `${Math.round(5 * densityMultiplier)}px`,
-    h2PaddingBottom: `${Math.round(2 * densityMultiplier)}px`,
+    h2PaddingBottom: `${Math.round(6 * densityMultiplier)}px`,
     h3Top: `${Math.round(10 * densityMultiplier)}px`,
     h3Bottom: `${Math.round(3 * densityMultiplier)}px`,
     listMb: `${Math.round(2 * densityMultiplier)}px`, 
@@ -83,8 +83,9 @@ const MarkdownRenderer: React.FC<Props> = ({
 
     html = html
       .replace(/^## (.*$)/gm, `
-        <div style="margin-top: ${s.h2Top}; margin-bottom: ${s.h2Bottom}; padding-bottom: 4px; border-bottom: 1.5px solid #18181b; width: 100%;">
+        <div style="margin-top: ${s.h2Top}; margin-bottom: ${s.h2Bottom}; border-bottom: 1.5px solid #18181b; width: 100%;">
           <h2 class="font-bold text-slate-900 uppercase" style="font-size: 11pt; font-family: ${s.fontFamily}; letter-spacing: 1px; line-height: 1.4; margin: 0;">$1</h2>
+          <div style="height: 8px; background: transparent;"></div>
         </div>
       `)
       

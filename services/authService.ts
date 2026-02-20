@@ -109,12 +109,23 @@ export const updateUserProfile = async (userId: string, updates: Partial<UserPro
 
 // ============ 使用限制相关 ============
 
+// VIP 白名单邮箱（无限使用）
+const VIP_WHITELIST_EMAILS = [
+  'dengrong011@gmail.com',
+];
+
 // 检查用户是否可以执行操作
 export const checkUsageLimit = async (
   userId: string, 
-  actionType: 'diagnosis' | 'interview' | 'resume_edit'
+  actionType: 'diagnosis' | 'interview' | 'resume_edit',
+  userEmail?: string
 ): Promise<{ allowed: boolean; remaining: number; limit: number }> => {
   try {
+    // 白名单邮箱无限使用
+    if (userEmail && VIP_WHITELIST_EMAILS.includes(userEmail.toLowerCase())) {
+      return { allowed: true, remaining: -1, limit: -1 };
+    }
+
     // 获取用户资料
     const profile = await getUserProfile(userId);
     if (!profile) {

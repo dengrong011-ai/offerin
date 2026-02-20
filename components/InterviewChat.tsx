@@ -3,13 +3,12 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   Briefcase, User, Hash, Info, AlertCircle, Award, 
   Send, Square, Plus, X, FileText, Upload, Settings,
-  Download, RefreshCw, Loader2, ArrowLeft, ChevronDown, Image as ImageIcon, FileDown,
+  Download, RefreshCw, Loader2, ArrowLeft, ChevronDown, Image as ImageIcon,
   Play, MessageSquare, Users, Mic, MicOff, StopCircle, CheckCircle2, File, Paperclip
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import html2canvas from 'html2canvas';
-import { jsPDF } from 'jspdf';
-import type { InterviewMessage, InterviewSettings, InterviewStatus, InterviewMode } from '../types';
+import type { InterviewMessage, InterviewSettings, InterviewStatus, InterviewMode, InterviewerRole, InterviewSupplementInfo } from '../types';
 import { 
   runInterview, 
   exportInterviewRecord, 
@@ -36,7 +35,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
   const [messages, setMessages] = useState<InterviewMessage[]>([]);
   const [settings, setSettings] = useState<InterviewSettings>({
     totalRounds: 8,
-    interviewStyle: 'standard',
+    interviewerRole: 'peers',
     mode: 'simulation'
   });
   const [showSettings, setShowSettings] = useState(true);
@@ -55,6 +54,15 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
   const [fileError, setFileError] = useState<string | null>(null);
   const resumeFileInputRef = useRef<HTMLInputElement>(null);
   const jdFileInputRef = useRef<HTMLInputElement>(null);
+  
+  // 补充信息状态（薪资、到岗时间等）
+  const [supplementInfo, setSupplementInfo] = useState<InterviewSupplementInfo>({
+    currentSalary: '',
+    expectedSalary: '',
+    availableTime: '',
+    otherInfo: ''
+  });
+  const [showSupplementInfo, setShowSupplementInfo] = useState(true);
   
   // 人机交互模式状态
   const [interactiveState, setInteractiveState] = useState<InteractiveInterviewState | null>(null);
@@ -334,14 +342,18 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
             setStatus('error');
           }
         },
-        abortControllerRef.current.signal
+        abortControllerRef.current.signal,
+        // 只有填写了内容才传递补充信息
+        (supplementInfo.currentSalary || supplementInfo.expectedSalary || supplementInfo.availableTime || supplementInfo.otherInfo) 
+          ? supplementInfo 
+          : undefined
       );
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         setStatus('stopped');
       }
     }
-  }, [resumeText, jdText, settings]);
+  }, [resumeText, jdText, settings, supplementInfo]);
 
   // 人机交互模式开始面试
   const handleStartInteractiveInterview = useCallback(async () => {
@@ -404,7 +416,11 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
             setTimeout(() => inputTextareaRef.current?.focus(), 100);
           }
         },
-        abortControllerRef.current.signal
+        abortControllerRef.current.signal,
+        // 只有填写了内容才传递补充信息
+        (supplementInfo.currentSalary || supplementInfo.expectedSalary || supplementInfo.availableTime || supplementInfo.otherInfo) 
+          ? supplementInfo 
+          : undefined
       );
 
       if (state) {
@@ -415,7 +431,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
         setStatus('stopped');
       }
     }
-  }, [resumeText, jdText, settings]);
+  }, [resumeText, jdText, settings, supplementInfo]);
 
   // 文件压缩和处理函数
   const compressImage = (file: File): Promise<{data: string, mime: string}> => {
@@ -715,50 +731,47 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
     }]);
   };
 
-  // 导出为 PDF
-  const handleExportPDF = async () => {
-    if (!chatContainerRef.current) return;
-    setIsExporting(true);
+  // 导出为 Markdown 文本
+  const handleExportMarkdown = () => {
     setShowExportMenu(false);
     
-    try {
-      const element = chatContainerRef.current;
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: '#ffffff',
-        logging: false,
-        windowWidth: element.scrollWidth,
-        windowHeight: element.scrollHeight
-      });
-      
-      const imgData = canvas.toDataURL('image/png');
-      const imgWidth = 210;
-      const pageHeight = 297;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      let heightLeft = imgHeight;
-      let position = 0;
-      
-      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight;
-      
-      while (heightLeft > 0) {
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-        heightLeft -= pageHeight;
+    const timestamp = new Date().toISOString().split('T')[0];
+    const modeLabel = settings.mode === 'interactive' ? '人机交互' : '纯模拟';
+    const roleLabels: Record<string, string> = {
+      ta: '第一轮/TA',
+      peers: '第二轮/Peers',
+      leader: '第三轮/+1',
+      director: '第四轮/+2',
+      hrbp: '第五轮/HRBP'
+    };
+    
+    let markdown = `# 模拟面试记录\n\n`;
+    markdown += `- **日期**: ${timestamp}\n`;
+    markdown += `- **模式**: ${modeLabel}\n`;
+    markdown += `- **面试轮次**: ${roleLabels[settings.interviewerRole] || settings.interviewerRole}\n`;
+    markdown += `- **对话轮数**: ${settings.rounds} 轮\n\n`;
+    markdown += `---\n\n`;
+    
+    messages.forEach((msg) => {
+      if (msg.type === 'round') {
+        markdown += `### ${msg.content}\n\n`;
+      } else if (msg.type === 'system') {
+        markdown += `> 📌 ${msg.content}\n\n`;
+      } else if (msg.type === 'interviewer') {
+        markdown += `**🎤 面试官**:\n\n${msg.content}\n\n`;
+      } else if (msg.type === 'interviewee') {
+        markdown += `**👤 面试者**:\n\n${msg.content}\n\n`;
+      } else if (msg.type === 'evaluation') {
+        markdown += `---\n\n${msg.content}\n`;
       }
-      
-      const timestamp = new Date().toISOString().split('T')[0];
-      const modeLabel = settings.mode === 'interactive' ? '人机交互' : '纯模拟';
-      pdf.save(`面试记录_${modeLabel}_${timestamp}.pdf`);
-    } catch (error) {
-      console.error('PDF export error:', error);
-    } finally {
-      setIsExporting(false);
-    }
+    });
+    
+    const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `面试记录_${modeLabel}_${timestamp}.md`;
+    link.click();
+    URL.revokeObjectURL(link.href);
   };
 
   // 导出为图片
@@ -896,20 +909,42 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
     }
 
     if (type === 'summary') {
+      // 解析评估报告和反问建议两个部分
+      const fullContent = content || '正在生成评估报告...';
+      const [reportContent, questionsContent] = fullContent.split('===SECTION_DIVIDER===');
+      const hasQuestionsSection = questionsContent && questionsContent.trim().length > 0;
+      
       return (
-        <div key={index} className="my-6 mx-auto max-w-2xl">
+        <div key={index} className="my-6 mx-auto max-w-2xl space-y-4">
+          {/* 评估报告卡片 */}
           <div className="bg-zinc-50 border border-zinc-200 rounded-lg overflow-hidden">
             <div className="px-4 py-3 bg-zinc-100 border-b border-zinc-200 flex items-center gap-2">
               <Award size={16} className="text-zinc-600" />
-              <span className="text-[14px] font-semibold text-zinc-800">面试评估报告</span>
-              {isStreaming && <Loader2 size={14} className="animate-spin text-zinc-400 ml-auto" />}
+              <span className="text-[14px] font-semibold text-zinc-800">📊 面试评估报告</span>
+              {isStreaming && !hasQuestionsSection && <Loader2 size={14} className="animate-spin text-zinc-400 ml-auto" />}
             </div>
-            <div className="p-4">
-              <div className="text-[13px] text-zinc-700 prose prose-sm max-w-none prose-zinc">
-                <ReactMarkdown>{content || '正在生成评估报告...'}</ReactMarkdown>
+            <div className="p-5">
+              <div className="text-[14px] text-zinc-700 leading-relaxed interview-report">
+                <ReactMarkdown>{reportContent?.trim() || '正在生成评估报告...'}</ReactMarkdown>
               </div>
             </div>
           </div>
+          
+          {/* 推荐反问卡片 - 只有在有内容时显示 */}
+          {hasQuestionsSection && (
+            <div className="bg-amber-50/50 border border-amber-200 rounded-lg overflow-hidden">
+              <div className="px-4 py-3 bg-amber-100/60 border-b border-amber-200 flex items-center gap-2">
+                <span className="text-[16px]">🎯</span>
+                <span className="text-[14px] font-semibold text-amber-800">本轮推荐反问</span>
+                {isStreaming && <Loader2 size={14} className="animate-spin text-amber-500 ml-auto" />}
+              </div>
+              <div className="p-5">
+                <div className="text-[14px] text-zinc-700 leading-relaxed interview-questions">
+                  <ReactMarkdown>{questionsContent.trim()}</ReactMarkdown>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       );
     }
@@ -943,31 +978,33 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowSettings(!showSettings)}
-            className="p-2 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-md transition-colors"
+            className="p-2 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-md transition-colors flex items-center gap-1.5"
           >
             <Settings size={16} />
+            <span className="text-[12px]">{showSettings ? '隐藏设置' : '显示设置'}</span>
           </button>
           {status === 'completed' && (
             <div className="relative" ref={exportMenuRef}>
               <button
                 onClick={() => setShowExportMenu(!showExportMenu)}
                 disabled={isExporting}
-                className="p-2 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-md transition-colors flex items-center gap-1"
+                className="p-2 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-md transition-colors flex items-center gap-1.5"
               >
                 {isExporting ? (
                   <Loader2 size={16} className="animate-spin" />
                 ) : (
                   <Download size={16} />
                 )}
+                <span className="text-[12px]">下载记录</span>
               </button>
               {showExportMenu && (
                 <div className="absolute right-0 top-full mt-1 bg-white border border-zinc-200 rounded-lg shadow-lg py-1 z-50 min-w-[140px]">
                   <button
-                    onClick={handleExportPDF}
+                    onClick={handleExportMarkdown}
                     className="w-full px-3 py-2 text-left text-[13px] text-zinc-700 hover:bg-zinc-50 flex items-center gap-2 transition-colors"
                   >
-                    <FileDown size={14} className="text-zinc-400" />
-                    导出 PDF
+                    <FileText size={14} className="text-zinc-400" />
+                    导出文本
                   </button>
                   <button
                     onClick={handleExportImage}
@@ -1032,14 +1069,14 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
               </p>
             </div>
 
-            <div className="grid grid-cols-2 gap-6">
+            <div className="space-y-4">
               <div>
-                <label className="text-[12px] font-medium text-zinc-700 mb-2 block">面试轮次</label>
+                <label className="text-[12px] font-medium text-zinc-700 mb-2 block">问答轮数</label>
                 <div className="flex items-center gap-3">
                   <input
                     type="range"
-                    min="3"
-                    max="15"
+                    min="6"
+                    max="12"
                     value={settings.totalRounds}
                     onChange={(e) => setSettings({ ...settings, totalRounds: parseInt(e.target.value) })}
                     className="flex-1 h-1 bg-zinc-200 rounded appearance-none cursor-pointer accent-zinc-900"
@@ -1049,24 +1086,48 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
                 </div>
               </div>
               <div>
-                <label className="text-[12px] font-medium text-zinc-700 mb-2 block">面试风格</label>
-                <div className="flex gap-2">
+                <label className="text-[12px] font-medium text-zinc-700 mb-2 block">面试官角色</label>
+                <div className="grid grid-cols-5 gap-2">
                   {[
-                    { value: 'standard', label: '标准', icon: '⚖️' },
-                    { value: 'pressure', label: '压力', icon: '🔥' },
-                    { value: 'friendly', label: '友好', icon: '😊' }
-                  ].map(style => (
+                    { value: 'ta', label: 'TA', icon: '😊', focus: '初筛', desc: '动机·稳定性·薪资初探' },
+                    { value: 'peers', label: 'Peers', icon: '⚖️', focus: '专业验证', desc: '技术能力·项目深挖' },
+                    { value: 'leader', label: '+1', icon: '🔥', focus: 'Leader认可', desc: '潜力·方法论·适配' },
+                    { value: 'director', label: '+2', icon: '👔', focus: '高层背书', desc: '视野·战略·价值观' },
+                    { value: 'hrbp', label: 'HRBP', icon: '💰', focus: 'Offer谈判', desc: '薪资·压价·到岗' }
+                  ].map((role, index) => (
                     <button
-                      key={style.value}
-                      onClick={() => setSettings({ ...settings, interviewStyle: style.value as any })}
+                      key={role.value}
+                      onClick={() => setSettings({ ...settings, interviewerRole: role.value as any })}
                       disabled={status === 'running' || status === 'waiting_input'}
-                      className={`flex-1 py-1.5 px-2 rounded-md text-[12px] border transition-colors ${
-                        settings.interviewStyle === style.value
-                          ? 'bg-zinc-900 text-white border-zinc-900'
-                          : 'bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400'
+                      className={`relative flex flex-col items-center py-3 px-2 rounded-lg border-2 transition-all ${
+                        settings.interviewerRole === role.value
+                          ? 'bg-zinc-900 text-white border-zinc-900 shadow-md'
+                          : 'bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400 hover:bg-zinc-50'
                       } ${(status === 'running' || status === 'waiting_input') ? 'opacity-50 cursor-not-allowed' : ''}`}
                     >
-                      {style.icon} {style.label}
+                      {/* 轮次标记 */}
+                      <span className={`absolute -top-2 -left-1 text-[9px] px-1.5 py-0.5 rounded-full ${
+                        settings.interviewerRole === role.value 
+                          ? 'bg-white text-zinc-900' 
+                          : 'bg-zinc-100 text-zinc-500'
+                      }`}>
+                        第{index + 1}轮
+                      </span>
+                      {/* 图标和名称 */}
+                      <span className="text-[16px] mb-1">{role.icon}</span>
+                      <span className="text-[12px] font-medium">{role.label}</span>
+                      {/* 核心关注点 */}
+                      <span className={`text-[10px] mt-1 ${
+                        settings.interviewerRole === role.value ? 'text-zinc-300' : 'text-zinc-400'
+                      }`}>
+                        {role.focus}
+                      </span>
+                      {/* 详细描述 - 仅选中时显示 */}
+                      {settings.interviewerRole === role.value && (
+                        <span className="text-[9px] mt-1 text-zinc-400 text-center leading-tight">
+                          {role.desc}
+                        </span>
+                      )}
                     </button>
                   ))}
                 </div>
@@ -1129,6 +1190,46 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
                 </div>
               )}
 
+              {/* JD Input - 与简历优化页面顺序一致 */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-[13px] font-medium text-zinc-700 flex items-center gap-1.5">
+                    <Briefcase size={13} className="text-zinc-400" />
+                    目标岗位 JD
+                  </label>
+                  <button 
+                    onClick={() => jdFileInputRef.current?.click()} 
+                    disabled={processingState.jd} 
+                    className={`text-[12px] text-zinc-400 hover:text-zinc-900 font-medium flex items-center gap-1 transition-colors ${processingState.jd ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    <Upload size={11} /> 上传文件
+                  </button>
+                </div>
+                {/* JD 完整度提示 */}
+                <div className="px-3 py-2 bg-amber-50 border border-amber-200 rounded-md">
+                  <p className="text-[11px] text-amber-700 leading-relaxed">
+                    <span className="font-semibold">💡 提示：</span>请提供尽可能<span className="font-semibold">详细、完整</span>的 JD 内容（包括岗位职责、任职要求、团队介绍等），这将帮助 AI 更精准地优化简历、模拟更真实的面试问题。
+                  </p>
+                </div>
+                <input 
+                  type="file" 
+                  ref={jdFileInputRef} 
+                  className="hidden" 
+                  accept=".pdf,.doc,.docx,image/*" 
+                  onChange={(e) => handleFileChange(e, 'jd')} 
+                />
+                <textarea
+                  value={jdText}
+                  onChange={(e) => setJdText(e.target.value)}
+                  onPaste={(e) => handlePaste(e, 'jd')}
+                  placeholder="粘贴目标岗位描述（建议包含：岗位职责、任职要求、团队/业务介绍等）..."
+                  className="w-full h-32 p-4 bg-zinc-50 border border-zinc-200 rounded-md focus:ring-1 focus:ring-zinc-400 focus:border-zinc-400 outline-none text-[13px] text-zinc-800 placeholder:text-zinc-400 resize-none"
+                />
+                {processingState.jd && <FileChip name="" mime="" onRemove={() => {}} isLoading={true} />}
+                {!processingState.jd && jdFile && <FileChip name={jdFile.name} mime={jdFile.mime} onRemove={() => setJdFile(null)} />}
+              </div>
+
+              {/* Resume Input */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="text-[13px] font-medium text-zinc-700 flex items-center gap-1.5">
@@ -1154,43 +1255,88 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
                   value={resumeText}
                   onChange={(e) => setResumeText(e.target.value)}
                   onPaste={(e) => handlePaste(e, 'resume')}
-                  placeholder="粘贴你的简历内容..."
-                  className="w-full h-40 p-4 bg-zinc-50 border border-zinc-200 rounded-md focus:ring-1 focus:ring-zinc-400 focus:border-zinc-400 outline-none text-[13px] text-zinc-800 placeholder:text-zinc-400 resize-none"
+                  placeholder="粘贴简历内容，或直接上传/截图粘贴..."
+                  className="w-full h-44 p-4 bg-zinc-50 border border-zinc-200 rounded-md focus:ring-1 focus:ring-zinc-400 focus:border-zinc-400 outline-none text-[13px] text-zinc-800 placeholder:text-zinc-400 resize-none"
                 />
                 {processingState.resume && <FileChip name="" mime="" onRemove={() => {}} isLoading={true} />}
                 {!processingState.resume && resumeFile && <FileChip name={resumeFile.name} mime={resumeFile.mime} onRemove={() => setResumeFile(null)} />}
               </div>
+
+              {/* 补充信息（可选） */}
               <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-[13px] font-medium text-zinc-700 flex items-center gap-1.5">
-                    <Briefcase size={13} className="text-zinc-400" />
-                    目标岗位 JD
-                  </label>
-                  <button 
-                    onClick={() => jdFileInputRef.current?.click()} 
-                    disabled={processingState.jd} 
-                    className={`text-[12px] text-zinc-400 hover:text-zinc-900 font-medium flex items-center gap-1 transition-colors ${processingState.jd ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  >
-                    <Upload size={11} /> 上传文件
-                  </button>
-                </div>
-                <input 
-                  type="file" 
-                  ref={jdFileInputRef} 
-                  className="hidden" 
-                  accept=".pdf,.doc,.docx,image/*" 
-                  onChange={(e) => handleFileChange(e, 'jd')} 
-                />
-                <textarea
-                  value={jdText}
-                  onChange={(e) => setJdText(e.target.value)}
-                  onPaste={(e) => handlePaste(e, 'jd')}
-                  placeholder="粘贴目标岗位的职位描述..."
-                  className="w-full h-32 p-4 bg-zinc-50 border border-zinc-200 rounded-md focus:ring-1 focus:ring-zinc-400 focus:border-zinc-400 outline-none text-[13px] text-zinc-800 placeholder:text-zinc-400 resize-none"
-                />
-                {processingState.jd && <FileChip name="" mime="" onRemove={() => {}} isLoading={true} />}
-                {!processingState.jd && jdFile && <FileChip name={jdFile.name} mime={jdFile.mime} onRemove={() => setJdFile(null)} />}
+                <button
+                  onClick={() => setShowSupplementInfo(!showSupplementInfo)}
+                  className="flex items-center gap-1.5 text-[13px] text-zinc-500 hover:text-zinc-700 transition-colors"
+                >
+                  <ChevronDown 
+                    size={14} 
+                    className={`transition-transform ${showSupplementInfo ? 'rotate-180' : ''}`} 
+                  />
+                  <span className="font-medium">📋 补充信息（可选，帮助模拟谈薪环节）</span>
+                </button>
+                
+                {showSupplementInfo && (
+                  <div className="p-4 bg-zinc-50 border border-zinc-200 rounded-lg space-y-3">
+                    <p className="text-[11px] text-zinc-500 leading-relaxed">
+                      以下信息仅用于本次模拟面试，帮助 AI 更真实地模拟谈薪环节，助你更好地争取利益。
+                      <span className="text-amber-600 font-medium"> 🔒 不会被存储</span>
+                    </p>
+                    
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <label className="text-[12px] font-medium text-zinc-600 flex items-center gap-1">
+                          💰 当前薪资结构
+                        </label>
+                        <textarea
+                          value={supplementInfo.currentSalary}
+                          onChange={(e) => setSupplementInfo(prev => ({ ...prev, currentSalary: e.target.value }))}
+                          placeholder="例：Base 30k/月 + 年终4个月 + 股票 xxx 股..."
+                          className="w-full h-16 p-2.5 bg-white border border-zinc-200 rounded-md focus:ring-1 focus:ring-zinc-400 focus:border-zinc-400 outline-none text-[12px] text-zinc-700 placeholder:text-zinc-400 resize-none"
+                        />
+                      </div>
+                      
+                      <div className="space-y-1.5">
+                        <label className="text-[12px] font-medium text-zinc-600 flex items-center gap-1">
+                          🎯 期望薪资范围
+                        </label>
+                        <textarea
+                          value={supplementInfo.expectedSalary}
+                          onChange={(e) => setSupplementInfo(prev => ({ ...prev, expectedSalary: e.target.value }))}
+                          placeholder="例：Base 40-50k/月，总包希望涨幅 30%..."
+                          className="w-full h-16 p-2.5 bg-white border border-zinc-200 rounded-md focus:ring-1 focus:ring-zinc-400 focus:border-zinc-400 outline-none text-[12px] text-zinc-700 placeholder:text-zinc-400 resize-none"
+                        />
+                      </div>
+                      
+                      <div className="space-y-1.5">
+                        <label className="text-[12px] font-medium text-zinc-600 flex items-center gap-1">
+                          📅 最快到岗时间
+                        </label>
+                        <input
+                          type="text"
+                          value={supplementInfo.availableTime}
+                          onChange={(e) => setSupplementInfo(prev => ({ ...prev, availableTime: e.target.value }))}
+                          placeholder="例：1个月内 / 需要交接2周 / 随时..."
+                          className="w-full p-2.5 bg-white border border-zinc-200 rounded-md focus:ring-1 focus:ring-zinc-400 focus:border-zinc-400 outline-none text-[12px] text-zinc-700 placeholder:text-zinc-400"
+                        />
+                      </div>
+                      
+                      <div className="space-y-1.5">
+                        <label className="text-[12px] font-medium text-zinc-600 flex items-center gap-1">
+                          📝 其他补充
+                        </label>
+                        <input
+                          type="text"
+                          value={supplementInfo.otherInfo}
+                          onChange={(e) => setSupplementInfo(prev => ({ ...prev, otherInfo: e.target.value }))}
+                          placeholder="例：有其他 Offer 在手 / 需要 WLB..."
+                          className="w-full p-2.5 bg-white border border-zinc-200 rounded-md focus:ring-1 focus:ring-zinc-400 focus:border-zinc-400 outline-none text-[12px] text-zinc-700 placeholder:text-zinc-400"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
+
               <div className="pt-2">
                 <button
                   onClick={handleStartInterview}
