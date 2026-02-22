@@ -1,8 +1,141 @@
 
 import { GoogleGenAI } from "@google/genai";
 import type { InterviewMessage, InterviewSettings, InterviewMode, InterviewerRole, InterviewSupplementInfo } from '../types';
+import {
+  saveInterviewHistory as saveInterviewHistoryToService,
+  hashString,
+  extractInterviewContent,
+  type InterviewHistoryRecord
+} from './interviewHistoryService';
 
 const getApiKey = () => process.env.API_KEY || process.env.GEMINI_API_KEY || '';
+
+// ==================== 面试历史管理（问题多样性控制）====================
+// 注意：面试历史现在通过 interviewHistoryService.ts 管理，支持云端同步
+
+// 重新导出供外部使用
+export { extractInterviewContent } from './interviewHistoryService';
+
+// 获取面试历史（兼容旧接口，内部使用本地存储版本）
+export const getInterviewHistory = (resumeHash: string): InterviewHistoryRecord[] => {
+  // 这里使用本地存储版本，因为这个函数在同步上下文中调用
+  // 真正的云端同步在 runInterview 和 processUserAnswer 中处理
+  try {
+    const stored = localStorage.getItem('offer_ing_interview_history');
+    if (!stored) return [];
+    
+    const allHistory: InterviewHistoryRecord[] = JSON.parse(stored);
+    return allHistory
+      .filter(h => h.resumeHash === resumeHash)
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, 10);
+  } catch {
+    return [];
+  }
+};
+
+// 保存面试历史（本地存储版本，用于兼容）
+export const saveInterviewHistory = (
+  resume: string,
+  questionsAsked: string[],
+  experiencesCovered: string[]
+): void => {
+  try {
+    const resumeHash = hashString(resume);
+    const stored = localStorage.getItem('offer_ing_interview_history');
+    const allHistory: InterviewHistoryRecord[] = stored ? JSON.parse(stored) : [];
+    
+    // 添加新记录
+    const newRecord: InterviewHistoryRecord = {
+      resumeHash,
+      questionsAsked,
+      experiencesCovered,
+      timestamp: Date.now()
+    };
+    
+    allHistory.unshift(newRecord);
+    
+    // 保留每份简历最近的记录，总数限制在50条
+    const trimmedHistory = allHistory.slice(0, 50);
+    
+    localStorage.setItem('offer_ing_interview_history', JSON.stringify(trimmedHistory));
+  } catch (error) {
+    console.error('保存面试历史失败:', error);
+  }
+};
+
+// 异步保存面试历史（支持云端同步）
+export const saveInterviewHistoryAsync = async (
+  userId: string | null,
+  resume: string,
+  questionsAsked: string[],
+  experiencesCovered: string[],
+  settings?: InterviewSettings
+): Promise<void> => {
+  const resumeHash = hashString(resume);
+  const record: InterviewHistoryRecord = {
+    resumeHash,
+    questionsAsked,
+    experiencesCovered,
+    interviewMode: settings?.mode,
+    interviewerRole: settings?.interviewerRole,
+    totalRounds: settings?.totalRounds,
+    timestamp: Date.now()
+  };
+  
+  await saveInterviewHistoryToService(userId, record);
+};
+
+// 生成多样性指令（注入到 prompt 中）
+const generateDiversityInstructions = (resume: string): string => {
+  const resumeHash = hashString(resume);
+  const history = getInterviewHistory(resumeHash);
+  
+  if (history.length === 0) {
+    return '';
+  }
+  
+  // 合并最近几次面试的问题和经历
+  const recentQuestions: string[] = [];
+  const recentExperiences: string[] = [];
+  
+  for (const record of history.slice(0, 3)) { // 只看最近3次
+    recentQuestions.push(...record.questionsAsked);
+    recentExperiences.push(...record.experiencesCovered);
+  }
+  
+  // 去重
+  const uniqueQuestions = [...new Set(recentQuestions)].slice(0, 15);
+  const uniqueExperiences = [...new Set(recentExperiences)].slice(0, 10);
+  
+  if (uniqueQuestions.length === 0 && uniqueExperiences.length === 0) {
+    return '';
+  }
+  
+  return `
+# 【重要】问题多样性要求（重复率控制在35%以内）
+该候选人已进行过 ${history.length} 次模拟面试。为保证练习效果，请遵循以下规则：
+
+## 避免重复的问题方向（之前已问过）
+${uniqueQuestions.length > 0 ? uniqueQuestions.map(q => `- ${q}`).join('\n') : '- 暂无'}
+
+## 已深挖过的项目/经历关键词
+${uniqueExperiences.length > 0 ? uniqueExperiences.map(e => `- ${e}`).join('\n') : '- 暂无'}
+
+## 本次面试请尝试
+1. **选择不同的项目/经历深挖**：从简历中选择上面未列出的项目或经历进行提问
+2. **使用不同的切入角度**：
+   - 如果之前问了"结果"，这次可以问"过程"或"挑战"
+   - 如果之前问了"做了什么"，这次可以问"为什么这么做"或"学到了什么"
+   - 如果之前问了技术细节，这次可以问业务价值或团队协作
+3. **创新问题形式**：
+   - 情景假设题："如果...你会怎么做？"
+   - 对比分析题："A方案和B方案你会选哪个？为什么？"
+   - 反思复盘题："如果重来一次，你会做什么不同的决定？"
+
+**切记**：不要照搬上面列出的已问过的问题，要创造性地提出新问题！
+`;
+};
 
 // 重试配置
 const RETRY_CONFIG = {
@@ -473,6 +606,9 @@ ${roleConfig.closingGuidance.candidateQuestionTopics.map(t => `- ${t}`).join('\n
 3. 如果用户回答得好，可以适当肯定；如果回答不够完整，可以追问
 4. 保持对话的连贯性和自然性，就像真实面试一样` : '';
 
+  // 多样性指令（基于历史面试记录）
+  const diversityInstructions = generateDiversityInstructions(resume);
+
   return `# 角色设定
 你是一位${roleConfig.title}，正在进行${roleConfig.name}面试。
 
@@ -533,6 +669,7 @@ ${supplementInfo.otherInfo ? `- 其他信息：${supplementInfo.otherInfo}` : ''
 - 当前阶段: ${phase}
 ${historyContext}
 ${interactiveModeGuidance}
+${diversityInstructions}
 
 # 本轮要求
 ${phaseDesc}
@@ -578,6 +715,9 @@ const getInterviewerFeedbackPrompt = (
     }
   }
 
+  // 多样性指令（基于历史面试记录）
+  const diversityInstructions = generateDiversityInstructions(resume);
+
   return `# 角色设定
 你是一位${roleConfig.title}，正在进行${roleConfig.name}面试，需要对候选人的回答进行简短点评，并准备下一个问题。
 
@@ -611,6 +751,7 @@ ${supplementInfo.otherInfo ? `- 其他：${supplementInfo.otherInfo}` : ''}
 - 当前轮次: 第 ${currentRound} 轮 / 共 ${totalRounds} 轮
 - 当前阶段: ${phase}
 ${historyContext}
+${diversityInstructions}
 
 # 候选人刚才的回答
 \`\`\`
@@ -875,6 +1016,9 @@ export const runInterview = async (
         throw error;
       }
 
+      // 如果被中止，立即返回
+      if (abortSignal?.aborted) return;
+
       // 面试官完成
       callbacks.onMessage({
         type: 'interviewer',
@@ -886,7 +1030,7 @@ export const runInterview = async (
 
       conversationHistory.push({ role: 'interviewer', content: interviewerResponse });
 
-      if (abortSignal?.aborted) break;
+      if (abortSignal?.aborted) return;
 
       // 2. 面试者回答
       callbacks.onMessage({
@@ -932,6 +1076,9 @@ export const runInterview = async (
         console.error('Interviewee generation error:', error);
         throw error;
       }
+
+      // 如果被中止，立即返回
+      if (abortSignal?.aborted) return;
 
       // 面试者完成
       callbacks.onMessage({
@@ -990,6 +1137,9 @@ export const runInterview = async (
       throw error;
     }
 
+    // 如果被中止，立即返回
+    if (abortSignal?.aborted) return;
+
     callbacks.onMessage({
       type: 'summary',
       content: summaryContent,
@@ -1002,6 +1152,14 @@ export const runInterview = async (
       content: '面试结束',
       timestamp: new Date().toISOString()
     });
+
+    // 保存面试历史（用于问题多样性控制）
+    try {
+      const { questions, experiences } = extractInterviewContent(conversationHistory);
+      saveInterviewHistory(resume, questions, experiences);
+    } catch (e) {
+      console.error('保存面试历史失败:', e);
+    }
 
     callbacks.onComplete();
 
@@ -1102,6 +1260,9 @@ export const generateFirstQuestion = async (
     return null;
   }
 
+  // 如果被中止，立即返回
+  if (abortSignal?.aborted) return null;
+
   // 面试官完成
   callbacks.onMessage({
     type: 'interviewer',
@@ -1199,6 +1360,9 @@ export const processUserAnswer = async (
       return null;
     }
 
+    // 如果被中止，立即返回
+    if (abortSignal?.aborted) return null;
+
     callbacks.onMessage({
       type: 'summary',
       content: summaryContent,
@@ -1211,6 +1375,14 @@ export const processUserAnswer = async (
       content: '面试结束',
       timestamp: new Date().toISOString()
     });
+
+    // 保存面试历史（用于问题多样性控制）
+    try {
+      const { questions, experiences } = extractInterviewContent(conversationHistory);
+      saveInterviewHistory(resume, questions, experiences);
+    } catch (e) {
+      console.error('保存面试历史失败:', e);
+    }
 
     callbacks.onComplete();
 
@@ -1288,6 +1460,9 @@ export const processUserAnswer = async (
     callbacks.onError(error.message || '生成反馈出错');
     return null;
   }
+
+  // 如果被中止，立即返回
+  if (abortSignal?.aborted) return null;
 
   // 面试官完成
   callbacks.onMessage({

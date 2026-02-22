@@ -4,7 +4,7 @@ import {
   Briefcase, User, Hash, Info, AlertCircle, Award, 
   Send, Square, Plus, X, FileText, Upload, Settings,
   Download, RefreshCw, Loader2, ArrowLeft, ChevronDown, Image as ImageIcon,
-  Play, MessageSquare, Users, Mic, MicOff, StopCircle, CheckCircle2, File, Paperclip
+  Play, MessageSquare, Users, Mic, MicOff, StopCircle, CheckCircle2, File, Paperclip, Lock, Crown
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import html2canvas from 'html2canvas';
@@ -17,6 +17,8 @@ import {
   InteractiveInterviewState 
 } from '../services/interviewService';
 import { transcribeAudio, extractTextFromFile } from '../services/geminiService';
+import { useAuth } from '../contexts/AuthContext';
+import { checkUsageLimit, logUsage, checkInterviewExportPermission } from '../services/authService';
 
 // 文件数据类型
 interface FileData {
@@ -29,9 +31,20 @@ interface InterviewChatProps {
   onBack: () => void;
   initialResume?: string;
   initialJd?: string;
+  initialJdFile?: FileData | null;
+  initialResumeFile?: FileData | null;
+  onShowVIPModal?: () => void;
 }
 
-const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '', initialJd = '' }) => {
+const InterviewChat: React.FC<InterviewChatProps> = ({ 
+  onBack, 
+  initialResume = '', 
+  initialJd = '',
+  initialJdFile = null,
+  initialResumeFile = null,
+  onShowVIPModal
+}) => {
+  const { user, profile } = useAuth();
   const [messages, setMessages] = useState<InterviewMessage[]>([]);
   const [settings, setSettings] = useState<InterviewSettings>({
     totalRounds: 8,
@@ -43,13 +56,17 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
   const [isExporting, setIsExporting] = useState(false);
   const [status, setStatus] = useState<InterviewStatus>('idle');
   
+  // 使用限制相关状态
+  const [usageLimitError, setUsageLimitError] = useState<string | null>(null);
+  const [showUpgradeHint, setShowUpgradeHint] = useState(false);
+  
   const [resumeText, setResumeText] = useState(initialResume);
   const [jdText, setJdText] = useState(initialJd);
-  const [showInputPanel, setShowInputPanel] = useState(!initialResume);
+  const [showInputPanel, setShowInputPanel] = useState(!initialResume && !initialResumeFile);
   
   // 文件上传相关状态
-  const [resumeFile, setResumeFile] = useState<FileData | null>(null);
-  const [jdFile, setJdFile] = useState<FileData | null>(null);
+  const [resumeFile, setResumeFile] = useState<FileData | null>(initialResumeFile);
+  const [jdFile, setJdFile] = useState<FileData | null>(initialJdFile);
   const [processingState, setProcessingState] = useState({ resume: false, jd: false });
   const [fileError, setFileError] = useState<string | null>(null);
   const resumeFileInputRef = useRef<HTMLInputElement>(null);
@@ -275,6 +292,81 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // 追踪是否已经提取过初始文件（防止重复提取）
+  const hasExtractedInitialFilesRef = useRef(false);
+  
+  // 初始化时从传入的文件数据中提取文本（仅在组件首次挂载时执行一次）
+  useEffect(() => {
+    // 如果已经提取过，不再重复提取
+    if (hasExtractedInitialFilesRef.current) return;
+    
+    const extractInitialFileText = async () => {
+      let needExtract = false;
+      
+      // 如果有初始 JD 文件但没有 JD 文本，需要提取
+      if (initialJdFile && !initialJd) {
+        needExtract = true;
+      }
+      // 如果有初始简历文件但没有简历文本，需要提取
+      if (initialResumeFile && !initialResume) {
+        needExtract = true;
+      }
+      
+      // 如果不需要提取，直接返回
+      if (!needExtract) {
+        hasExtractedInitialFilesRef.current = true;
+        return;
+      }
+      
+      // 标记已经开始提取
+      hasExtractedInitialFilesRef.current = true;
+      
+      // 并行提取 JD 和简历文本
+      const promises: Promise<void>[] = [];
+      
+      if (initialJdFile && !initialJd) {
+        setProcessingState(prev => ({ ...prev, jd: true }));
+        promises.push(
+          extractTextFromFile({ 
+            data: initialJdFile.data, 
+            mimeType: initialJdFile.mime 
+          }).then(extractedText => {
+            if (extractedText && extractedText.trim()) {
+              setJdText(extractedText);
+            }
+          }).catch(err => {
+            console.error('Failed to extract JD text:', err);
+          }).finally(() => {
+            setProcessingState(prev => ({ ...prev, jd: false }));
+          })
+        );
+      }
+      
+      if (initialResumeFile && !initialResume) {
+        setProcessingState(prev => ({ ...prev, resume: true }));
+        promises.push(
+          extractTextFromFile({ 
+            data: initialResumeFile.data, 
+            mimeType: initialResumeFile.mime 
+          }).then(extractedText => {
+            if (extractedText && extractedText.trim()) {
+              setResumeText(extractedText);
+            }
+          }).catch(err => {
+            console.error('Failed to extract resume text:', err);
+          }).finally(() => {
+            setProcessingState(prev => ({ ...prev, resume: false }));
+          })
+        );
+      }
+      
+      await Promise.all(promises);
+    };
+    
+    extractInitialFileText();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // 仅在组件挂载时执行一次
+
   // 点击外部关闭导出菜单
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -297,6 +389,19 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
       return;
     }
 
+    // 检查使用限制
+    if (user) {
+      const limitCheck = await checkUsageLimit(user.id, 'interview', user.email || undefined);
+      if (!limitCheck.allowed) {
+        if (limitCheck.isTrialLimit) {
+          setUsageLimitError(`免费体验次数已用完（共${limitCheck.limit}次）。升级 VIP 享每日50次使用！`);
+        } else {
+          setUsageLimitError(`今日使用次数已达上限（${limitCheck.limit}次/天）。`);
+        }
+        return;
+      }
+    }
+
     setStatus('running');
     setShowInputPanel(false);
     setMessages([]);
@@ -304,6 +409,11 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
     abortControllerRef.current = new AbortController();
 
     try {
+      // 记录使用
+      if (user) {
+        logUsage(user.id, 'interview');
+      }
+
       await runInterview(
         resumeText,
         jdText,
@@ -353,7 +463,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
         setStatus('stopped');
       }
     }
-  }, [resumeText, jdText, settings, supplementInfo]);
+  }, [resumeText, jdText, settings, supplementInfo, user]);
 
   // 人机交互模式开始面试
   const handleStartInteractiveInterview = useCallback(async () => {
@@ -366,6 +476,19 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
       return;
     }
 
+    // 检查使用限制
+    if (user) {
+      const limitCheck = await checkUsageLimit(user.id, 'interview', user.email || undefined);
+      if (!limitCheck.allowed) {
+        if (limitCheck.isTrialLimit) {
+          setUsageLimitError(`免费体验次数已用完（共${limitCheck.limit}次）。升级 VIP 享每日50次使用！`);
+        } else {
+          setUsageLimitError(`今日使用次数已达上限（${limitCheck.limit}次/天）。`);
+        }
+        return;
+      }
+    }
+
     setStatus('running');
     setShowInputPanel(false);
     setMessages([]);
@@ -373,6 +496,11 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
     abortControllerRef.current = new AbortController();
 
     try {
+      // 记录使用
+      if (user) {
+        logUsage(user.id, 'interview');
+      }
+
       const state = await generateFirstQuestion(
         resumeText,
         jdText,
@@ -721,7 +849,10 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
   };
 
   const handleStopInterview = () => {
-    abortControllerRef.current?.abort();
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
     setStatus('stopped');
     setInteractiveState(null);
     setMessages(prev => [...prev, {
@@ -732,8 +863,20 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
   };
 
   // 导出为 Markdown 文本
-  const handleExportMarkdown = () => {
+  const handleExportMarkdown = async () => {
     setShowExportMenu(false);
+    
+    // 检查导出权限
+    if (user) {
+      const exportCheck = await checkInterviewExportPermission(user.id, user.email || undefined);
+      if (!exportCheck.allowed) {
+        setUsageLimitError(exportCheck.reason || '面试记录导出为 VIP 专属功能，请升级会员');
+        return;
+      }
+    } else {
+      setUsageLimitError('请先登录后再导出面试记录');
+      return;
+    }
     
     const timestamp = new Date().toISOString().split('T')[0];
     const modeLabel = settings.mode === 'interactive' ? '人机交互' : '纯模拟';
@@ -749,7 +892,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
     markdown += `- **日期**: ${timestamp}\n`;
     markdown += `- **模式**: ${modeLabel}\n`;
     markdown += `- **面试轮次**: ${roleLabels[settings.interviewerRole] || settings.interviewerRole}\n`;
-    markdown += `- **对话轮数**: ${settings.rounds} 轮\n\n`;
+    markdown += `- **对话轮数**: ${settings.totalRounds} 轮\n\n`;
     markdown += `---\n\n`;
     
     messages.forEach((msg) => {
@@ -777,6 +920,19 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
   // 导出为图片
   const handleExportImage = async () => {
     if (!chatContainerRef.current) return;
+    
+    // 检查导出权限
+    if (user) {
+      const exportCheck = await checkInterviewExportPermission(user.id, user.email || undefined);
+      if (!exportCheck.allowed) {
+        setUsageLimitError(exportCheck.reason || '面试记录导出为 VIP 专属功能，请升级会员');
+        return;
+      }
+    } else {
+      setUsageLimitError('请先登录后再导出面试记录');
+      return;
+    }
+
     setIsExporting(true);
     setShowExportMenu(false);
     
@@ -805,6 +961,11 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
   };
 
   const handleReset = () => {
+    // 先中止正在进行的请求
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
     setMessages([]);
     setStatus('idle');
     setShowInputPanel(true);
@@ -954,6 +1115,43 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
 
   return (
     <div className="h-[calc(100vh-80px)] flex flex-col bg-white">
+      {/* 使用限制提示弹窗 */}
+      {usageLimitError && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setUsageLimitError(null)} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center">
+                <Lock className="text-amber-600" size={24} />
+              </div>
+              <div>
+                <h3 className="font-semibold text-zinc-900">功能受限</h3>
+                <p className="text-sm text-zinc-500">升级会员解锁更多功能</p>
+              </div>
+            </div>
+            <p className="text-zinc-600 text-sm mb-6">{usageLimitError}</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setUsageLimitError(null)}
+                className="flex-1 px-4 py-2.5 border border-zinc-200 rounded-lg text-sm font-medium text-zinc-600 hover:bg-zinc-50 transition-colors"
+              >
+                稍后再说
+              </button>
+              <button
+                onClick={() => {
+                  setUsageLimitError(null);
+                  onShowVIPModal?.();
+                }}
+                className="flex-1 px-4 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 rounded-lg text-sm font-medium text-white hover:from-amber-600 hover:to-orange-600 transition-colors flex items-center justify-center gap-1.5"
+              >
+                <Crown size={16} />
+                升级 VIP
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="shrink-0 px-6 py-3 border-b border-zinc-200 flex items-center justify-between bg-white">
         <div className="flex items-center gap-3">
@@ -1033,7 +1231,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
       {showSettings && (
         <div className="shrink-0 px-6 py-4 border-b border-zinc-200 bg-zinc-50">
           <div className="max-w-2xl mx-auto space-y-4">
-            {/* 面试模式选择 - 标签页样式 */}
+            {/* 1. 面试模式选择 - 标签页样式 */}
             <div>
               <label className="text-[12px] font-medium text-zinc-700 mb-2 block">面试模式</label>
               <div className="flex bg-zinc-200 rounded-lg p-1">
@@ -1069,69 +1267,73 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
               </p>
             </div>
 
-            <div className="space-y-4">
-              <div>
-                <label className="text-[12px] font-medium text-zinc-700 mb-2 block">问答轮数</label>
-                <div className="flex items-center gap-3">
-                  <input
-                    type="range"
-                    min="6"
-                    max="12"
-                    value={settings.totalRounds}
-                    onChange={(e) => setSettings({ ...settings, totalRounds: parseInt(e.target.value) })}
-                    className="flex-1 h-1 bg-zinc-200 rounded appearance-none cursor-pointer accent-zinc-900"
+            {/* 2. 面试官角色选择 */}
+            <div>
+              <label className="text-[12px] font-medium text-zinc-700 mb-2 block">面试官角色</label>
+              <div className="grid grid-cols-5 gap-2">
+                {[
+                  { value: 'ta', label: 'TA', icon: '😊', focus: '初筛', desc: '动机·稳定性·薪资初探' },
+                  { value: 'peers', label: 'Peers', icon: '⚖️', focus: '专业验证', desc: '技术能力·项目深挖' },
+                  { value: 'leader', label: '+1', icon: '🔥', focus: 'Leader认可', desc: '潜力·方法论·适配' },
+                  { value: 'director', label: '+2', icon: '👔', focus: '高层背书', desc: '视野·战略·价值观' },
+                  { value: 'hrbp', label: 'HRBP', icon: '💰', focus: 'Offer谈判', desc: '薪资·压价·到岗' }
+                ].map((role, index) => (
+                  <button
+                    key={role.value}
+                    onClick={() => setSettings({ ...settings, interviewerRole: role.value as any })}
                     disabled={status === 'running' || status === 'waiting_input'}
-                  />
-                  <span className="text-[13px] text-zinc-600 w-12">{settings.totalRounds} 轮</span>
-                </div>
-              </div>
-              <div>
-                <label className="text-[12px] font-medium text-zinc-700 mb-2 block">面试官角色</label>
-                <div className="grid grid-cols-5 gap-2">
-                  {[
-                    { value: 'ta', label: 'TA', icon: '😊', focus: '初筛', desc: '动机·稳定性·薪资初探' },
-                    { value: 'peers', label: 'Peers', icon: '⚖️', focus: '专业验证', desc: '技术能力·项目深挖' },
-                    { value: 'leader', label: '+1', icon: '🔥', focus: 'Leader认可', desc: '潜力·方法论·适配' },
-                    { value: 'director', label: '+2', icon: '👔', focus: '高层背书', desc: '视野·战略·价值观' },
-                    { value: 'hrbp', label: 'HRBP', icon: '💰', focus: 'Offer谈判', desc: '薪资·压价·到岗' }
-                  ].map((role, index) => (
-                    <button
-                      key={role.value}
-                      onClick={() => setSettings({ ...settings, interviewerRole: role.value as any })}
-                      disabled={status === 'running' || status === 'waiting_input'}
-                      className={`relative flex flex-col items-center py-3 px-2 rounded-lg border-2 transition-all ${
-                        settings.interviewerRole === role.value
-                          ? 'bg-zinc-900 text-white border-zinc-900 shadow-md'
-                          : 'bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400 hover:bg-zinc-50'
-                      } ${(status === 'running' || status === 'waiting_input') ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    >
-                      {/* 轮次标记 */}
-                      <span className={`absolute -top-2 -left-1 text-[9px] px-1.5 py-0.5 rounded-full ${
-                        settings.interviewerRole === role.value 
-                          ? 'bg-white text-zinc-900' 
-                          : 'bg-zinc-100 text-zinc-500'
-                      }`}>
-                        第{index + 1}轮
+                    className={`relative flex flex-col items-center py-3 px-2 rounded-lg border-2 transition-all ${
+                      settings.interviewerRole === role.value
+                        ? 'bg-zinc-900 text-white border-zinc-900 shadow-md'
+                        : 'bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400 hover:bg-zinc-50'
+                    } ${(status === 'running' || status === 'waiting_input') ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    {/* 轮次标记 */}
+                    <span className={`absolute -top-2 -left-1 text-[9px] px-1.5 py-0.5 rounded-full ${
+                      settings.interviewerRole === role.value 
+                        ? 'bg-white text-zinc-900' 
+                        : 'bg-zinc-100 text-zinc-500'
+                    }`}>
+                      第{index + 1}轮
+                    </span>
+                    {/* 图标和名称 */}
+                    <span className="text-[16px] mb-1">{role.icon}</span>
+                    <span className="text-[12px] font-medium">{role.label}</span>
+                    {/* 核心关注点 */}
+                    <span className={`text-[10px] mt-1 ${
+                      settings.interviewerRole === role.value ? 'text-zinc-300' : 'text-zinc-400'
+                    }`}>
+                      {role.focus}
+                    </span>
+                    {/* 详细描述 - 仅选中时显示 */}
+                    {settings.interviewerRole === role.value && (
+                      <span className="text-[9px] mt-1 text-zinc-400 text-center leading-tight">
+                        {role.desc}
                       </span>
-                      {/* 图标和名称 */}
-                      <span className="text-[16px] mb-1">{role.icon}</span>
-                      <span className="text-[12px] font-medium">{role.label}</span>
-                      {/* 核心关注点 */}
-                      <span className={`text-[10px] mt-1 ${
-                        settings.interviewerRole === role.value ? 'text-zinc-300' : 'text-zinc-400'
-                      }`}>
-                        {role.focus}
-                      </span>
-                      {/* 详细描述 - 仅选中时显示 */}
-                      {settings.interviewerRole === role.value && (
-                        <span className="text-[9px] mt-1 text-zinc-400 text-center leading-tight">
-                          {role.desc}
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
+                    )}
+                  </button>
+                ))}
               </div>
+            </div>
+
+            {/* 3. 问答轮数 - 最后 */}
+            <div>
+              <label className="text-[12px] font-medium text-zinc-700 mb-2 block">问答轮数</label>
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min="5"
+                  max="12"
+                  value={settings.totalRounds}
+                  onChange={(e) => setSettings({ ...settings, totalRounds: parseInt(e.target.value) })}
+                  className="flex-1 h-1 bg-zinc-200 rounded appearance-none cursor-pointer accent-zinc-900"
+                  disabled={status === 'running' || status === 'waiting_input'}
+                />
+                <span className="text-[13px] text-zinc-600 w-12">{settings.totalRounds} 轮</span>
+              </div>
+              <p className="text-[11px] text-zinc-400 mt-2">
+                💡 TA/+2/HRBP 面试通常为 5-8 个问题，Peers/+1 轮可能为 8-12 个问题。默认 8 轮，可按实际情况调整
+              </p>
             </div>
           </div>
         </div>
@@ -1340,20 +1542,31 @@ const InterviewChat: React.FC<InterviewChatProps> = ({ onBack, initialResume = '
               <div className="pt-2">
                 <button
                   onClick={handleStartInterview}
-                  disabled={(!resumeText.trim() && !resumeFile) || (!jdText.trim() && !jdFile) || processingState.resume || processingState.jd}
+                  disabled={!resumeText.trim() || !jdText.trim() || processingState.resume || processingState.jd}
                   className={`w-full py-3 rounded-md text-[14px] font-medium flex items-center justify-center gap-2 transition-colors ${
-                    ((resumeText.trim() || resumeFile) && (jdText.trim() || jdFile)) && !processingState.resume && !processingState.jd
+                    resumeText.trim() && jdText.trim() && !processingState.resume && !processingState.jd
                       ? 'bg-zinc-900 text-white hover:bg-zinc-800'
                       : 'bg-zinc-200 text-zinc-400 cursor-not-allowed'
                   }`}
                 >
-                  {settings.mode === 'simulation' ? <Play size={15} /> : <Users size={15} />}
-                  {settings.mode === 'simulation' ? '开始模拟面试' : '开始交互面试'}
+                  {processingState.resume || processingState.jd ? (
+                    <>
+                      <Loader2 size={15} className="animate-spin" />
+                      正在识别文件内容...
+                    </>
+                  ) : (
+                    <>
+                      {settings.mode === 'simulation' ? <Play size={15} /> : <Users size={15} />}
+                      {settings.mode === 'simulation' ? '开始模拟面试' : '开始交互面试'}
+                    </>
+                  )}
                 </button>
                 <p className="text-[11px] text-zinc-400 text-center mt-3">
-                  {settings.mode === 'simulation' 
-                    ? '面试过程约 3-5 分钟，AI 将扮演面试官和面试者进行对话' 
-                    : '面试官会逐个提问，你可以慢慢思考并输入回答'}
+                  {processingState.resume || processingState.jd 
+                    ? '正在识别上传的文件，请稍候...'
+                    : settings.mode === 'simulation' 
+                      ? '面试过程约 3-5 分钟，AI 将扮演面试官和面试者进行对话' 
+                      : '面试官会逐个提问，你可以慢慢思考并输入回答'}
                 </p>
               </div>
             </div>

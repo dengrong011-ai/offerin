@@ -1,0 +1,996 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Offerin - 功能架构说明文档</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+            min-height: 100vh;
+            color: #1e293b;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+        
+        /* 标题样式 */
+        .header {
+            text-align: center;
+            margin-bottom: 60px;
+        }
+        
+        .header h1 {
+            font-size: 42px;
+            font-weight: 700;
+            color: #0f172a;
+            margin-bottom: 16px;
+        }
+        
+        .header .subtitle {
+            font-size: 18px;
+            color: #64748b;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        
+        .header .badge {
+            display: inline-block;
+            background: #0f172a;
+            color: white;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+            margin-top: 16px;
+        }
+        
+        /* 整体架构图 */
+        .overview-section {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            margin-bottom: 40px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        }
+        
+        .overview-section h2 {
+            font-size: 24px;
+            color: #0f172a;
+            margin-bottom: 30px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .overview-section h2::before {
+            content: "📊";
+            font-size: 28px;
+        }
+        
+        /* 流程图 */
+        .flow-diagram {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 20px;
+            padding: 30px 0;
+        }
+        
+        .flow-step {
+            background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
+            border: 2px solid #cbd5e1;
+            border-radius: 16px;
+            padding: 20px 24px;
+            text-align: center;
+            min-width: 140px;
+            transition: all 0.3s ease;
+        }
+        
+        .flow-step:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+            border-color: #0f172a;
+        }
+        
+        .flow-step .icon {
+            font-size: 32px;
+            margin-bottom: 8px;
+        }
+        
+        .flow-step .name {
+            font-weight: 600;
+            font-size: 14px;
+            color: #0f172a;
+        }
+        
+        .flow-step.active {
+            background: linear-gradient(135deg, #0f172a 0%, #334155 100%);
+            border-color: #0f172a;
+        }
+        
+        .flow-step.active .name {
+            color: white;
+        }
+        
+        .flow-arrow {
+            font-size: 24px;
+            color: #94a3b8;
+        }
+        
+        /* 两大模块展示 */
+        .modules-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+            gap: 30px;
+            margin-bottom: 40px;
+        }
+        
+        @media (max-width: 768px) {
+            .modules-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .module-card {
+            background: white;
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        }
+        
+        .module-header {
+            padding: 24px;
+            color: white;
+        }
+        
+        .module-header.resume {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+        }
+        
+        .module-header.interview {
+            background: linear-gradient(135deg, #059669 0%, #047857 100%);
+        }
+        
+        .module-header h3 {
+            font-size: 22px;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .module-header p {
+            font-size: 14px;
+            opacity: 0.85;
+        }
+        
+        .module-content {
+            padding: 24px;
+        }
+        
+        .feature-list {
+            list-style: none;
+        }
+        
+        .feature-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 16px;
+            background: #f8fafc;
+            border-radius: 12px;
+            margin-bottom: 12px;
+            transition: all 0.2s ease;
+        }
+        
+        .feature-item:hover {
+            background: #f1f5f9;
+        }
+        
+        .feature-item:last-child {
+            margin-bottom: 0;
+        }
+        
+        .feature-icon {
+            width: 40px;
+            height: 40px;
+            background: white;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            flex-shrink: 0;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        
+        .feature-info h4 {
+            font-size: 15px;
+            color: #0f172a;
+            margin-bottom: 4px;
+        }
+        
+        .feature-info p {
+            font-size: 13px;
+            color: #64748b;
+        }
+        
+        /* 技术架构 */
+        .tech-section {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            margin-bottom: 40px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        }
+        
+        .tech-section h2 {
+            font-size: 24px;
+            color: #0f172a;
+            margin-bottom: 30px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .tech-section h2::before {
+            content: "⚙️";
+            font-size: 28px;
+        }
+        
+        .tech-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+        }
+        
+        .tech-card {
+            background: #f8fafc;
+            border-radius: 16px;
+            padding: 24px;
+            border: 1px solid #e2e8f0;
+        }
+        
+        .tech-card h4 {
+            font-size: 16px;
+            color: #0f172a;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .tech-card ul {
+            list-style: none;
+        }
+        
+        .tech-card li {
+            font-size: 13px;
+            color: #475569;
+            padding: 6px 0;
+            padding-left: 16px;
+            position: relative;
+        }
+        
+        .tech-card li::before {
+            content: "•";
+            position: absolute;
+            left: 0;
+            color: #0f172a;
+        }
+        
+        /* 文件结构 */
+        .file-structure {
+            background: #1e293b;
+            border-radius: 12px;
+            padding: 24px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 13px;
+            color: #94a3b8;
+            overflow-x: auto;
+        }
+        
+        .file-structure .folder {
+            color: #60a5fa;
+        }
+        
+        .file-structure .file {
+            color: #a5b4fc;
+        }
+        
+        .file-structure .comment {
+            color: #6b7280;
+            font-style: italic;
+        }
+        
+        /* 使用指南 */
+        .guide-section {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            margin-bottom: 40px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        }
+        
+        .guide-section h2 {
+            font-size: 24px;
+            color: #0f172a;
+            margin-bottom: 30px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .guide-section h2::before {
+            content: "📖";
+            font-size: 28px;
+        }
+        
+        .guide-steps {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 20px;
+        }
+        
+        .guide-step {
+            background: #f8fafc;
+            border-radius: 16px;
+            padding: 24px;
+            position: relative;
+            border: 1px solid #e2e8f0;
+        }
+        
+        .step-number {
+            position: absolute;
+            top: -12px;
+            left: 24px;
+            background: #0f172a;
+            color: white;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 14px;
+        }
+        
+        .guide-step h4 {
+            font-size: 16px;
+            color: #0f172a;
+            margin-bottom: 8px;
+            margin-top: 8px;
+        }
+        
+        .guide-step p {
+            font-size: 13px;
+            color: #64748b;
+        }
+        
+        /* 会员体系 */
+        .membership-section {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            margin-bottom: 40px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        }
+        
+        .membership-section h2 {
+            font-size: 24px;
+            color: #0f172a;
+            margin-bottom: 30px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .membership-section h2::before {
+            content: "👑";
+            font-size: 28px;
+        }
+        
+        .membership-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        
+        .membership-table th {
+            background: #f1f5f9;
+            padding: 16px;
+            text-align: left;
+            font-weight: 600;
+            color: #0f172a;
+        }
+        
+        .membership-table td {
+            padding: 16px;
+            border-bottom: 1px solid #e2e8f0;
+            color: #475569;
+        }
+        
+        .membership-table tr:last-child td {
+            border-bottom: none;
+        }
+        
+        .check {
+            color: #059669;
+            font-weight: bold;
+        }
+        
+        .cross {
+            color: #dc2626;
+        }
+        
+        /* 问题与改进 */
+        .issues-section {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            margin-bottom: 40px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        }
+        
+        .issues-section h2 {
+            font-size: 24px;
+            color: #0f172a;
+            margin-bottom: 30px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .issues-section h2::before {
+            content: "⚠️";
+            font-size: 28px;
+        }
+        
+        .issue-card {
+            background: #fef3c7;
+            border-left: 4px solid #f59e0b;
+            border-radius: 0 12px 12px 0;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+        
+        .issue-card:last-child {
+            margin-bottom: 0;
+        }
+        
+        .issue-card.critical {
+            background: #fee2e2;
+            border-left-color: #dc2626;
+        }
+        
+        .issue-card.suggestion {
+            background: #dbeafe;
+            border-left-color: #3b82f6;
+        }
+        
+        .issue-card h4 {
+            font-size: 15px;
+            color: #0f172a;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .issue-card p {
+            font-size: 13px;
+            color: #475569;
+        }
+        
+        .issue-card .solution {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px dashed #d1d5db;
+            font-size: 13px;
+            color: #059669;
+        }
+        
+        .issue-card .solution strong {
+            color: #047857;
+        }
+        
+        /* 数据流图 */
+        .dataflow-section {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            margin-bottom: 40px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        }
+        
+        .dataflow-section h2 {
+            font-size: 24px;
+            color: #0f172a;
+            margin-bottom: 30px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .dataflow-section h2::before {
+            content: "🔄";
+            font-size: 28px;
+        }
+        
+        .dataflow-diagram {
+            display: flex;
+            flex-direction: column;
+            gap: 30px;
+        }
+        
+        .dataflow-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+        
+        .dataflow-box {
+            background: #f8fafc;
+            border: 2px solid #cbd5e1;
+            border-radius: 12px;
+            padding: 16px 24px;
+            text-align: center;
+            min-width: 120px;
+        }
+        
+        .dataflow-box.user {
+            background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+            border-color: #3b82f6;
+        }
+        
+        .dataflow-box.frontend {
+            background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%);
+            border-color: #22c55e;
+        }
+        
+        .dataflow-box.service {
+            background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+            border-color: #f59e0b;
+        }
+        
+        .dataflow-box.external {
+            background: linear-gradient(135deg, #f3e8ff 0%, #e9d5ff 100%);
+            border-color: #a855f7;
+        }
+        
+        .dataflow-arrow {
+            font-size: 20px;
+            color: #64748b;
+        }
+        
+        /* Footer */
+        .footer {
+            text-align: center;
+            padding: 40px;
+            color: #64748b;
+            font-size: 14px;
+        }
+        
+        .footer a {
+            color: #0f172a;
+            text-decoration: none;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 头部 -->
+        <div class="header">
+            <h1>Offerin 功能架构</h1>
+            <p class="subtitle">AI 驱动的简历优化与模拟面试工具，助力求职者提升竞争力</p>
+            <span class="badge">v1.0 | React + TypeScript + Gemini AI</span>
+        </div>
+        
+        <!-- 整体架构概览 -->
+        <div class="overview-section">
+            <h2>整体使用流程</h2>
+            <div class="flow-diagram">
+                <div class="flow-step">
+                    <div class="icon">🏠</div>
+                    <div class="name">首页</div>
+                </div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step">
+                    <div class="icon">📄</div>
+                    <div class="name">上传简历+JD</div>
+                </div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step">
+                    <div class="icon">🔍</div>
+                    <div class="name">AI 诊断</div>
+                </div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step">
+                    <div class="icon">✏️</div>
+                    <div class="name">编辑优化</div>
+                </div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step">
+                    <div class="icon">🌍</div>
+                    <div class="name">英文版(可选)</div>
+                </div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step active">
+                    <div class="icon">🎤</div>
+                    <div class="name">模拟面试</div>
+                </div>
+            </div>
+            <p style="text-align: center; color: #64748b; margin-top: 20px; font-size: 14px;">
+                💡 你也可以跳过简历优化，直接进入模拟面试模块
+            </p>
+        </div>
+        
+        <!-- 两大核心模块 -->
+        <div class="modules-grid">
+            <!-- 简历优化模块 -->
+            <div class="module-card">
+                <div class="module-header resume">
+                    <h3>📝 简历优化模块</h3>
+                    <p>从诊断到重构，一站式简历优化体验</p>
+                </div>
+                <div class="module-content">
+                    <ul class="feature-list">
+                        <li class="feature-item">
+                            <div class="feature-icon">🎯</div>
+                            <div class="feature-info">
+                                <h4>智能诊断</h4>
+                                <p>基于目标 JD 进行匹配度分析，识别能力差距，提供 ATS 关键词建议</p>
+                            </div>
+                        </li>
+                        <li class="feature-item">
+                            <div class="feature-icon">🤖</div>
+                            <div class="feature-info">
+                                <h4>AI 重构</h4>
+                                <p>使用 STAR 法则重写经历，量化成果，强化关键技能展示</p>
+                            </div>
+                        </li>
+                        <li class="feature-item">
+                            <div class="feature-icon">📐</div>
+                            <div class="feature-info">
+                                <h4>实时预览 & 排版调整</h4>
+                                <p>Markdown 编辑器 + 实时预览，支持密度调节，确保单页最佳呈现</p>
+                            </div>
+                        </li>
+                        <li class="feature-item">
+                            <div class="feature-icon">🌐</div>
+                            <div class="feature-info">
+                                <h4>一键英文版</h4>
+                                <p>智能翻译为专业英文简历，符合国际标准格式</p>
+                            </div>
+                        </li>
+                        <li class="feature-item">
+                            <div class="feature-icon">📥</div>
+                            <div class="feature-info">
+                                <h4>PDF 导出</h4>
+                                <p>高清 PDF 导出，可直接用于投递（VIP/付费功能）</p>
+                            </div>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+            
+            <!-- 模拟面试模块 -->
+            <div class="module-card">
+                <div class="module-header interview">
+                    <h3>🎤 模拟面试模块</h3>
+                    <p>全真模拟多轮面试，提升实战能力</p>
+                </div>
+                <div class="module-content">
+                    <ul class="feature-list">
+                        <li class="feature-item">
+                            <div class="feature-icon">▶️</div>
+                            <div class="feature-info">
+                                <h4>纯模拟模式</h4>
+                                <p>AI 同时扮演面试官和求职者，自动进行多轮对话，适合观摩学习</p>
+                            </div>
+                        </li>
+                        <li class="feature-item">
+                            <div class="feature-icon">🗣️</div>
+                            <div class="feature-info">
+                                <h4>人机交互模式</h4>
+                                <p>AI 提问，你来回答，每轮获得即时评分与反馈建议</p>
+                            </div>
+                        </li>
+                        <li class="feature-item">
+                            <div class="feature-icon">🎙️</div>
+                            <div class="feature-info">
+                                <h4>语音输入</h4>
+                                <p>支持麦克风录音转文字，模拟真实面试场景</p>
+                            </div>
+                        </li>
+                        <li class="feature-item">
+                            <div class="feature-icon">👥</div>
+                            <div class="feature-info">
+                                <h4>五轮全流程</h4>
+                                <p>TA → Peers → Leader → Director → HRBP 完整面试链路模拟</p>
+                            </div>
+                        </li>
+                        <li class="feature-item">
+                            <div class="feature-icon">💰</div>
+                            <div class="feature-info">
+                                <h4>谈薪博弈指导</h4>
+                                <p>HRBP 轮包含薪资谈判模拟，助你争取最优 Offer</p>
+                            </div>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 使用指南 -->
+        <div class="guide-section">
+            <h2>快速上手指南</h2>
+            <div class="guide-steps">
+                <div class="guide-step">
+                    <div class="step-number">1</div>
+                    <h4>上传简历 & JD</h4>
+                    <p>支持 PDF、Word、图片格式，也可直接粘贴文本或截图</p>
+                </div>
+                <div class="guide-step">
+                    <div class="step-number">2</div>
+                    <h4>查看诊断报告</h4>
+                    <p>AI 分析匹配度、能力差距、优化建议，约 30 秒生成</p>
+                </div>
+                <div class="guide-step">
+                    <div class="step-number">3</div>
+                    <h4>编辑优化简历</h4>
+                    <p>在 Markdown 编辑器中修改，实时预览效果，调整排版密度</p>
+                </div>
+                <div class="guide-step">
+                    <div class="step-number">4</div>
+                    <h4>导出或面试</h4>
+                    <p>下载 PDF 用于投递，或进入模拟面试进行实战练习</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 会员体系 -->
+        <div class="membership-section">
+            <h2>会员体系</h2>
+            <table class="membership-table">
+                <thead>
+                    <tr>
+                        <th>功能</th>
+                        <th>免费用户</th>
+                        <th>VIP 会员 (¥19.9/月)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>简历诊断</td>
+                        <td>3 次/天</td>
+                        <td><span class="check">50 次/天</span></td>
+                    </tr>
+                    <tr>
+                        <td>模拟面试</td>
+                        <td>3 次/天</td>
+                        <td><span class="check">50 次/天</span></td>
+                    </tr>
+                    <tr>
+                        <td>PDF 导出</td>
+                        <td><span class="cross">✗</span> (单次 ¥4.9)</td>
+                        <td><span class="check">✓ 无限</span></td>
+                    </tr>
+                    <tr>
+                        <td>英文简历翻译</td>
+                        <td><span class="check">✓</span></td>
+                        <td><span class="check">✓</span></td>
+                    </tr>
+                    <tr>
+                        <td>面试记录导出</td>
+                        <td><span class="check">✓</span></td>
+                        <td><span class="check">✓</span></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- 技术架构 -->
+        <div class="tech-section">
+            <h2>技术架构</h2>
+            <div class="tech-grid">
+                <div class="tech-card">
+                    <h4>🖼️ 前端</h4>
+                    <ul>
+                        <li><strong>React 18</strong> + TypeScript</li>
+                        <li><strong>Vite</strong> 构建工具</li>
+                        <li><strong>TailwindCSS</strong> 样式框架</li>
+                        <li><strong>Lucide React</strong> 图标库</li>
+                        <li><strong>html2canvas + jsPDF</strong> 导出</li>
+                    </ul>
+                </div>
+                <div class="tech-card">
+                    <h4>🤖 AI 服务</h4>
+                    <ul>
+                        <li><strong>Google Gemini Pro</strong> 核心模型</li>
+                        <li>流式响应 (Streaming)</li>
+                        <li>多模态输入 (文本/图片/PDF)</li>
+                        <li>语音转文字 (STT)</li>
+                        <li>自动重试 & 错误处理</li>
+                    </ul>
+                </div>
+                <div class="tech-card">
+                    <h4>🗄️ 后端 & 数据</h4>
+                    <ul>
+                        <li><strong>Supabase</strong> BaaS 服务</li>
+                        <li>PostgreSQL 数据库</li>
+                        <li>Row Level Security (RLS)</li>
+                        <li>OTP 邮箱认证</li>
+                        <li>用户配置 & 使用记录</li>
+                    </ul>
+                </div>
+                <div class="tech-card">
+                    <h4>💳 支付</h4>
+                    <ul>
+                        <li><strong>XorPay</strong> 聚合支付</li>
+                        <li>微信扫码支付</li>
+                        <li>订单状态轮询</li>
+                        <li>VIP 会员 & 单次购买</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <!-- 项目文件结构 -->
+            <h3 style="margin-top: 30px; margin-bottom: 16px; font-size: 18px; color: #0f172a;">📁 项目结构</h3>
+            <div class="file-structure">
+<span class="folder">offer-ing/</span>
+├── <span class="file">App.tsx</span>              <span class="comment"># 主应用组件，包含路由和全局状态</span>
+├── <span class="file">types.ts</span>             <span class="comment"># TypeScript 类型定义</span>
+├── <span class="folder">components/</span>
+│   ├── <span class="file">InterviewChat.tsx</span>    <span class="comment"># 模拟面试主组件</span>
+│   ├── <span class="file">MarkdownRenderer.tsx</span> <span class="comment"># Markdown 渲染器</span>
+│   ├── <span class="file">LoginModal.tsx</span>       <span class="comment"># 登录弹窗 & 用户头像</span>
+│   ├── <span class="file">VIPUpgradeModal.tsx</span>  <span class="comment"># VIP 升级支付弹窗</span>
+│   └── <span class="file">DownloadPayModal.tsx</span> <span class="comment"># 单次下载支付弹窗</span>
+├── <span class="folder">services/</span>
+│   ├── <span class="file">geminiService.ts</span>     <span class="comment"># Gemini AI 调用封装</span>
+│   ├── <span class="file">interviewService.ts</span>  <span class="comment"># 面试逻辑 & Prompt 工程</span>
+│   ├── <span class="file">authService.ts</span>       <span class="comment"># 认证 & 使用限制</span>
+│   ├── <span class="file">supabaseClient.ts</span>    <span class="comment"># Supabase 客户端配置</span>
+│   ├── <span class="file">paymentService.ts</span>   <span class="comment"># 支付订单业务逻辑</span>
+│   └── <span class="file">xorpayService.ts</span>     <span class="comment"># XorPay 支付接口</span>
+├── <span class="folder">contexts/</span>
+│   └── <span class="file">AuthContext.tsx</span>      <span class="comment"># 全局认证状态管理</span>
+└── <span class="folder">supabase/</span>
+    └── <span class="file">migrations/</span>          <span class="comment"># 数据库表结构</span>
+            </div>
+        </div>
+        
+        <!-- 数据流 -->
+        <div class="dataflow-section">
+            <h2>数据流向</h2>
+            <div class="dataflow-diagram">
+                <div class="dataflow-row">
+                    <div class="dataflow-box user">
+                        <strong>👤 用户</strong>
+                        <div style="font-size: 12px; color: #64748b;">输入简历/JD/回答</div>
+                    </div>
+                    <span class="dataflow-arrow">→</span>
+                    <div class="dataflow-box frontend">
+                        <strong>🖥️ React 前端</strong>
+                        <div style="font-size: 12px; color: #64748b;">状态管理 & UI 渲染</div>
+                    </div>
+                    <span class="dataflow-arrow">→</span>
+                    <div class="dataflow-box service">
+                        <strong>⚡ Service 层</strong>
+                        <div style="font-size: 12px; color: #64748b;">业务逻辑封装</div>
+                    </div>
+                </div>
+                <div class="dataflow-row">
+                    <div class="dataflow-box external">
+                        <strong>🤖 Gemini AI</strong>
+                        <div style="font-size: 12px; color: #64748b;">诊断/重构/面试</div>
+                    </div>
+                    <span class="dataflow-arrow">←→</span>
+                    <div class="dataflow-box external">
+                        <strong>🗄️ Supabase</strong>
+                        <div style="font-size: 12px; color: #64748b;">用户/订单/使用记录</div>
+                    </div>
+                    <span class="dataflow-arrow">←→</span>
+                    <div class="dataflow-box external">
+                        <strong>💳 XorPay</strong>
+                        <div style="font-size: 12px; color: #64748b;">支付二维码/状态</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 问题与改进建议 -->
+        <div class="issues-section">
+            <h2>发现的问题与改进建议</h2>
+            
+            <div class="issue-card critical">
+                <h4>🔴 高优先级：环境变量安全风险</h4>
+                <p><code>GEMINI_API_KEY</code> 通过 <code>process.env</code> 在客户端代码中使用，存在 API Key 暴露风险。</p>
+                <div class="solution">
+                    <strong>建议：</strong>将 AI 调用迁移到后端 API Route 或 Edge Function，前端只调用自己的后端接口。
+                </div>
+            </div>
+            
+            <div class="issue-card">
+                <h4>🟡 中优先级：支付回调未实现</h4>
+                <p>当前支付成功依赖前端轮询，若用户关闭页面后支付成功，订单状态无法同步。</p>
+                <div class="solution">
+                    <strong>建议：</strong>实现 Webhook 回调接口 (<code>/api/xorpay/notify</code>)，在服务端处理支付结果并更新数据库。
+                </div>
+            </div>
+            
+            <div class="issue-card">
+                <h4>🟡 中优先级：面试历史存储在 LocalStorage</h4>
+                <p><code>interviewService.ts</code> 中面试历史使用 LocalStorage 存储，换设备/清缓存会丢失。</p>
+                <div class="solution">
+                    <strong>建议：</strong>对于登录用户，将面试历史同步到 Supabase 数据库。
+                </div>
+            </div>
+            
+            <div class="issue-card">
+                <h4>🟡 中优先级：缺少 Loading 骨架屏</h4>
+                <p>页面加载、AI 生成过程中只有简单 Loader，用户体验可优化。</p>
+                <div class="solution">
+                    <strong>建议：</strong>添加骨架屏（Skeleton）组件，优化等待体验。
+                </div>
+            </div>
+            
+            <div class="issue-card suggestion">
+                <h4>🔵 建议：添加错误边界</h4>
+                <p>目前没有 React Error Boundary，组件崩溃会导致整个应用白屏。</p>
+                <div class="solution">
+                    <strong>建议：</strong>添加全局 ErrorBoundary 组件，捕获并展示友好错误页面。
+                </div>
+            </div>
+            
+            <div class="issue-card suggestion">
+                <h4>🔵 建议：添加用户引导</h4>
+                <p>新用户首次使用缺少功能引导，学习成本较高。</p>
+                <div class="solution">
+                    <strong>建议：</strong>添加新手引导 (Onboarding Tour)，高亮核心功能。
+                </div>
+            </div>
+            
+            <div class="issue-card suggestion">
+                <h4>🔵 建议：移动端适配</h4>
+                <p>简历编辑器在移动端体验较差，预览区域过小。</p>
+                <div class="solution">
+                    <strong>建议：</strong>针对移动端设计专属布局，或提示用户使用桌面端。
+                </div>
+            </div>
+            
+            <div class="issue-card suggestion">
+                <h4>🔵 建议：添加简历模板</h4>
+                <p>目前只有单一 Markdown 模板格式，用户选择余地小。</p>
+                <div class="solution">
+                    <strong>建议：</strong>提供多种简历模板（简约/创意/学术等）供用户选择。
+                </div>
+            </div>
+        </div>
+        
+        <!-- Footer -->
+        <div class="footer">
+            <p>📄 本文档由 AI 辅助生成 | <a href="#">Offerin</a> - AI 简历优化与面试模拟工具</p>
+            <p style="margin-top: 8px; font-size: 12px;">最后更新：2026年2月</p>
+        </div>
+    </div>
+</body>
+</html>

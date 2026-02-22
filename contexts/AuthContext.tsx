@@ -73,11 +73,22 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setUser(session?.user ?? null);
 
       if (session?.user) {
-        // 延迟获取 profile，确保触发器已创建
-        setTimeout(async () => {
-          const userProfile = await getUserProfile(session.user.id);
-          setProfile(userProfile);
-        }, 500);
+        // 获取 profile，带重试机制（新用户触发器创建可能需要时间）
+        const fetchProfileWithRetry = async (userId: string, retries = 3, delay = 500) => {
+          for (let i = 0; i < retries; i++) {
+            const userProfile = await getUserProfile(userId);
+            if (userProfile) {
+              setProfile(userProfile);
+              return;
+            }
+            // 等待后重试
+            if (i < retries - 1) {
+              await new Promise(resolve => setTimeout(resolve, delay));
+            }
+          }
+          console.warn('获取用户 profile 失败，已达最大重试次数');
+        };
+        fetchProfileWithRetry(session.user.id);
       } else {
         setProfile(null);
       }

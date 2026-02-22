@@ -45,8 +45,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
   };
 
   const handleVerifyOTP = async () => {
-    if (!otp || otp.length < 6) {
-      setError('请输入6位验证码');
+    if (!otp || otp.length < 8) {
+      setError('请输入8位验证码');
       return;
     }
 
@@ -229,9 +229,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
 // 用户头像/登录按钮组件
 interface UserAvatarProps {
   onLoginClick: () => void;
+  onUpgradeClick?: () => void;
 }
 
-export const UserAvatar: React.FC<UserAvatarProps> = ({ onLoginClick }) => {
+export const UserAvatar: React.FC<UserAvatarProps> = ({ onLoginClick, onUpgradeClick }) => {
   const { user, profile, loading } = useAuth();
   const [showDropdown, setShowDropdown] = useState(false);
 
@@ -317,7 +318,13 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({ onLoginClick }) => {
             {/* 菜单项 */}
             <div className="p-1.5">
               {profile?.membership_type === 'free' && (
-                <button className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-zinc-600 hover:bg-zinc-50 rounded-md transition-colors">
+                <button 
+                  onClick={() => {
+                    setShowDropdown(false);
+                    onUpgradeClick?.();
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-amber-600 hover:bg-amber-50 rounded-md transition-colors"
+                >
                   <Crown size={14} />
                   升级 VIP
                 </button>

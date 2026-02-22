@@ -44,25 +44,54 @@ export interface UserProfile {
 export interface UsageLog {
   id: string;
   user_id: string;
-  action_type: 'diagnosis' | 'interview' | 'resume_edit';
+  action_type: 'diagnosis' | 'interview' | 'resume_edit' | 'translation';
   created_at: string;
 }
 
 // 会员权限配置
 export const MEMBERSHIP_LIMITS = {
   free: {
-    daily_diagnosis: 3,
-    daily_interview: 3,
+    // 免费用户：总共3次体验（诊断+面试共享），不是每天
+    total_trial_count: 3,          // 诊断+面试共3次体验机会
+    translation_trial_count: 3,    // 英文翻译共3次体验机会
+    daily_diagnosis: -1,           // 不限制每日，只限制总次数
+    daily_interview: -1,           // 不限制每日，只限制总次数
+    daily_total: -1,               // 不限制每日
+    can_download: false,           // 需单次付费 ¥4.9
+    can_export_interview: false,   // 不支持面试记录导出
+    can_translate: true,           // 可以翻译，但有次数限制
     features: ['basic_diagnosis', 'basic_interview'],
   },
   vip: {
-    daily_diagnosis: -1, // -1 表示无限制
-    daily_interview: -1,
-    features: ['basic_diagnosis', 'basic_interview', 'advanced_diagnosis', 'resume_export', 'interview_history'],
+    total_trial_count: -1,         // VIP 不限制总次数
+    translation_trial_count: -1,   // VIP 翻译无限
+    daily_diagnosis: 50,           // VIP 每日50次诊断上限
+    daily_interview: 50,           // VIP 每日50次面试上限
+    daily_total: 50,               // VIP 每日总操作上限
+    can_download: true,            // VIP 可以无限下载
+    can_export_interview: true,    // VIP 支持面试记录导出
+    can_translate: true,           // VIP 翻译无限
+    features: ['basic_diagnosis', 'basic_interview', 'advanced_diagnosis', 'resume_export', 'interview_history', 'translation', 'interview_export'],
   },
   pro: {
-    daily_diagnosis: -1,
+    total_trial_count: -1,         // Pro 无限制
+    translation_trial_count: -1,   // Pro 翻译无限
+    daily_diagnosis: -1,           // Pro 无限制
     daily_interview: -1,
+    daily_total: -1,
+    can_download: true,
+    can_export_interview: true,
+    can_translate: true,
     features: ['all'],
+  },
+};
+
+// 单次付费产品配置
+export const SINGLE_PURCHASE_PRODUCTS = {
+  resume_download: {
+    id: 'resume_download',
+    name: '简历下载',
+    price: 490,              // ¥4.9
+    description: '下载优化后的简历 PDF',
   },
 };

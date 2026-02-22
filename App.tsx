@@ -1,12 +1,14 @@
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { analyzeResumeStream, translateResume, FileData, extractTextFromFile } from './services/geminiService';
+import { analyzeResumeStream, translateResume, FileData, extractTextFromFile, condenseResume } from './services/geminiService';
 import MarkdownRenderer from './components/MarkdownRenderer';
 import InterviewChat from './components/InterviewChat';
 import { LoginModal, UserAvatar } from './components/LoginModal';
+import { VIPUpgradeModal } from './components/VIPUpgradeModal';
+import { DownloadPayModal } from './components/DownloadPayModal';
 import { useAuth } from './contexts/AuthContext';
-import { checkUsageLimit, logUsage } from './services/authService';
-import { FileText, Target, Send, Loader2, RefreshCw, ChevronRight, Upload, X, Paperclip, Image as ImageIcon, File, AlertCircle, PenTool, ArrowLeft, Maximize2, Minimize2, ZoomIn, ZoomOut, CheckCircle2, AlertTriangle, AlignJustify, Languages, Globe, ArrowRight, Sparkles, MessageSquare, Mic, Play, Users, Lock, Briefcase } from 'lucide-react';
+import { checkUsageLimit, logUsage, checkTranslationLimit } from './services/authService';
+import { FileText, Target, Send, Loader2, RefreshCw, ChevronRight, Upload, X, Paperclip, Image as ImageIcon, File, AlertCircle, PenTool, ArrowLeft, Maximize2, Minimize2, ZoomIn, ZoomOut, CheckCircle2, AlertTriangle, AlignJustify, Languages, Globe, ArrowRight, Sparkles, MessageSquare, Mic, Play, Users, Lock, Briefcase, Crown } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 
@@ -15,6 +17,8 @@ type Step = 'INPUT' | 'UPLOAD' | 'ANALYSIS' | 'EDITOR' | 'ENGLISH_VERSION' | 'IN
 const App: React.FC = () => {
   const { user, profile, loading: authLoading } = useAuth();
   const [showLoginModal, setShowLoginModal] = useState(false);
+  const [showVIPModal, setShowVIPModal] = useState(false);
+  const [showDownloadModal, setShowDownloadModal] = useState(false);
   const [usageLimitError, setUsageLimitError] = useState<string | null>(null);
   
   const [step, setStep] = useState<Step>('INPUT');
@@ -39,6 +43,7 @@ const App: React.FC = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isGeneratingFile, setIsGeneratingFile] = useState(false);
+  const [isCondensing, setIsCondensing] = useState(false);
   
   const [isTranslating, setIsTranslating] = useState(false);
   
@@ -250,7 +255,11 @@ const App: React.FC = () => {
     // 检查使用限制
     const limitCheck = await checkUsageLimit(user.id, 'diagnosis', user.email || undefined);
     if (!limitCheck.allowed) {
-      setUsageLimitError(`今日免费次数已用完（${limitCheck.limit}次/天）。升级 VIP 解锁无限使用！`);
+      if (limitCheck.isTrialLimit) {
+        setUsageLimitError(`免费体验次数已用完（共${limitCheck.limit}次）。升级 VIP 享每日50次使用！`);
+      } else {
+        setUsageLimitError(`今日使用次数已达上限（${limitCheck.limit}次/天）。`);
+      }
       return;
     }
 
@@ -344,11 +353,26 @@ const App: React.FC = () => {
   const generateTranslation = async () => {
     if (!editableResume) return;
     
+    // 检查登录状态
+    if (!user) {
+      setShowLoginModal(true);
+      return;
+    }
+
+    // 检查翻译次数限制
+    const translationCheck = await checkTranslationLimit(user.id, user.email || undefined);
+    if (!translationCheck.allowed) {
+      setUsageLimitError(`英文翻译体验次数已用完（共${translationCheck.limit}次）。升级 VIP 享无限翻译！`);
+      return;
+    }
+
     setIsTranslating(true);
     try {
       const result = await translateResume(editableResume);
       setEnglishResume(result);
       setStep('ENGLISH_VERSION');
+      // 记录翻译使用
+      logUsage(user.id, 'translation');
     } catch (err) {
       alert("翻译服务繁忙，请稍后再试。");
     } finally {
@@ -500,7 +524,8 @@ const App: React.FC = () => {
     }
   };
 
-  const handleExportPDF = async () => {
+  // 实际执行 PDF 导出的函数
+  const doExportPDF = async () => {
     const wrapper = document.getElementById('resume-preview-content');
     const element = wrapper?.firstElementChild as HTMLElement;
     if (!element) return;
@@ -550,6 +575,53 @@ const App: React.FC = () => {
     }
   };
 
+  // 处理 PDF 导出（带付费检查）
+  const handleExportPDF = async () => {
+    // 1. 检查登录状态
+    if (!user) {
+      setShowLoginModal(true);
+      return;
+    }
+
+    // 2. VIP/Pro 用户直接下载
+    if (profile?.membership_type === 'vip' || profile?.membership_type === 'pro') {
+      await doExportPDF();
+      return;
+    }
+
+    // 3. 免费用户弹出付费弹窗
+    setShowDownloadModal(true);
+  };
+
+  // 智能精简简历（当超出一页时）
+  const handleCondenseResume = async () => {
+    if (isCondensing) return;
+    
+    const currentResume = step === 'ENGLISH_VERSION' ? englishResume : editableResume;
+    if (!currentResume) return;
+
+    setIsCondensing(true);
+    setError(null);
+
+    try {
+      const condensedResume = await condenseResume(
+        currentResume,
+        capacity.percentage,
+        95 // 目标精简到 95%
+      );
+
+      if (step === 'ENGLISH_VERSION') {
+        setEnglishResume(condensedResume);
+      } else {
+        setEditableResume(condensedResume);
+      }
+    } catch (err: any) {
+      setError(err.message || '精简失败，请重试');
+    } finally {
+      setIsCondensing(false);
+    }
+  };
+
   const zoomIn = () => setPreviewScale(prev => Math.min(prev + 0.1, 1.5));
   const zoomOut = () => setPreviewScale(prev => Math.max(prev - 0.1, 0.4));
 
@@ -582,11 +654,11 @@ const App: React.FC = () => {
   };
 
   const getCapacityStatus = () => {
-    const percentage = (resumeHeight / A4_HEIGHT_PX) * 100;
-    if (percentage <= 95) return { status: 'optimal', label: '1 页' };  // 最佳状态，绿色
-    if (percentage <= 100) return { status: 'warning', label: '1 页' }; // 接近满页，橙色警告（>95%）
-    if (percentage <= 110) return { status: 'overflow', label: '溢出' }; // 轻微溢出
-    return { status: 'danger', label: '超 1 页' };  // 严重超出
+    const percentage = Math.round((resumeHeight / A4_HEIGHT_PX) * 100);
+    if (percentage <= 95) return { status: 'optimal', label: '1 页', percentage };  // 最佳状态，绿色
+    if (percentage <= 100) return { status: 'warning', label: '1 页', percentage }; // 接近满页，橙色警告（>95%）
+    if (percentage <= 110) return { status: 'overflow', label: '溢出', percentage }; // 轻微溢出
+    return { status: 'danger', label: '超 1 页', percentage };  // 严重超出
   };
   const capacity = getCapacityStatus();
 
@@ -629,13 +701,34 @@ const App: React.FC = () => {
               </button>
             )}
 
-            <UserAvatar onLoginClick={() => setShowLoginModal(true)} />
+            <UserAvatar 
+              onLoginClick={() => setShowLoginModal(true)} 
+              onUpgradeClick={() => setShowVIPModal(true)}
+            />
           </div>
         </div>
       </header>
 
       {/* 登录弹窗 */}
       <LoginModal isOpen={showLoginModal} onClose={() => setShowLoginModal(false)} />
+
+      {/* VIP 升级弹窗 */}
+      <VIPUpgradeModal 
+        isOpen={showVIPModal} 
+        onClose={() => setShowVIPModal(false)}
+        onSuccess={() => setUsageLimitError(null)}
+      />
+
+      {/* 单次下载付费弹窗 */}
+      <DownloadPayModal
+        isOpen={showDownloadModal}
+        onClose={() => setShowDownloadModal(false)}
+        onSuccess={() => {
+          setShowDownloadModal(false);
+          doExportPDF();
+        }}
+        onUpgradeVIP={() => setShowVIPModal(true)}
+      />
 
       {/* 使用限制提示弹窗 */}
       {usageLimitError && (
@@ -662,7 +755,7 @@ const App: React.FC = () => {
               <button
                 onClick={() => {
                   setUsageLimitError(null);
-                  // TODO: 跳转到升级页面
+                  setShowVIPModal(true);
                 }}
                 className="flex-1 px-4 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 rounded-lg text-sm font-medium text-white hover:from-amber-600 hover:to-orange-600 transition-colors"
               >
@@ -677,12 +770,23 @@ const App: React.FC = () => {
       {step === 'INPUT' && (
         <section className="pt-36 pb-16 px-6">
            <div className="container mx-auto text-center max-w-4xl">
-              <h1 className="font-display text-[38px] md:text-[48px] font-semibold tracking-tight text-zinc-900 mb-5 leading-[1.15]">
-                AI 简历优化与面试模拟
+              <h1 className="font-display text-[38px] md:text-[48px] font-semibold tracking-tight text-zinc-900 mb-5 leading-[1.15] animate-fade-in">
+                <span className="inline-block animate-slide-up">Offerin</span>
+                <span className="inline-block mx-2 text-zinc-300">—</span>
+                <span className="inline-block animate-slide-up animation-delay-100">你的 AI 求职专家</span>
               </h1>
-              <p className="text-zinc-500 text-[15px] font-normal max-w-xl mx-auto mb-12 leading-relaxed">
+              <p className="text-zinc-500 text-[15px] font-normal max-w-xl mx-auto mb-10 leading-relaxed animate-fade-in animation-delay-200">
                 从简历诊断到模拟面试，全方位助力你的求职之旅
               </p>
+              <a 
+                href="https://xhslink.com/m/AiJycAESxQb" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 text-[13px] text-zinc-400 hover:text-zinc-600 transition-colors mb-12 animate-fade-in animation-delay-300"
+              >
+                <span>了解更多</span>
+                <ArrowRight size={14} />
+              </a>
 
               {/* 功能板块 */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-left items-stretch">
@@ -690,18 +794,18 @@ const App: React.FC = () => {
                 {/* 板块一：简历优化 */}
                 <button 
                   onClick={() => requireLogin(() => setStep('UPLOAD'))}
-                  className="rounded-xl border border-zinc-200 bg-white overflow-hidden text-left hover:border-zinc-300 hover:shadow-sm transition-all group flex flex-col h-full"
+                  className="rounded-xl border border-zinc-200 bg-white overflow-hidden text-left hover:border-zinc-300 hover:shadow-lg transition-all duration-300 group flex flex-col h-full hover:-translate-y-1"
                 >
                   <div className="px-5 py-4 bg-zinc-50 border-b border-zinc-100 group-hover:bg-zinc-100 transition-colors">
                     <div className="flex items-center gap-2">
-                      <FileText size={18} className="text-zinc-500" />
+                      <FileText size={18} className="text-zinc-600" />
                       <h2 className="font-display font-semibold text-[16px] text-zinc-800">简历优化</h2>
-                      <ArrowRight size={16} className="text-zinc-300 ml-auto group-hover:translate-x-1 group-hover:text-zinc-400 transition-all" />
+                      <ArrowRight size={16} className="text-zinc-300 ml-auto group-hover:translate-x-1 group-hover:text-zinc-600 transition-all" />
                     </div>
                     <p className="text-[12px] text-zinc-400 mt-1">智能诊断 · AI 重写 · 英文翻译</p>
                   </div>
                   <div className="p-5 space-y-4 flex-1 flex flex-col">
-                    <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-50/50 group-hover:bg-zinc-50 transition-colors">
+                    <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-50/50 group-hover:bg-zinc-100/50 transition-colors">
                       <div className="w-8 h-8 rounded-md bg-zinc-100 flex items-center justify-center shrink-0">
                         <Target size={16} className="text-zinc-600" />
                       </div>
@@ -712,7 +816,7 @@ const App: React.FC = () => {
                         </p>
                       </div>
                     </div>
-                    <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-50/50 group-hover:bg-zinc-50 transition-colors">
+                    <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-50/50 group-hover:bg-zinc-100/50 transition-colors">
                       <div className="w-8 h-8 rounded-md bg-zinc-100 flex items-center justify-center shrink-0">
                         <PenTool size={16} className="text-zinc-600" />
                       </div>
@@ -723,7 +827,7 @@ const App: React.FC = () => {
                         </p>
                       </div>
                     </div>
-                    <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-50/50 group-hover:bg-zinc-50 transition-colors flex-1">
+                    <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-50/50 group-hover:bg-zinc-100/50 transition-colors flex-1">
                       <div className="w-8 h-8 rounded-md bg-zinc-100 flex items-center justify-center shrink-0">
                         <Globe size={16} className="text-zinc-600" />
                       </div>
@@ -740,29 +844,29 @@ const App: React.FC = () => {
                 {/* 板块二：模拟面试 */}
                 <button 
                   onClick={() => requireLogin(() => setStep('INTERVIEW'))}
-                  className="rounded-xl border border-zinc-200 bg-white overflow-hidden text-left hover:border-zinc-300 hover:shadow-sm transition-all group flex flex-col h-full"
+                  className="rounded-xl border border-zinc-200 bg-white overflow-hidden text-left hover:border-zinc-300 hover:shadow-lg transition-all duration-300 group flex flex-col h-full hover:-translate-y-1"
                 >
                   <div className="px-5 py-4 bg-zinc-50 border-b border-zinc-100 group-hover:bg-zinc-100 transition-colors">
                     <div className="flex items-center gap-2">
-                      <Mic size={18} className="text-zinc-500" />
+                      <Mic size={18} className="text-zinc-600" />
                       <h2 className="font-display font-semibold text-[16px] text-zinc-800">模拟面试</h2>
-                      <ArrowRight size={16} className="text-zinc-300 ml-auto group-hover:translate-x-1 group-hover:text-zinc-400 transition-all" />
+                      <ArrowRight size={16} className="text-zinc-300 ml-auto group-hover:translate-x-1 group-hover:text-zinc-600 transition-all" />
                     </div>
                     <p className="text-[12px] text-zinc-400 mt-1">纯模拟观摩 · 人机交互练习</p>
                   </div>
                   <div className="p-5 space-y-4 flex-1 flex flex-col">
-                    <div className="flex items-start gap-3 p-3 pr-8 rounded-lg bg-zinc-50/50 group-hover:bg-zinc-50 transition-colors">
+                    <div className="flex items-start gap-3 p-3 pr-8 rounded-lg bg-zinc-50/50 group-hover:bg-zinc-100/50 transition-colors">
                       <div className="w-8 h-8 rounded-md bg-zinc-100 flex items-center justify-center shrink-0">
                         <Play size={16} className="text-zinc-600" />
                       </div>
                       <div>
                         <h3 className="font-medium text-[13px] text-zinc-900 mb-0.5">纯模拟模式</h3>
                         <p className="text-[12px] text-zinc-500 leading-relaxed">
-                          AI 同时扮演面试官和面试者，自动进行多轮问答，适合观摩学习标准回答
+                          AI 同时扮演面试官和面试者，自动多轮问答，适合观摩学习标准回答
                         </p>
                       </div>
                     </div>
-                    <div className="flex items-start gap-3 p-3 pr-8 rounded-lg bg-zinc-50/50 group-hover:bg-zinc-50 transition-colors">
+                    <div className="flex items-start gap-3 p-3 pr-8 rounded-lg bg-zinc-50/50 group-hover:bg-zinc-100/50 transition-colors">
                       <div className="w-8 h-8 rounded-md bg-zinc-100 flex items-center justify-center shrink-0">
                         <Users size={16} className="text-zinc-600" />
                       </div>
@@ -773,7 +877,7 @@ const App: React.FC = () => {
                         </p>
                       </div>
                     </div>
-                    <div className="flex items-start gap-3 p-3 pr-8 rounded-lg bg-zinc-50/50 group-hover:bg-zinc-50 transition-colors flex-1">
+                    <div className="flex items-start gap-3 p-3 pr-8 rounded-lg bg-zinc-50/50 group-hover:bg-zinc-100/50 transition-colors flex-1">
                       <div className="w-8 h-8 rounded-md bg-zinc-100 flex items-center justify-center shrink-0">
                         <Briefcase size={16} className="text-zinc-600" />
                       </div>
@@ -820,7 +924,7 @@ const App: React.FC = () => {
                   
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     {/* 步骤 1 */}
-                    <div className="bg-white rounded-xl p-5 relative border border-zinc-200 shadow-sm">
+                    <div className="bg-white rounded-xl p-5 relative border border-zinc-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200">
                       <div className="absolute -top-3 left-4 px-2 py-0.5 bg-zinc-800 text-white text-[11px] rounded font-medium">
                         STEP 1
                       </div>
@@ -834,7 +938,7 @@ const App: React.FC = () => {
                     </div>
 
                     {/* 步骤 2 */}
-                    <div className="bg-white rounded-xl p-5 relative border border-zinc-200 shadow-sm">
+                    <div className="bg-white rounded-xl p-5 relative border border-zinc-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200">
                       <div className="absolute -top-3 left-4 px-2 py-0.5 bg-zinc-800 text-white text-[11px] rounded font-medium">
                         STEP 2
                       </div>
@@ -848,7 +952,7 @@ const App: React.FC = () => {
                     </div>
 
                     {/* 步骤 3 */}
-                    <div className="bg-white rounded-xl p-5 relative border border-zinc-200 shadow-sm">
+                    <div className="bg-white rounded-xl p-5 relative border border-zinc-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200">
                       <div className="absolute -top-3 left-4 px-2 py-0.5 bg-zinc-800 text-white text-[11px] rounded font-medium">
                         STEP 3
                       </div>
@@ -862,7 +966,7 @@ const App: React.FC = () => {
                     </div>
 
                     {/* 步骤 4 */}
-                    <div className="bg-white rounded-xl p-5 relative border border-zinc-200 shadow-sm">
+                    <div className="bg-white rounded-xl p-5 relative border border-zinc-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200">
                       <div className="absolute -top-3 left-4 px-2 py-0.5 bg-zinc-800 text-white text-[11px] rounded font-medium">
                         STEP 4
                       </div>
@@ -901,7 +1005,7 @@ const App: React.FC = () => {
                     >
                       <Mic size={14} />
                       开始面试
-                      <ArrowRight size={14} className="text-zinc-400 group-hover:translate-x-0.5 transition-transform" />
+                      <ArrowRight size={14} className="text-zinc-400 group-hover:text-zinc-600 group-hover:translate-x-0.5 transition-all" />
                     </button>
                   </div>
                   
@@ -922,27 +1026,147 @@ const App: React.FC = () => {
                       <Target size={14} className="text-zinc-400 shrink-0" />
                       <span>五轮全流程</span>
                     </div>
-                    <div className="flex items-center gap-2 px-3 py-2.5 bg-zinc-100 border border-zinc-300 rounded-lg text-[12px] text-zinc-700 font-medium">
-                      <Briefcase size={14} className="text-zinc-500 shrink-0" />
+                    <div className="flex items-center gap-2 px-3 py-2.5 bg-zinc-50 border border-zinc-200 rounded-lg text-[12px] text-zinc-600">
+                      <Briefcase size={14} className="text-zinc-400 shrink-0" />
                       <span>谈薪博弈指导</span>
                     </div>
                   </div>
                 </div>
+              </div>
 
-                {/* 底部提示 */}
-                <div className="mt-10 flex items-center justify-center gap-6 text-[12px] text-zinc-400">
-                  <div className="flex items-center gap-1.5">
-                    <CheckCircle2 size={14} className="text-emerald-500" />
-                    AI 智能诊断与优化
+              {/* 会员体系介绍 - 紧凑版，两侧对齐 */}
+              <div className="mt-16 pt-12 border-t border-zinc-200">
+                <div className="flex items-center justify-center gap-2 mb-2">
+                  <Crown size={18} className="text-zinc-600" />
+                  <h2 className="font-display text-[20px] font-semibold text-zinc-800">
+                    会员体系
+                  </h2>
+                </div>
+                <p className="text-zinc-500 text-[13px] mb-8">
+                  选择适合你的方案，开启高效求职之旅
+                </p>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-2xl mx-auto">
+                  {/* 免费用户 */}
+                  <div className="bg-white border border-zinc-200 rounded-xl p-5 text-left flex flex-col hover:shadow-md hover:-translate-y-0.5 transition-all duration-200">
+                    <div className="flex items-center gap-2.5 mb-4">
+                      <div className="w-9 h-9 bg-zinc-100 rounded-lg flex items-center justify-center">
+                        <Users size={18} className="text-zinc-500" />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-[15px] text-zinc-800">免费用户</h3>
+                        <p className="text-[11px] text-zinc-400">体验核心功能</p>
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-2.5 mb-5 flex-grow">
+                      <div className="flex items-center gap-2.5 text-[13px] text-zinc-600">
+                        <span className="w-5 h-5 rounded bg-zinc-100 flex items-center justify-center text-[10px] font-semibold text-zinc-500 shrink-0">3</span>
+                        <span>简历诊断 + 模拟面试 共3次体验</span>
+                      </div>
+                      <div className="flex items-center gap-2.5 text-[13px] text-zinc-600">
+                        <span className="w-5 h-5 rounded bg-zinc-100 flex items-center justify-center text-[10px] font-semibold text-zinc-500 shrink-0">3</span>
+                        <span>英文简历翻译 共3次体验</span>
+                      </div>
+                      <div className="flex items-center gap-2.5 text-[13px] text-zinc-600">
+                        <span className="w-5 h-5 rounded bg-zinc-100 flex items-center justify-center text-[10px] font-semibold text-zinc-500 shrink-0">¥</span>
+                        <span>PDF 导出 ¥4.9/次</span>
+                      </div>
+                      <div className="flex items-center gap-2.5 text-[13px] text-zinc-400">
+                        <span className="w-5 h-5 rounded bg-zinc-100 flex items-center justify-center shrink-0"><X size={10} className="text-zinc-400" /></span>
+                        <span>面试记录导出 不支持</span>
+                      </div>
+                    </div>
+
+                    <div className="pt-4 border-t border-zinc-100">
+                      <div className="text-[22px] font-bold text-zinc-800">免费</div>
+                      <p className="text-[11px] text-zinc-400">适合初次体验</p>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    <CheckCircle2 size={14} className="text-emerald-500" />
-                    五轮面试全流程模拟
+
+                  {/* VIP 会员 - 浅灰背景，琥珀色仅用于按钮 */}
+                  <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-5 text-left relative flex flex-col hover:shadow-md hover:-translate-y-0.5 transition-all duration-200">
+                    {/* 推荐标签 */}
+                    <div className="absolute top-4 right-4 px-2 py-0.5 bg-zinc-900 text-white text-[10px] font-semibold rounded">
+                      推荐
+                    </div>
+                    
+                    <div className="flex items-center gap-2.5 mb-4">
+                      <div className="w-9 h-9 bg-zinc-900 rounded-lg flex items-center justify-center">
+                        <Crown size={18} className="text-white" />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-[15px] text-zinc-800">VIP 会员</h3>
+                        <p className="text-[11px] text-zinc-500">解锁全部功能</p>
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-2.5 mb-5 flex-grow">
+                      <div className="flex items-center gap-2.5 text-[13px] text-zinc-700">
+                        <span className="w-5 h-5 rounded bg-zinc-200 flex items-center justify-center shrink-0">
+                          <CheckCircle2 size={12} className="text-zinc-600" />
+                        </span>
+                        <span>简历诊断 + 模拟面试 <span className="text-zinc-900 font-semibold">50次/天</span></span>
+                      </div>
+                      <div className="flex items-center gap-2.5 text-[13px] text-zinc-700">
+                        <span className="w-5 h-5 rounded bg-zinc-200 flex items-center justify-center shrink-0">
+                          <CheckCircle2 size={12} className="text-zinc-600" />
+                        </span>
+                        <span>英文简历翻译 <span className="text-zinc-900 font-semibold">无限</span></span>
+                      </div>
+                      <div className="flex items-center gap-2.5 text-[13px] text-zinc-700">
+                        <span className="w-5 h-5 rounded bg-zinc-200 flex items-center justify-center shrink-0">
+                          <CheckCircle2 size={12} className="text-zinc-600" />
+                        </span>
+                        <span>PDF 导出 <span className="text-zinc-900 font-semibold">无限</span></span>
+                      </div>
+                      <div className="flex items-center gap-2.5 text-[13px] text-zinc-700">
+                        <span className="w-5 h-5 rounded bg-zinc-200 flex items-center justify-center shrink-0">
+                          <CheckCircle2 size={12} className="text-zinc-600" />
+                        </span>
+                        <span>面试记录导出 <span className="text-zinc-900 font-semibold">支持</span></span>
+                      </div>
+                    </div>
+
+                    <div className="pt-4 border-t border-zinc-200">
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="text-[22px] font-bold text-zinc-800">¥19.9</span>
+                        <span className="text-zinc-500 text-[13px]">/月</span>
+                        <span className="text-zinc-400 line-through text-[13px] ml-1">¥29.9</span>
+                      </div>
+                      <p className="text-[11px] text-zinc-500">高效求职必备</p>
+                    </div>
+
+                    <button 
+                      onClick={() => {
+                        if (!user) {
+                          setShowLoginModal(true);
+                        } else {
+                          setShowVIPModal(true);
+                        }
+                      }}
+                      className="w-full mt-4 py-2.5 bg-zinc-900 hover:bg-zinc-800 text-white rounded-lg text-[13px] font-medium transition-colors flex items-center justify-center gap-2"
+                    >
+                      <Crown size={14} />
+                      立即开通
+                    </button>
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    <CheckCircle2 size={14} className="text-emerald-500" />
-                    支持导出 PDF/文本/图片
-                  </div>
+                </div>
+              </div>
+
+              {/* 底部提示 - 移到最底部 */}
+              <div className="mt-12 pt-8 border-t border-zinc-100 flex items-center justify-center gap-6 text-[12px] text-zinc-500">
+                <div className="flex items-center gap-1.5">
+                  <CheckCircle2 size={14} className="text-zinc-400" />
+                  AI 智能诊断与优化
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <CheckCircle2 size={14} className="text-zinc-400" />
+                  五轮面试全流程模拟
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <CheckCircle2 size={14} className="text-zinc-400" />
+                  支持导出 PDF/文本/图片
                 </div>
               </div>
 
@@ -1111,7 +1335,27 @@ const App: React.FC = () => {
 
         {/* Step 3 & 4: Editor + Preview */}
         {(step === 'EDITOR' || step === 'ENGLISH_VERSION') && (
-          <div className={`flex flex-col lg:flex-row gap-4 ${isFullscreen ? 'fixed inset-0 z-50 bg-white p-4' : 'h-[calc(100vh-120px)]'}`}>
+          <div className={`flex flex-col lg:flex-row gap-4 ${isFullscreen ? 'fixed inset-0 z-50 bg-zinc-100 p-4' : 'h-[calc(100vh-120px)]'}`}>
+            
+            {/* 全屏模式下的顶部导航栏 */}
+            {isFullscreen && (
+              <div className="absolute top-0 left-0 right-0 bg-white border-b border-zinc-200 px-4 py-3 flex items-center justify-between z-10">
+                <button 
+                  onClick={() => setIsFullscreen(false)}
+                  className="flex items-center gap-2 text-[13px] text-zinc-600 hover:text-zinc-900 transition-colors"
+                >
+                  <ArrowLeft size={16} />
+                  返回编辑
+                </button>
+                <span className="text-[13px] font-medium text-zinc-900">简历预览</span>
+                <button 
+                  onClick={() => setIsFullscreen(false)}
+                  className="p-2 hover:bg-zinc-100 rounded-md transition-colors text-zinc-500 hover:text-zinc-900"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            )}
             
             {/* Editor */}
             <div className={`flex flex-col bg-white rounded-lg border border-zinc-200 overflow-hidden no-print transition-all duration-300 ${isFullscreen ? 'hidden' : 'w-full lg:w-1/2'}`}>
@@ -1173,7 +1417,7 @@ const App: React.FC = () => {
             </div>
 
             {/* Preview */}
-            <div className={`flex flex-col transition-all duration-300 ${isFullscreen ? 'w-full h-full' : 'w-full lg:w-1/2'}`}>
+            <div className={`flex flex-col transition-all duration-300 ${isFullscreen ? 'w-full h-full pt-14' : 'w-full lg:w-1/2'}`}>
                
                {/* Toolbar */}
                <div className="bg-white px-4 py-2.5 rounded-t-lg flex flex-wrap gap-y-2 justify-between items-center no-print border border-zinc-200 border-b-0">
@@ -1224,24 +1468,15 @@ const App: React.FC = () => {
                    <span className="text-zinc-200 mx-0.5">|</span>
 
                    <button 
-                     onClick={handleExportImage}
-                     disabled={isGeneratingFile}
-                     className="text-[12px] text-zinc-500 hover:text-zinc-900 px-2 py-1 rounded transition-colors flex items-center gap-1"
-                   >
-                     {isGeneratingFile ? <Loader2 size={12} className="animate-spin" /> : <ImageIcon size={12} />}
-                     <span className="hidden lg:inline">图片</span>
-                   </button>
-
-                   <button 
-                     onClick={handleExportPDF}
-                     disabled={isGeneratingFile}
-                     className="bg-zinc-900 hover:bg-zinc-800 text-white text-[12px] px-2.5 py-1 rounded transition-colors flex items-center gap-1 font-medium"
-                   >
-                      {isGeneratingFile ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
-                      导出 PDF
-                   </button>
-                 </div>
-               </div>
+                    onClick={handleExportPDF}
+                    disabled={isGeneratingFile}
+                    className="bg-zinc-900 hover:bg-zinc-800 text-white text-[12px] px-2.5 py-1 rounded transition-colors flex items-center gap-1 font-medium"
+                  >
+                     {isGeneratingFile ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
+                     导出 PDF
+                  </button>
+                </div>
+              </div>
                
               {/* Preview Container */}
               <div className={`flex-grow bg-zinc-100 overflow-auto p-4 md:p-6 relative custom-scrollbar border border-zinc-200 border-t-0 ${isFullscreen ? '' : 'rounded-b-lg'}`}>
@@ -1252,8 +1487,27 @@ const App: React.FC = () => {
                        <AlertTriangle size={12} /> 接近满页，建议精简内容避免打印分页
                     </div>
                 ) : (capacity.status === 'overflow' || capacity.status === 'danger') ? (
-                    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-zinc-900 text-white text-[11px] px-3 py-1.5 rounded-md font-medium flex items-center gap-1.5 whitespace-nowrap">
-                       <AlertTriangle size={12} /> 内容超出 1 页
+                    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-zinc-900 text-white text-[11px] px-3 py-1.5 rounded-md font-medium flex items-center gap-2 whitespace-nowrap">
+                       <span className="flex items-center gap-1.5">
+                         <AlertTriangle size={12} /> 超出一页，建议精简非核心内容
+                       </span>
+                       <button
+                         onClick={handleCondenseResume}
+                         disabled={isCondensing}
+                         className="bg-white/20 hover:bg-white/30 px-2 py-0.5 rounded text-[10px] font-medium transition-colors flex items-center gap-1"
+                       >
+                         {isCondensing ? (
+                           <>
+                             <Loader2 size={10} className="animate-spin" />
+                             精简中...
+                           </>
+                         ) : (
+                           <>
+                             <Sparkles size={10} />
+                             帮我精简
+                           </>
+                         )}
+                       </button>
                     </div>
                 ) : (step === 'ENGLISH_VERSION' ? englishResume : editableResume).includes('X%') ? (
                     <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 bg-blue-50 text-blue-700 text-[11px] px-3 py-1.5 rounded-md font-medium border border-blue-200 whitespace-nowrap">
@@ -1298,6 +1552,9 @@ const App: React.FC = () => {
             onBack={() => setStep('INPUT')} 
             initialResume={editableResume || resume}
             initialJd={jd}
+            initialJdFile={jdFile ? { name: jdFile.name, data: jdFile.data, mime: jdFile.mime } : null}
+            initialResumeFile={resumeFile ? { name: resumeFile.name, data: resumeFile.data, mime: resumeFile.mime } : null}
+            onShowVIPModal={() => setShowVIPModal(true)}
           />
         )}
       </main>

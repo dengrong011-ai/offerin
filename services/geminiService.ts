@@ -165,7 +165,17 @@ const RESUME_SYSTEM_INSTRUCTION = `你是资深简历专家，专注互联网/AI
 
 **【特殊场景】** 转行(可迁移能力) | 大厂→创业(0-1) | 创业→大厂(体系化) | IC→管理(带人规模)
 
-**【核心原则】** 精简第一 | 每条必有量化 | 动词有力 | 禁止虚构
+**【核心原则】** 保持精简专业 | 每条必有量化 | 动词有力 | 禁止虚构
+
+**【禁止使用的标题/关键词】**
+禁止在简历中使用以下词汇作为标题或内容：核心加分项、亮点总结、优势总结、关键优势、核心竞争力总结、个人亮点、职业亮点。
+简历标题只能使用：工作经历、项目经历、教育背景、专业技能、个人项目、实习经历 等常规标题。
+
+**【严格禁止】**
+1. 禁止添加任何注释、备注或说明性文字（如"注："、"说明："、"备注："、"*注*"等）
+2. 禁止将工作经历拆分成多个部分（如"工作经历"和"工作经历（早期）"），所有工作经历必须放在同一个"## 工作经历"模块下，按时间倒序排列
+3. 禁止在简历条目下添加任何解释性注释（如"此项目体现..."、"此经历证明..."等）
+4. 简历内容必须是纯粹的简历格式，不包含任何元说明或括号备注
 
 **【格式要求】**
 # 姓名
@@ -175,7 +185,7 @@ const RESUME_SYSTEM_INSTRUCTION = `你是资深简历专家，专注互联网/AI
 ### 公司 | 职位 | 时间
 - 动词开头的成果描述
 
-直接以"# 姓名"开头输出简历。`;
+直接以"# 姓名"开头输出简历，只输出简历内容本身，不要任何额外说明。`;
 
 export interface FileData {
   data: string;
@@ -296,7 +306,9 @@ ${diagnosisResult}
 2. 必须弥补诊断报告中指出的"Gap"（能力差距）
 3. 必须融入诊断报告建议的 ATS 关键词
 4. 严格遵守真实性原则，不要虚构经历
-只输出简历内容，直接以 "# 姓名" 开头。` 
+5. 禁止添加任何"注："、"说明："等注释性文字
+6. 所有工作经历必须放在同一个"## 工作经历"下，禁止拆分成"工作经历（早期）"等多个部分
+只输出简历内容，直接以 "# 姓名" 开头，不要任何额外说明或备注。` 
     });
 
     try {
@@ -507,6 +519,105 @@ export const extractTextFromFile = async (
     return response.text || '';
   } catch (error: any) {
     console.error("Text Extraction Error:", error);
+    throw new Error(handleApiError(error));
+  }
+};
+
+// 智能精简简历内容（当超出一页时使用）
+export const condenseResume = async (
+  resumeMarkdown: string,
+  currentPercentage: number, // 当前占用百分比，如 122
+  targetPercentage: number = 95 // 目标百分比，默认 95%
+): Promise<string> => {
+  const apiKey = getApiKey();
+  const ai = new GoogleGenAI({ apiKey });
+
+  // 计算需要精简的比例（保守一点，目标设为 93% 而不是太低）
+  const safeTarget = Math.max(targetPercentage, 90); // 最少保留 90%
+  const reductionNeeded = Math.ceil(((currentPercentage - safeTarget) / currentPercentage) * 100);
+
+  const prompt = `你是一位**谨慎的**简历精简专家。
+
+## 任务
+当前简历占用页面 **${currentPercentage}%**，需要精简到 **${safeTarget}%** 左右（仅需删减约 **${reductionNeeded}%** 的内容）。
+
+⚠️ **重要：保守精简，不要过度删除！** 只需要让简历刚好能放进一页即可。
+
+## 精简原则（按此顺序执行，达到目标后停止）
+
+### 第一步：句子精简（优先）
+- "负责XX系统的设计与开发" → "设计开发XX系统"
+- "参与并完成了XX项目的实施" → "实施XX项目"
+- "通过XX方式实现了XX" → "实现XX"
+- 删除"等"、"以及"、"相关"等虚词
+
+### 第二步：合并相似内容
+- 将 2-3 个相似的职责合并为 1 条
+- 合并重复的技能描述
+
+### 第三步：精简次要内容（谨慎使用）
+- 缩短较早期经历的描述（保留但精简）
+- 减少项目技术栈的列举（保留核心技术）
+
+## ❌ 禁止删除
+- 任何工作经历条目（可以精简但不能整段删除）
+- 量化数据（如提升X%、MAU达到X）
+- 核心成就描述
+- 联系方式和基本信息
+
+## ❌ 禁止添加
+- 不要添加"核心加分项"、"亮点"、"总结"等新标题
+- 不要改变原有的章节结构
+- 不要添加任何原文没有的内容
+
+## 原始简历
+
+${resumeMarkdown}
+
+## 输出要求
+
+1. 直接输出精简后的 Markdown 简历
+2. 不要任何解释、注释或代码块包裹
+3. **保持结构完整**，所有工作经历都要保留
+4. 精简幅度控制在 ${reductionNeeded}% 左右，不要过度删除`;
+
+  try {
+    console.log(`[精简简历] 当前 ${currentPercentage}%，目标 ${targetPercentage}%，需删减 ${reductionNeeded}%`);
+    
+    const response = await generateContentWithRetry(ai, {
+      model: "gemini-3-pro-preview",
+      contents: [{ parts: [{ text: prompt }] }],
+      config: {
+        temperature: 0.2, // 降低温度，让输出更稳定
+        safetySettings: [
+          { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+        ] as any
+      },
+    });
+
+    let result = response.text || '';
+    
+    // 清理可能的代码块包裹
+    result = result.replace(/^```(?:markdown|md)?\n?/i, '').replace(/\n?```$/i, '');
+    result = result.trim();
+    
+    // 检查精简效果
+    const originalLength = resumeMarkdown.length;
+    const resultLength = result.length;
+    const actualReduction = Math.round((1 - resultLength / originalLength) * 100);
+    
+    console.log(`[精简完成] 原始 ${originalLength} 字符 → 精简后 ${resultLength} 字符，实际减少 ${actualReduction}%`);
+    
+    if (resultLength >= originalLength) {
+      console.warn('[警告] 精简后内容没有变短，可能需要重试');
+    }
+    
+    return result;
+  } catch (error: any) {
+    console.error("Resume Condense Error:", error);
     throw new Error(handleApiError(error));
   }
 };
