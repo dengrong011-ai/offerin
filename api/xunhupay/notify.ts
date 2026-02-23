@@ -1,24 +1,25 @@
 /**
- * XorPay 支付回调接口
- * 用于接收 XorPay 支付成功通知
+ * 虎皮椒支付回调接口 (Vercel Serverless Function)
+ * 
+ * 当用户支付成功后，虎皮椒会向这个接口发送 POST 请求
+ * 回调地址格式：https://你的域名/api/xunhupay/notify
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
-// 初始化 Supabase 客户端（使用 Service Role Key 以绕过 RLS）
-const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+// 环境变量
+const XUNHU_APP_SECRET = process.env.VITE_XUNHU_APP_SECRET || '';
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || '';
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-// XorPay 配置
-const XORPAY_APP_SECRET = process.env.VITE_XORPAY_APP_SECRET || '';
+// 初始化 Supabase 客户端（使用 Service Role Key 绕过 RLS）
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
 /**
- * MD5 签名算法（与前端一致）
+ * 简单的 MD5 实现
  */
-const md5Simple = (string: string): string => {
+function md5(string: string): string {
   function md5cycle(x: number[], k: number[]) {
     let a = x[0], b = x[1], c = x[2], d = x[3];
 
@@ -172,60 +173,107 @@ const md5Simple = (string: string): string => {
   }
 
   return hex(md51(utf8Encode(string)));
-};
+}
 
 /**
- * 验证 XorPay 签名
+ * 生成虎皮椒签名
  */
-const verifySign = (aoid: string, orderId: string, payPrice: string, payTime: string, sign: string): boolean => {
-  // 签名规则：aoid + order_id + pay_price + pay_time + app_secret
-  const expectedSign = md5Simple(aoid + orderId + payPrice + payTime + XORPAY_APP_SECRET);
-  return sign === expectedSign;
-};
+function generateSign(params: Record<string, string>, appSecret: string): string {
+  const filteredParams: Record<string, string> = {};
+  for (const key of Object.keys(params)) {
+    const value = params[key];
+    if (key !== 'hash' && value !== null && value !== undefined && value !== '') {
+      filteredParams[key] = String(value);
+    }
+  }
+
+  const sortedKeys = Object.keys(filteredParams).sort();
+  const stringA = sortedKeys.map(key => `${key}=${filteredParams[key]}`).join('&');
+  const stringSignTemp = stringA + appSecret;
+  
+  return md5(stringSignTemp);
+}
 
 /**
- * 处理支付成功后的业务逻辑
+ * 验证虎皮椒回调签名
  */
-const handlePaymentSuccess = async (orderId: string): Promise<boolean> => {
+function verifySign(params: Record<string, string>): boolean {
+  const receivedHash = params.hash;
+  const calculatedHash = generateSign(params, XUNHU_APP_SECRET);
+  return receivedHash === calculatedHash;
+}
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // 只接受 POST 请求
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
   try {
-    // 1. 查询订单信息
+    // 解析回调参数
+    const params = req.body as Record<string, string>;
+    const {
+      trade_order_id,  // 商户订单号
+      total_fee,       // 实际支付金额
+      transaction_id,  // 支付平台交易号
+      open_order_id,   // 虎皮椒内部订单号
+      status,          // 订单状态: OD=已支付, CD=已退款
+      hash,
+    } = params;
+
+    console.log('收到虎皮椒回调:', { trade_order_id, total_fee, status, transaction_id });
+
+    // 验证签名
+    if (!verifySign(params)) {
+      console.error('签名验证失败');
+      return res.status(400).send('sign error');
+    }
+
+    // 检查支付状态
+    if (status !== 'OD') {
+      console.log('非支付成功状态:', status);
+      return res.status(200).send('success');
+    }
+
+    // 查询订单信息
     const { data: order, error: orderError } = await supabase
       .from('payment_orders')
       .select('*')
-      .eq('id', orderId)
+      .eq('id', trade_order_id)
       .single();
 
     if (orderError || !order) {
-      console.error('订单不存在:', orderId);
-      return false;
+      console.error('订单不存在:', trade_order_id);
+      return res.status(400).send('order not found');
     }
 
-    // 2. 检查是否已处理
+    // 检查订单是否已处理
     if (order.status === 'paid') {
-      console.log('订单已处理:', orderId);
-      return true;
+      console.log('订单已处理:', trade_order_id);
+      return res.status(200).send('success');
     }
 
-    // 3. 更新订单状态
+    // 更新订单状态
     const { error: updateError } = await supabase
       .from('payment_orders')
       .update({
         status: 'paid',
         paid_at: new Date().toISOString(),
+        xunhu_order_id: open_order_id,
+        transaction_id: transaction_id,
       })
-      .eq('id', orderId);
+      .eq('id', trade_order_id);
 
     if (updateError) {
       console.error('更新订单状态失败:', updateError);
-      return false;
+      return res.status(500).send('update order failed');
     }
 
-    // 4. 根据产品类型处理
+    // 根据产品类型处理业务逻辑
     if (order.product_id === 'vip_monthly') {
-      // VIP 会员：更新会员状态
-      const currentDate = new Date();
-      const expiresAt = new Date(currentDate.getTime() + 30 * 24 * 60 * 60 * 1000); // 30天
-
+      // VIP 会员：更新用户会员状态
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30天后
+      
       const { error: profileError } = await supabase
         .from('profiles')
         .update({
@@ -236,8 +284,7 @@ const handlePaymentSuccess = async (orderId: string): Promise<boolean> => {
         .eq('id', order.user_id);
 
       if (profileError) {
-        console.error('更新会员状态失败:', profileError);
-        return false;
+        console.error('更新用户会员状态失败:', profileError);
       }
     } else if (order.product_id === 'resume_download') {
       // 单次购买：记录购买记录
@@ -246,63 +293,22 @@ const handlePaymentSuccess = async (orderId: string): Promise<boolean> => {
         .insert({
           user_id: order.user_id,
           product_id: order.product_id,
-          order_id: orderId,
+          order_id: trade_order_id,
           used: false,
         });
 
       if (purchaseError) {
         console.error('记录购买失败:', purchaseError);
-        return false;
       }
     }
 
-    console.log('支付成功处理完成:', orderId);
-    return true;
+    console.log('支付回调处理成功:', trade_order_id);
+    
+    // 返回 success 告诉虎皮椒已收到通知
+    return res.status(200).send('success');
+
   } catch (error) {
-    console.error('处理支付失败:', error);
-    return false;
-  }
-};
-
-/**
- * XorPay 支付回调处理
- */
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // 只接受 POST 请求
-  if (req.method !== 'POST') {
-    return res.status(405).send('Method Not Allowed');
-  }
-
-  console.log('收到 XorPay 回调:', req.body);
-
-  try {
-    // 解析回调参数
-    const { aoid, order_id, pay_price, pay_time, sign } = req.body;
-
-    // 验证必要参数
-    if (!aoid || !order_id || !pay_price || !pay_time || !sign) {
-      console.error('缺少必要参数');
-      return res.status(400).send('fail');
-    }
-
-    // 验证签名
-    if (!verifySign(aoid, order_id, pay_price, pay_time, sign)) {
-      console.error('签名验证失败');
-      return res.status(400).send('fail');
-    }
-
-    // 处理支付成功
-    const success = await handlePaymentSuccess(order_id);
-
-    if (success) {
-      // 返回 success 表示处理成功，XorPay 不会再次回调
-      return res.status(200).send('success');
-    } else {
-      // 返回非 success，XorPay 会重试
-      return res.status(500).send('fail');
-    }
-  } catch (error) {
-    console.error('处理回调异常:', error);
-    return res.status(500).send('fail');
+    console.error('处理支付回调出错:', error);
+    return res.status(500).send('internal error');
   }
 }

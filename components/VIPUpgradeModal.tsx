@@ -4,12 +4,12 @@ import { useAuth } from '../contexts/AuthContext';
 import { 
   XORPAY_PRODUCTS,
   createXorPayOrder, 
-  queryXorPayOrderStatus,
   handlePaymentSuccess,
-  generateQRCodeUrl,
   formatXorPayPrice,
   isXorPayConfigured,
+  generateQRCodeUrl,
 } from '../services/xorpayService';
+import { supabase, isSupabaseConfigured } from '../services/supabaseClient';
 
 interface VIPUpgradeModalProps {
   isOpen: boolean;
@@ -32,7 +32,6 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
   // 支付相关状态
   const [orderId, setOrderId] = useState('');
   const [qrCodeUrl, setQrCodeUrl] = useState('');
-  const [expiresIn, setExpiresIn] = useState(0);
   const [countdown, setCountdown] = useState(0);
   
   // 轮询相关
@@ -66,7 +65,6 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
     setPaymentStep('info');
     setOrderId('');
     setQrCodeUrl('');
-    setExpiresIn(0);
     setCountdown(0);
     setError('');
     setLoading(false);
@@ -96,14 +94,13 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
       // 创建支付订单
       const result = await createXorPayOrder(user.id, 'vip_monthly', notifyUrl);
 
-      if (!result.success || !result.qrCode) {
+      if (!result.success) {
         throw new Error(result.error || '创建订单失败');
       }
 
       setOrderId(result.orderId || '');
-      setQrCodeUrl(generateQRCodeUrl(result.qrCode, 200));
-      setExpiresIn(result.expiresIn || 7200);
-      setCountdown(result.expiresIn || 7200);
+      setQrCodeUrl(result.qrCode ? generateQRCodeUrl(result.qrCode, 180) : '');
+      setCountdown(300); // 5分钟有效期
       setPaymentStep('qrcode');
 
       // 开始倒计时
@@ -139,19 +136,20 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
 
     const poll = async () => {
       try {
-        const result = await queryXorPayOrderStatus(orderIdToCheck);
-        
-        if (result.success) {
-          if (result.status === 'success' || result.status === 'payed') {
+        // 查询本地订单状态
+        if (isSupabaseConfigured) {
+          const { data, error } = await supabase
+            .from('payment_orders')
+            .select('status')
+            .eq('id', orderIdToCheck)
+            .single();
+
+          if (!error && data && data.status === 'paid') {
             // 支付成功
             clearTimers();
             setPaymentStep('polling');
             
-            // 处理支付成功后的业务逻辑
-            if (user) {
-              await handlePaymentSuccess(orderIdToCheck, user.id, 'vip_monthly');
-              await refreshProfile();
-            }
+            await refreshProfile();
             
             setPaymentStep('success');
             
@@ -160,11 +158,6 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
               onSuccess?.();
               handleClose();
             }, 2000);
-          } else if (result.status === 'expire') {
-            // 订单过期
-            clearTimers();
-            setPaymentStep('error');
-            setError('订单已过期，请重新支付');
           }
         }
       } catch (err) {
@@ -294,7 +287,7 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
               {/* 提示文字 */}
               <div className="flex items-center justify-center gap-2 text-zinc-600 mb-3">
                 <Smartphone size={16} />
-                <span className="text-sm">请使用支付宝扫码支付</span>
+                <span className="text-sm">请使用微信扫码支付</span>
               </div>
               
               {/* 金额和倒计时 */}
@@ -401,7 +394,7 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
                 ) : (
                   <>
                     <QrCode size={18} />
-                    支付宝扫码开通 {formatXorPayPrice(product.priceInCents)}/月
+                    微信扫码开通 {formatXorPayPrice(product.priceInCents)}/月
                   </>
                 )}
               </button>
