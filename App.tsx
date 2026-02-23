@@ -75,18 +75,34 @@ const App: React.FC = () => {
   useEffect(() => {
     if (step !== 'EDITOR' && step !== 'ENGLISH_VERSION') return;
 
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setResumeHeight(entry.contentRect.height);
+    // 延迟计算以确保内容渲染完成
+    const measureHeight = () => {
+      const measureContainer = document.getElementById('resume-measure-container');
+      if (measureContainer) {
+        // 获取内容的实际高度（不受 transform scale 影响）
+        const height = measureContainer.scrollHeight;
+        console.log('测量内容高度:', height, 'px', '每页可用高度:', CONTENT_HEIGHT_PER_PAGE, 'px', '页数:', Math.ceil(height / CONTENT_HEIGHT_PER_PAGE));
+        setResumeHeight(height);
       }
+    };
+
+    // 初次测量，延迟更长时间确保渲染完成
+    const timer = setTimeout(measureHeight, 200);
+    
+    // 使用 ResizeObserver 监听内容变化
+    const observer = new ResizeObserver(() => {
+      measureHeight();
     });
 
-    const target = document.querySelector('#resume-preview-content');
+    const target = document.getElementById('resume-measure-container');
     if (target) {
       observer.observe(target);
     }
 
-    return () => observer.disconnect();
+    return () => {
+      clearTimeout(timer);
+      observer.disconnect();
+    };
   }, [step, editableResume, englishResume, densityMultiplier]);
 
   const scrollToInput = () => {
@@ -444,66 +460,21 @@ const App: React.FC = () => {
     await Promise.all(promises);
   };
 
-  const preparePaginatedDom = async (sourceElement: HTMLElement) => {
-    // 创建离屏容器 - 简单方案：直接渲染整个内容，然后按高度裁剪
-    const shadowContainer = document.createElement('div');
-    shadowContainer.style.position = 'absolute';
-    shadowContainer.style.top = '-10000px';
-    shadowContainer.style.left = '0';
-    shadowContainer.style.width = `${A4_WIDTH_PX}px`;
-    shadowContainer.style.backgroundColor = '#ffffff';
-    
-    const computedStyle = window.getComputedStyle(sourceElement);
-    shadowContainer.style.fontFamily = computedStyle.fontFamily;
-    shadowContainer.style.fontSize = computedStyle.fontSize;
-    shadowContainer.style.lineHeight = computedStyle.lineHeight;
-    shadowContainer.style.color = computedStyle.color;
-    shadowContainer.style.boxSizing = 'border-box';
-    shadowContainer.className = sourceElement.className;
-    
-    // 克隆原始内容
-    const contentClone = sourceElement.cloneNode(true) as HTMLElement;
-    contentClone.style.transform = 'none';
-    contentClone.style.margin = '0';
-    contentClone.style.padding = `${PAGE_PADDING_TOP}px ${PAGE_PADDING_LEFT}px ${PAGE_PADDING_BOTTOM}px ${PAGE_PADDING_RIGHT}px`;
-    contentClone.style.minHeight = 'auto';
-    contentClone.style.boxShadow = 'none';
-    contentClone.style.backgroundColor = '#ffffff';
-    contentClone.style.width = '100%';
-    contentClone.style.boxSizing = 'border-box';
-    
-    // 确保所有子元素的样式被正确保留
-    const allElements = contentClone.querySelectorAll('*');
-    allElements.forEach((el) => {
-      const elem = el as HTMLElement;
-      const elStyle = window.getComputedStyle(elem);
-      if (elStyle.lineHeight && elStyle.lineHeight !== 'normal') {
-        elem.style.lineHeight = elStyle.lineHeight;
-      }
-      if (elStyle.marginTop) elem.style.marginTop = elStyle.marginTop;
-      if (elStyle.marginBottom) elem.style.marginBottom = elStyle.marginBottom;
-      if (elStyle.paddingTop) elem.style.paddingTop = elStyle.paddingTop;
-      if (elStyle.paddingBottom) elem.style.paddingBottom = elStyle.paddingBottom;
-    });
-    
-    shadowContainer.appendChild(contentClone);
-    document.body.appendChild(shadowContainer);
-    
-    await waitForImages(contentClone);
-    
-    return { shadowContainer, contentClone };
-  };
+  // 每页可用内容高度（A4高度 - 上下padding）
+  const CONTENT_HEIGHT_PER_PAGE = A4_HEIGHT_PX - PAGE_PADDING_TOP - PAGE_PADDING_BOTTOM; // 1043px
 
   const handleExportImage = async () => {
-    const wrapper = document.getElementById('resume-preview-content');
-    const element = wrapper?.firstElementChild as HTMLElement;
+    const element = document.getElementById('resume-measure-container');
     if (!element) return;
     
     setIsGeneratingFile(true);
-    const { shadowContainer, contentClone } = await preparePaginatedDom(element);
 
     try {
-      const canvas = await html2canvas(contentClone, {
+      // 获取完整的简历内容容器（包括父容器的padding区域）
+      const parentDiv = element.parentElement;
+      if (!parentDiv) return;
+      
+      const canvas = await html2canvas(parentDiv, {
         scale: 2.5, 
         useCORS: true,
         backgroundColor: '#ffffff',
@@ -520,63 +491,302 @@ const App: React.FC = () => {
       console.error('Image export failed', e);
       alert('图片导出失败，请重试');
     } finally {
-      if (document.body.contains(shadowContainer)) {
-        document.body.removeChild(shadowContainer);
-      }
       setIsGeneratingFile(false);
     }
   };
 
-  // 实际执行 PDF 导出的函数
+  // 实际执行 PDF 导出的函数（智能分页，避免文字被截断）
   const doExportPDF = async () => {
-    const wrapper = document.getElementById('resume-preview-content');
-    const element = wrapper?.firstElementChild as HTMLElement;
+    const element = document.getElementById('resume-measure-container');
     if (!element) return;
 
     setIsGeneratingFile(true);
-    const { shadowContainer, contentClone } = await preparePaginatedDom(element);
 
     try {
-      // 渲染整个内容为一张大图
-      const canvas = await html2canvas(contentClone, {
+      const contentWidth = A4_WIDTH_PX - PAGE_PADDING_LEFT - PAGE_PADDING_RIGHT; // 714px
+      
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfWidth = 210;
+      
+      // 创建临时容器
+      const tempContainer = document.createElement('div');
+      tempContainer.style.position = 'absolute';
+      tempContainer.style.top = '-10000px';
+      tempContainer.style.left = '0';
+      tempContainer.style.overflow = 'visible'; // 确保不裁剪
+      document.body.appendChild(tempContainer);
+      
+      // 克隆内容到临时容器
+      const contentContainer = document.createElement('div');
+      contentContainer.style.width = `${contentWidth}px`;
+      contentContainer.style.backgroundColor = '#ffffff';
+      contentContainer.style.overflow = 'visible'; // 确保不裁剪
+      
+      const contentClone = element.cloneNode(true) as HTMLElement;
+      contentClone.id = '';
+      contentClone.style.width = `${contentWidth}px`;
+      contentClone.style.overflow = 'visible'; // 确保不裁剪
+      
+      // 关键：在内容底部添加额外的空白区域（paddingBottom）
+      // 这确保 html2canvas 能完整捕获最后一行文字（包括文字的下降部分 descender）
+      // 没有这个 padding，html2canvas 可能会恰好在文字基线处截断
+      contentContainer.style.paddingBottom = '60px';
+      
+      contentContainer.appendChild(contentClone);
+      tempContainer.appendChild(contentContainer);
+      
+      await new Promise(resolve => setTimeout(resolve, 200));
+      
+      const totalContentHeight = contentContainer.scrollHeight;
+      console.log('PDF导出 - 内容高度:', totalContentHeight);
+      
+      // 渲染完整内容为canvas - 明确指定高度以确保完整渲染
+      const contentCanvas = await html2canvas(contentContainer, {
         scale: 3,
         useCORS: true,
         backgroundColor: '#ffffff',
         logging: false,
-        width: A4_WIDTH_PX,
-        windowWidth: 1024
+        width: contentWidth,
+        height: totalContentHeight, // 明确指定高度
+        windowWidth: contentWidth,
+        windowHeight: totalContentHeight // 明确指定窗口高度
       });
-
-      const imgData = canvas.toDataURL('image/jpeg', 0.95);
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pdfWidth = 210; 
-      const pdfHeight = 297;
-      const imgProps = pdf.getImageProperties(imgData);
-      const imgHeightInPdf = (imgProps.height * pdfWidth) / imgProps.width;
       
-      let heightLeft = imgHeightInPdf;
-      let position = 0;
+      const canvasScale = contentCanvas.width / contentWidth;
+      const paddingTopInCanvas = PAGE_PADDING_TOP * canvasScale;
+      const paddingBottomInCanvas = PAGE_PADDING_BOTTOM * canvasScale;
+      const paddingLeftInCanvas = PAGE_PADDING_LEFT * canvasScale;
+      const pageWidthInCanvas = A4_WIDTH_PX * canvasScale;
+      const pageHeightInCanvas = A4_HEIGHT_PX * canvasScale;
+      // 每页实际可用于绘制内容的最大高度（考虑上下边距）
+      const maxDrawableHeight = pageHeightInCanvas - paddingTopInCanvas - paddingBottomInCanvas;
+      // 从 canvas 底部向上扫描，找到实际内容的最后一个非白色像素行
+      // 这比用固定的 extraBottomPadding 更精确，避免裁掉文字的 descender 部分
+      const findActualContentBottom = (canvas: HTMLCanvasElement): number => {
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return canvas.height;
+        const width = canvas.width;
+        // 从底部向上扫描
+        for (let y = canvas.height - 1; y >= 0; y--) {
+          const imageData = ctx.getImageData(0, y, width, 1);
+          const data = imageData.data;
+          for (let x = 0; x < width * 4; x += 4) {
+            if (data[x] < 250 || data[x + 1] < 250 || data[x + 2] < 250) {
+              // 找到非白色像素，再加一些安全边距（15px 原始像素）确保 descender 完整
+              return Math.min(canvas.height, y + Math.ceil(15 * canvasScale));
+            }
+          }
+        }
+        return canvas.height;
+      };
+      const actualContentHeight = findActualContentBottom(contentCanvas);
       
-      // 第一页
-      pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, imgHeightInPdf);
-      heightLeft -= pdfHeight;
-
-      // 后续页面 - 按 A4 高度裁剪，允许在任意位置截断
-      while (heightLeft > 5) { 
-        position -= pdfHeight; 
-        pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, imgHeightInPdf);
-        heightLeft -= pdfHeight;
+      console.log('Canvas scale:', canvasScale, '内容Canvas尺寸:', contentCanvas.width, 'x', contentCanvas.height);
+      console.log('实际内容高度:', Math.round(actualContentHeight / canvasScale), 'px, 可绘制内容高度:', maxDrawableHeight / canvasScale, 'px');
+      
+      // 在canvas级别检测空白行，找到安全的分页点
+      // 关键：返回的分页点应该是"空白区域的顶部"，即上一行内容的正下方
+      // 这样第一页包含完整的内容，第二页从空白区域之后的新内容开始
+      const findSafeBreakPoint = (canvas: HTMLCanvasElement, startY: number, maxY: number): number => {
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return maxY - 30 * canvasScale;
+        
+        const width = canvas.width;
+        const searchRange = Math.min(300 * canvasScale, maxY - startY);
+        
+        // 安全边距
+        const safetyMargin = 10 * canvasScale;
+        const effectiveMaxY = maxY - safetyMargin;
+        
+        // 需要至少 10px 原始像素的连续空白才认为是行间空白
+        const minWhiteGap = Math.ceil(10 * canvasScale);
+        
+        let consecutiveWhiteLines = 0;
+        let gapBottomY = -1; // 空白区域的底部（最下方的白色行）
+        
+        // 从 effectiveMaxY 向上搜索
+        for (let y = Math.floor(effectiveMaxY); y > effectiveMaxY - searchRange; y--) {
+          const imageData = ctx.getImageData(0, y, width, 1);
+          const data = imageData.data;
+          
+          let isWhiteLine = true;
+          for (let x = 0; x < width * 4; x += 4) {
+            const r = data[x];
+            const g = data[x + 1];
+            const b = data[x + 2];
+            if (r < 250 || g < 250 || b < 250) {
+              isWhiteLine = false;
+              break;
+            }
+          }
+          
+          if (isWhiteLine) {
+            consecutiveWhiteLines++;
+            if (gapBottomY < 0) {
+              gapBottomY = y; // 记录空白区域的底部
+            }
+          } else {
+            // 遇到内容行
+            if (consecutiveWhiteLines >= minWhiteGap) {
+              // 找到了足够大的空白区域
+              // 分页点 = 当前内容行的下方 = y + 1（刚好在内容下面）
+              // 这样第一页包含到这行内容，第二页从空白区域之后开始
+              const breakPoint = y + 1;
+              console.log(`找到安全分页点: ${Math.round(breakPoint / canvasScale)}px，空白大小: ${Math.round(consecutiveWhiteLines / canvasScale)}px`);
+              return breakPoint;
+            }
+            // 重置
+            consecutiveWhiteLines = 0;
+            gapBottomY = -1;
+          }
+        }
+        
+        // 如果没找到足够大的空白，尝试找最大的空白
+        let maxGap = 0;
+        let maxGapBreakPoint = -1;
+        consecutiveWhiteLines = 0;
+        
+        for (let y = Math.floor(effectiveMaxY); y > effectiveMaxY - searchRange; y--) {
+          const imageData = ctx.getImageData(0, y, width, 1);
+          const data = imageData.data;
+          
+          let isWhiteLine = true;
+          for (let x = 0; x < width * 4; x += 4) {
+            if (data[x] < 250 || data[x + 1] < 250 || data[x + 2] < 250) {
+              isWhiteLine = false;
+              break;
+            }
+          }
+          
+          if (isWhiteLine) {
+            consecutiveWhiteLines++;
+          } else {
+            if (consecutiveWhiteLines > maxGap) {
+              maxGap = consecutiveWhiteLines;
+              maxGapBreakPoint = y + 1; // 内容行的下方
+            }
+            consecutiveWhiteLines = 0;
+          }
+        }
+        
+        if (maxGap >= 5 * canvasScale && maxGapBreakPoint > 0) {
+          console.warn(`使用最大空白: ${Math.round(maxGapBreakPoint / canvasScale)}px，空白: ${Math.round(maxGap / canvasScale)}px`);
+          return maxGapBreakPoint;
+        }
+        
+        // 回退
+        const fallbackY = Math.max(startY + 50 * canvasScale, effectiveMaxY - 50 * canvasScale);
+        console.warn(`未找到分页点，回退: ${Math.round(fallbackY / canvasScale)}px`);
+        return fallbackY;
+      };
+      
+      // 计算分页位置（基于canvas像素）- 使用实际可绘制高度
+      const pageBreaksInCanvas: number[] = [0];
+      let currentY = 0;
+      
+      console.log(`实际内容高度: ${Math.round(actualContentHeight / canvasScale)}px, 可绘制高度: ${Math.round(maxDrawableHeight / canvasScale)}px`);
+      
+      // 使用 actualContentHeight（减去额外padding后的真实内容高度）来判断分页
+      // 容差：允许内容稍微超出可绘制高度，占用部分底部边距（最多占用30px，保留10px底部边距）
+      const toleranceInCanvas = 30 * canvasScale;
+      if (actualContentHeight <= maxDrawableHeight + toleranceInCanvas) {
+        // 内容可以放在一页内，使用实际内容高度作为绘制范围
+        pageBreaksInCanvas.push(actualContentHeight);
+        console.log(`内容在一页内，实际内容高度: ${Math.round(actualContentHeight / canvasScale)}px, 无需分页`);
+      } else {
+        // 需要多页
+        while (currentY < actualContentHeight) {
+          let nextPageEnd = currentY + maxDrawableHeight;
+          
+          // 计算剩余内容高度
+          const remainingHeight = actualContentHeight - currentY;
+          
+          // 如果剩余内容可以放在一页内（带容差），直接结束
+          if (remainingHeight <= maxDrawableHeight + toleranceInCanvas) {
+            pageBreaksInCanvas.push(actualContentHeight);
+            console.log(`最后一页，剩余内容: ${Math.round(remainingHeight / canvasScale)}px，可容纳`);
+            break;
+          }
+          
+          // 剩余内容超过一页，需要找分页点
+          const safeBreakPoint = findSafeBreakPoint(contentCanvas, currentY, nextPageEnd);
+          pageBreaksInCanvas.push(safeBreakPoint);
+          currentY = safeBreakPoint;
+        }
       }
       
+      const pageCount = pageBreaksInCanvas.length - 1;
+      console.log('智能分页结果(canvas像素):', pageBreaksInCanvas.map(p => Math.round(p / canvasScale)), '总页数:', pageCount);
+      
+      // 为每一页创建带边距的完整A4页面
+      // PDF 页面固定为标准 A4 尺寸（210x297mm），canvas 也必须保持标准 A4 比例
+      // 当内容使用容差侵入底部边距时，通过减少底部 padding 来容纳，而非增大 canvas
+      const pdfHeight = 297; // A4 标准高度 mm
+      
+      for (let i = 0; i < pageCount; i++) {
+        const srcY = pageBreaksInCanvas[i];
+        const srcHeight = pageBreaksInCanvas[i + 1] - pageBreaksInCanvas[i];
+        
+        // 创建标准 A4 尺寸的 canvas（固定大小，不超出）
+        const pageCanvas = document.createElement('canvas');
+        pageCanvas.width = pageWidthInCanvas;
+        pageCanvas.height = pageHeightInCanvas; // 始终使用标准 A4 高度
+        const ctx = pageCanvas.getContext('2d');
+        
+        if (ctx) {
+          // 填充白色背景
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+          
+          if (srcHeight > 0) {
+            // 计算实际可用的绘制空间：如果内容超出标准可绘制区域，
+            // 则压缩底部 padding（最少保留 10px 底部边距）
+            const minBottomPadding = 10 * canvasScale;
+            const availableForContent = pageHeightInCanvas - paddingTopInCanvas - minBottomPadding;
+            
+            if (srcHeight > availableForContent) {
+              // 内容太高，需要微缩以适应页面
+              // 计算缩放比：让内容完整放入可用空间
+              const fitScale = availableForContent / srcHeight;
+              const scaledWidth = contentCanvas.width * fitScale;
+              const scaledHeight = srcHeight * fitScale;
+              ctx.drawImage(
+                contentCanvas,
+                0, srcY, contentCanvas.width, srcHeight,
+                paddingLeftInCanvas, paddingTopInCanvas, scaledWidth, scaledHeight
+              );
+              console.log(`第 ${i + 1} 页内容微缩: ${(fitScale * 100).toFixed(1)}%`);
+            } else {
+              // 内容可以完整放入，正常绘制
+              ctx.drawImage(
+                contentCanvas,
+                0, srcY, contentCanvas.width, srcHeight,
+                paddingLeftInCanvas, paddingTopInCanvas, contentCanvas.width, srcHeight
+              );
+            }
+          }
+        }
+        
+        const imgData = pageCanvas.toDataURL('image/jpeg', 0.95);
+        
+        if (i > 0) {
+          pdf.addPage();
+        }
+        
+        // 固定使用标准 A4 尺寸，确保不超出 PDF 页面边界
+        pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+        console.log(`第 ${i + 1} 页渲染完成, srcHeight=${Math.round(srcHeight/canvasScale)}px, pdfSize=${pdfWidth}x${pdfHeight}mm`);
+      }
+      
+      // 清理
+      document.body.removeChild(tempContainer);
+      
+      console.log('PDF 生成完成，共', pageCount, '页');
       pdf.save(getResumeFileName('pdf'));
     } catch (e) {
       console.error('PDF export failed', e);
       alert('PDF 生成失败，请重试');
     } finally {
-      if (document.body.contains(shadowContainer)) {
-        document.body.removeChild(shadowContainer);
-      }
       setIsGeneratingFile(false);
     }
   };
@@ -666,11 +876,26 @@ const App: React.FC = () => {
   };
 
   const getCapacityStatus = () => {
-    const percentage = Math.round((resumeHeight / A4_HEIGHT_PX) * 100);
-    if (percentage <= 95) return { status: 'optimal', label: '1 页', percentage };  // 最佳状态，绿色
-    if (percentage <= 100) return { status: 'warning', label: '1 页', percentage }; // 接近满页，橙色警告（>95%）
-    if (percentage <= 110) return { status: 'overflow', label: '溢出', percentage }; // 轻微溢出
-    return { status: 'danger', label: '超 1 页', percentage };  // 严重超出
+    // 计算内容相对于单页A4的总体占用百分比
+    // 如果内容超过一页，百分比会大于100%
+    const pageCount = Math.max(1, Math.ceil(resumeHeight / CONTENT_HEIGHT_PER_PAGE));
+    // 总体占用百分比 = 内容高度 / 单页可用高度 * 100
+    const totalPercentage = Math.round((resumeHeight / CONTENT_HEIGHT_PER_PAGE) * 100);
+    
+    if (pageCount === 1) {
+      // 只有一页时
+      if (totalPercentage <= 95) return { status: 'optimal', label: '1 页', percentage: totalPercentage };
+      if (totalPercentage <= 100) return { status: 'warning', label: '1 页', percentage: totalPercentage };
+      return { status: 'overflow', label: '溢出', percentage: totalPercentage };
+    } else {
+      // 多页时，显示总体占用百分比（会大于100%）
+      return { 
+        status: 'danger', 
+        label: `${pageCount} 页`, 
+        percentage: totalPercentage,
+        pageCount 
+      };
+    }
   };
   const capacity = getCapacityStatus();
 
@@ -791,7 +1016,7 @@ const App: React.FC = () => {
                 从简历诊断到模拟面试，全方位助力你的求职之旅
               </p>
               <a 
-                href="https://xhslink.com/m/AiJycAESxQb" 
+                href="https://xhslink.com/m/AhWS7UwBPGZ" 
                 target="_blank" 
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 text-[13px] text-zinc-400 hover:text-zinc-600 transition-colors mb-12 animate-fade-in animation-delay-300"
@@ -1445,7 +1670,7 @@ const App: React.FC = () => {
                       capacity.status === 'overflow' ? 'bg-orange-50 text-orange-600' :
                       'bg-red-50 text-red-600'
                     }`}>
-                       {Math.round((resumeHeight/A4_HEIGHT_PX)*100)}% · {capacity.label}
+                       {capacity.percentage}% · {capacity.label}
                        {capacity.status === 'warning' && ' ⚠️'}
                     </span>
 
@@ -1493,12 +1718,13 @@ const App: React.FC = () => {
               {/* Preview Container */}
               <div className={`flex-grow bg-zinc-100 overflow-auto p-4 md:p-6 relative custom-scrollbar border border-zinc-200 border-t-0 ${isFullscreen ? '' : 'rounded-b-lg'}`}>
                 
-                {/* 顶部提示：页面警告优先显示，否则显示占位符提示（仅当内容包含 X% 时） */}
-                {capacity.status === 'warning' ? (
+                {/* 页面容量警告 - 居中显示 */}
+                {capacity.status === 'warning' && (
                     <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-amber-500 text-white text-[11px] px-3 py-1.5 rounded-md font-medium flex items-center gap-1.5 whitespace-nowrap">
                        <AlertTriangle size={12} /> 接近满页，建议精简内容避免打印分页
                     </div>
-                ) : (capacity.status === 'overflow' || capacity.status === 'danger') ? (
+                )}
+                {(capacity.status === 'overflow' || capacity.status === 'danger') && (
                     <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-zinc-900 text-white text-[11px] px-3 py-1.5 rounded-md font-medium flex items-center gap-2 whitespace-nowrap">
                        <span className="flex items-center gap-1.5">
                          <AlertTriangle size={12} /> 超出一页，建议精简非核心内容
@@ -1511,52 +1737,79 @@ const App: React.FC = () => {
                          {isCondensing ? (
                            <>
                              <Loader2 size={10} className="animate-spin" />
-                             精简中...
-                           </>
-                         ) : (
-                           <>
-                             <Sparkles size={10} />
-                             帮我精简
-                           </>
-                         )}
-                       </button>
-                    </div>
-                ) : (step === 'ENGLISH_VERSION' ? englishResume : editableResume).includes('X%') ? (
-                    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 bg-blue-50 text-blue-700 text-[11px] px-3 py-1.5 rounded-md font-medium border border-blue-200 whitespace-nowrap">
-                       <span className="inline-flex items-center gap-1.5">
-                         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-                         简历中的 <strong className="text-blue-800">X%</strong> 等数据为占位符，请根据实际情况修改
-                       </span>
-                    </div>
-                ) : null}
+                            精简中...
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles size={10} />
+                            帮我精简
+                          </>
+                        )}
+                      </button>
+                   </div>
+                )}
 
-                 <div className="flex justify-center min-w-min"> 
-                  <div 
-                    id="resume-preview" 
-                    className="bg-white shadow-sm transition-transform origin-top duration-200 ease-out relative"
-                    style={{
-                      width: '794px', 
-                      minHeight: '1123px', 
-                      padding: '40px 40px', 
-                      boxSizing: 'border-box',
-                      transform: `scale(${previewScale})`,
-                      transformOrigin: 'top center',
-                    }}
-                  >
-                     <div id="resume-preview-content">
-                       <div className="text-slate-900">
-                          <MarkdownRenderer content={step === 'ENGLISH_VERSION' ? englishResume : editableResume} isResumePreview={true} densityMultiplier={densityMultiplier} mode="resume" />
+                 {/* 简历预览 - 单个A4容器，内容自然流动 */}
+                 <div className="flex flex-col items-center min-w-min relative"> 
+                   {/* 占位符提示 - 固定在A4纸右上角，与A4边缘对齐 */}
+                   {/X+%/i.test(step === 'ENGLISH_VERSION' ? englishResume : editableResume) && (
+                       <div 
+                         className="absolute z-30 bg-blue-50 text-blue-700 text-[11px] px-3 py-1.5 rounded-md font-medium border border-blue-200 whitespace-nowrap"
+                         style={{
+                           top: '8px',
+                           right: `calc(50% - ${(A4_WIDTH_PX / 2) * previewScale}px)`,
+                         }}
+                       >
+                          <span className="inline-flex items-center gap-1.5">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                            X% 等仅为模拟数据，请按实际情况修改
+                          </span>
                        </div>
+                   )}
+                   <div 
+                     className="bg-white shadow-sm relative"
+                     style={{
+                       width: `${A4_WIDTH_PX}px`, 
+                       minHeight: `${A4_HEIGHT_PX}px`,
+                       padding: `${PAGE_PADDING_TOP}px ${PAGE_PADDING_RIGHT}px ${PAGE_PADDING_BOTTOM}px ${PAGE_PADDING_LEFT}px`,
+                       boxSizing: 'border-box',
+                       transform: `scale(${previewScale})`,
+                       transformOrigin: 'top center',
+                     }}
+                   >
+                     {/* 内容测量和显示 */}
+                     <div 
+                       id="resume-measure-container"
+                       className="text-slate-900"
+                     >
+                       <MarkdownRenderer 
+                         content={step === 'ENGLISH_VERSION' ? englishResume : editableResume} 
+                         isResumePreview={true} 
+                         densityMultiplier={densityMultiplier} 
+                         mode="resume" 
+                       />
                      </div>
                      
-                     {/* 分页参考线 - 与 PDF 导出完全一致 */}
-                     {/* PDF 导出按 A4 高度(1123px)裁剪，每页都有 40px 上下 padding */}
-                     {/* 第一页可用内容高度 = 1123 - 40(顶部padding) - 40(底部padding) = 1043px */}
-                     {/* 分页线位置 = 容器顶部padding(40) + 内容可用高度(1043) = 1083px，即下一页开始的位置 */}
-                     <div className="absolute left-0 w-full border-b border-dashed border-zinc-300/50 pointer-events-none flex items-end justify-end px-2 text-zinc-300/60 text-[9px] font-mono tracking-widest" style={{ top: `${A4_HEIGHT_PX - PAGE_PADDING_BOTTOM}px` }}>P.1</div>
-                     <div className="absolute left-0 w-full border-b border-dashed border-zinc-300/50 pointer-events-none flex items-end justify-end px-2 text-zinc-300/60 text-[9px] font-mono tracking-widest" style={{ top: `${A4_HEIGHT_PX * 2 - PAGE_PADDING_BOTTOM}px` }}>P.2</div>
-                     <div className="absolute left-0 w-full border-b border-dashed border-zinc-300/50 pointer-events-none flex items-end justify-end px-2 text-zinc-300/60 text-[9px] font-mono tracking-widest" style={{ top: `${A4_HEIGHT_PX * 3 - PAGE_PADDING_BOTTOM}px` }}>P.3</div>
-                  </div>
+                     {/* 分页线 - 在每页边界处显示 */}
+                     {(() => {
+                       const pageCount = Math.max(1, Math.ceil(resumeHeight / CONTENT_HEIGHT_PER_PAGE));
+                       if (pageCount <= 1) return null;
+                       
+                       return Array.from({ length: pageCount - 1 }, (_, i) => (
+                         <div 
+                           key={i}
+                           className="absolute left-0 right-0 border-t-2 border-dashed border-red-400 pointer-events-none"
+                           style={{
+                             top: `${PAGE_PADDING_TOP + (i + 1) * CONTENT_HEIGHT_PER_PAGE}px`,
+                           }}
+                         >
+                          <span className="absolute left-1/2 -translate-x-1/2 -top-3 bg-red-100 text-red-600 text-[10px] px-2 py-0.5 rounded whitespace-nowrap">
+                            第 {i + 1} 页结束，下载时将分页排版
+                          </span>
+                         </div>
+                       ));
+                     })()}
+                   </div>
                  </div>
                </div>
             </div>
