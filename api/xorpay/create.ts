@@ -205,11 +205,13 @@ const getErrorMessage = (status: string): string => {
     'sign_error': '签名错误',
     'order_exist': '订单已存在',
     'price_error': '金额格式错误',
+    'fee_error': '支付通道暂不支持该金额，请联系客服',
     'notify_url_error': '回调地址格式错误',
     'name_error': '商品名称不能为空',
     'pay_type_error': '支付类型错误',
     'app_error': '应用配置错误',
     'risk_control': '触发风控，请稍后重试',
+    'channel_error': '支付通道异常',
   };
   return errorMessages[status] || `支付失败 (${status})`;
 };
