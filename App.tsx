@@ -7,7 +7,7 @@ import { LoginModal, UserAvatar } from './components/LoginModal';
 import { VIPUpgradeModal } from './components/VIPUpgradeModal';
 import { DownloadPayModal } from './components/DownloadPayModal';
 import { useAuth } from './contexts/AuthContext';
-import { checkUsageLimit, logUsage, checkTranslationLimit } from './services/authService';
+import { checkUsageLimit, logUsage, checkTranslationLimit, VIP_WHITELIST_EMAILS } from './services/authService';
 import { FileText, Target, Send, Loader2, RefreshCw, ChevronRight, Upload, X, Paperclip, Image as ImageIcon, File, AlertCircle, PenTool, ArrowLeft, Maximize2, Minimize2, ZoomIn, ZoomOut, CheckCircle2, AlertTriangle, AlignJustify, Languages, Globe, ArrowRight, Sparkles, MessageSquare, Mic, Play, Users, Lock, Briefcase, Crown } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
@@ -589,13 +589,19 @@ const App: React.FC = () => {
       return;
     }
 
-    // 2. VIP/Pro 用户直接下载
+    // 2. 白名单用户直接下载（管理员账号）
+    if (user.email && VIP_WHITELIST_EMAILS.includes(user.email.toLowerCase())) {
+      await doExportPDF();
+      return;
+    }
+
+    // 3. VIP/Pro 用户直接下载
     if (profile?.membership_type === 'vip' || profile?.membership_type === 'pro') {
       await doExportPDF();
       return;
     }
 
-    // 3. 免费用户弹出付费弹窗
+    // 4. 免费用户弹出付费弹窗
     setShowDownloadModal(true);
   };
 
@@ -1543,10 +1549,13 @@ const App: React.FC = () => {
                        </div>
                      </div>
                      
-                     {/* 分页参考线 - 显示 A4 纸张边界 */}
-                     <div className="absolute left-0 w-full border-b border-dashed border-zinc-300/50 pointer-events-none flex items-end justify-end px-2 text-zinc-300/60 text-[9px] font-mono tracking-widest" style={{ top: '1123px' }}>P.1</div>
-                     <div className="absolute left-0 w-full border-b border-dashed border-zinc-300/50 pointer-events-none flex items-end justify-end px-2 text-zinc-300/60 text-[9px] font-mono tracking-widest" style={{ top: '2246px' }}>P.2</div>
-                     <div className="absolute left-0 w-full border-b border-dashed border-zinc-300/50 pointer-events-none flex items-end justify-end px-2 text-zinc-300/60 text-[9px] font-mono tracking-widest" style={{ top: '3369px' }}>P.3</div>
+                     {/* 分页参考线 - 与 PDF 导出完全一致 */}
+                     {/* PDF 导出按 A4 高度(1123px)裁剪，每页都有 40px 上下 padding */}
+                     {/* 第一页可用内容高度 = 1123 - 40(顶部padding) - 40(底部padding) = 1043px */}
+                     {/* 分页线位置 = 容器顶部padding(40) + 内容可用高度(1043) = 1083px，即下一页开始的位置 */}
+                     <div className="absolute left-0 w-full border-b border-dashed border-zinc-300/50 pointer-events-none flex items-end justify-end px-2 text-zinc-300/60 text-[9px] font-mono tracking-widest" style={{ top: `${A4_HEIGHT_PX - PAGE_PADDING_BOTTOM}px` }}>P.1</div>
+                     <div className="absolute left-0 w-full border-b border-dashed border-zinc-300/50 pointer-events-none flex items-end justify-end px-2 text-zinc-300/60 text-[9px] font-mono tracking-widest" style={{ top: `${A4_HEIGHT_PX * 2 - PAGE_PADDING_BOTTOM}px` }}>P.2</div>
+                     <div className="absolute left-0 w-full border-b border-dashed border-zinc-300/50 pointer-events-none flex items-end justify-end px-2 text-zinc-300/60 text-[9px] font-mono tracking-widest" style={{ top: `${A4_HEIGHT_PX * 3 - PAGE_PADDING_BOTTOM}px` }}>P.3</div>
                   </div>
                  </div>
                </div>

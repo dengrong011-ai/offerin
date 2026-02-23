@@ -110,7 +110,7 @@ export const updateUserProfile = async (userId: string, updates: Partial<UserPro
 // ============ 使用限制相关 ============
 
 // VIP 白名单邮箱（无限使用）
-const VIP_WHITELIST_EMAILS = [
+export const VIP_WHITELIST_EMAILS = [
   'dengrong011@gmail.com',
 ];
 
