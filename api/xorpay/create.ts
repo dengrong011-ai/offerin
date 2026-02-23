@@ -284,6 +284,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       XORPAY_APP_SECRET
     );
 
+    console.log('请求参数:', {
+      name: product.name,
+      pay_type: 'alipay',
+      price: product.price,
+      order_id: orderId,
+      notify_url: finalNotifyUrl,
+    });
+
     // 3. 调用 XorPay API
     const formData = new URLSearchParams();
     formData.append('name', product.name);
