@@ -321,6 +321,7 @@ const updateOrderXorPayId = async (
 
 /**
  * 创建 XorPay 支付订单（微信扫码）
+ * 通过服务端 API 调用，避免 CORS 问题
  * 
  * @param userId 用户ID
  * @param productId 产品ID
@@ -336,16 +337,14 @@ export const createXorPayOrder = async (
     return { success: false, error: '无效的产品' };
   }
 
-  // 1. 创建本地订单
-  const localOrder = await createLocalOrder(userId, productId, product.priceInCents);
-  if (!localOrder.success || !localOrder.orderId) {
-    return { success: false, error: localOrder.error || '创建订单失败' };
-  }
-
-  // 2. 检查 XorPay 配置
+  // 开发模式：如果未配置 XorPay，使用模拟模式
   if (!isXorPayConfigured()) {
     console.warn('XorPay 未配置，使用模拟模式');
-    // 返回模拟数据用于开发测试
+    // 创建本地模拟订单
+    const localOrder = await createLocalOrder(userId, productId, product.priceInCents);
+    if (!localOrder.success || !localOrder.orderId) {
+      return { success: false, error: localOrder.error || '创建订单失败' };
+    }
     return {
       success: true,
       orderId: localOrder.orderId,
@@ -355,62 +354,42 @@ export const createXorPayOrder = async (
     };
   }
 
-  // 3. 生成签名
-  // 签名规则：name + pay_type + price + order_id + notify_url + app_secret
-  const sign = generateSign(
-    product.name,
-    'native',
-    product.price,
-    localOrder.orderId,
-    notifyUrl,
-    XORPAY_APP_SECRET
-  );
-
-  // 4. 调用 XorPay API
+  // 生产模式：调用服务端 API 创建订单
   try {
-    const formData = new URLSearchParams();
-    formData.append('name', product.name);
-    formData.append('pay_type', 'native');
-    formData.append('price', product.price);
-    formData.append('order_id', localOrder.orderId);
-    formData.append('notify_url', notifyUrl);
-    formData.append('sign', sign);
-    formData.append('expire', '7200');
-
-    const response = await fetch(`${XORPAY_API_BASE}/pay/${XORPAY_APP_ID}`, {
+    const response = await fetch('/api/xorpay/create', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Type': 'application/json',
       },
-      body: formData.toString(),
+      body: JSON.stringify({
+        userId,
+        productId,
+        notifyUrl,
+      }),
     });
 
     const result = await response.json();
 
-    if (result.status === 'ok') {
-      // 更新本地订单的 XorPay 订单号
-      await updateOrderXorPayId(localOrder.orderId, result.aoid);
-
+    if (result.success) {
       return {
         success: true,
-        orderId: localOrder.orderId,
-        xorpayOrderId: result.aoid,
-        qrCode: result.info?.qr || '',
-        expiresIn: result.expires_in || 7200,
+        orderId: result.orderId,
+        xorpayOrderId: result.xorpayOrderId,
+        qrCode: result.qrCode || '',
+        expiresIn: result.expiresIn || 7200,
       };
     } else {
-      console.error('XorPay 创建订单失败:', result);
+      console.error('创建支付订单失败:', result);
       return {
         success: false,
-        orderId: localOrder.orderId,
-        error: getXorPayErrorMessage(result.status),
+        orderId: result.orderId,
+        error: result.error || '创建订单失败',
       };
     }
   } catch (error: any) {
-    console.error('XorPay API 调用失败:', error);
+    console.error('支付服务调用失败:', error);
     return {
       success: false,
-      orderId: localOrder.orderId,
       error: '支付服务暂时不可用，请稍后重试',
     };
   }
