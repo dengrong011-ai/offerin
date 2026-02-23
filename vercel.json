@@ -2,25 +2,36 @@
   "version": 2,
   "builds": [
     {
+      "src": "api/**/*.ts",
+      "use": "@vercel/node"
+    },
+    {
       "src": "package.json",
       "use": "@vercel/static-build",
       "config": {
         "distDir": "dist"
       }
-    },
-    {
-      "src": "api/**/*.ts",
-      "use": "@vercel/node"
     }
   ],
   "routes": [
     {
-      "src": "/api/(.*)",
-      "dest": "/api/$1"
+      "src": "/api/xorpay/create",
+      "dest": "/api/xorpay/create.ts"
+    },
+    {
+      "src": "/api/xorpay/notify",
+      "dest": "/api/xorpay/notify.ts"
+    },
+    {
+      "src": "/api/xunhupay/(.*)",
+      "dest": "/api/xunhupay/$1.ts"
+    },
+    {
+      "handle": "filesystem"
     },
     {
       "src": "/(.*)",
-      "dest": "/$1"
+      "dest": "/index.html"
     }
   ]
 }
