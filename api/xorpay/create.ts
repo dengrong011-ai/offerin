@@ -275,7 +275,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const finalNotifyUrl = notifyUrl || `${req.headers.origin}/api/xorpay/notify`;
     const sign = generateSign(
       product.name,
-      'native',
+      'alipay',
       product.price,
       orderId,
       finalNotifyUrl,
@@ -285,7 +285,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // 3. 调用 XorPay API
     const formData = new URLSearchParams();
     formData.append('name', product.name);
-    formData.append('pay_type', 'native');
+    formData.append('pay_type', 'alipay');
     formData.append('price', product.price);
     formData.append('order_id', orderId);
     formData.append('notify_url', finalNotifyUrl);

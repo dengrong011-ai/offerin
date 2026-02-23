@@ -286,7 +286,7 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
               {/* 提示文字 */}
               <div className="flex items-center justify-center gap-2 text-zinc-600 mb-3">
                 <Smartphone size={16} />
-                <span className="text-sm">请使用微信扫码支付</span>
+                <span className="text-sm">请使用支付宝扫码支付</span>
               </div>
               
               {/* 金额和倒计时 */}
@@ -393,7 +393,7 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
                 ) : (
                   <>
                     <QrCode size={18} />
-                    微信扫码开通 {formatXorPayPrice(product.priceInCents)}/月
+                    支付宝扫码开通 {formatXorPayPrice(product.priceInCents)}/月
                   </>
                 )}
               </button>
