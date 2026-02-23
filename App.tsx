@@ -70,8 +70,7 @@ const App: React.FC = () => {
   const PAGE_PADDING_TOP = 40;  // 页面上边距
   const PAGE_PADDING_BOTTOM = 40; // 页面下边距
   const PAGE_PADDING_LEFT = 40;
-  const PAGE_PADDING_RIGHT = 40;
-  const CONTENT_HEIGHT_PER_PAGE = A4_HEIGHT_PX - PAGE_PADDING_TOP - PAGE_PADDING_BOTTOM; // 每页可用内容高度 
+  const PAGE_PADDING_RIGHT = 40; 
 
   useEffect(() => {
     if (step !== 'EDITOR' && step !== 'ENGLISH_VERSION') return;
@@ -446,7 +445,7 @@ const App: React.FC = () => {
   };
 
   const preparePaginatedDom = async (sourceElement: HTMLElement) => {
-    // 创建离屏容器
+    // 创建离屏容器 - 简单方案：直接渲染整个内容，然后按高度裁剪
     const shadowContainer = document.createElement('div');
     shadowContainer.style.position = 'absolute';
     shadowContainer.style.top = '-10000px';
@@ -459,120 +458,40 @@ const App: React.FC = () => {
     shadowContainer.style.fontSize = computedStyle.fontSize;
     shadowContainer.style.lineHeight = computedStyle.lineHeight;
     shadowContainer.style.color = computedStyle.color;
+    shadowContainer.style.boxSizing = 'border-box';
+    shadowContainer.className = sourceElement.className;
     
     // 克隆原始内容
     const contentClone = sourceElement.cloneNode(true) as HTMLElement;
     contentClone.style.transform = 'none';
     contentClone.style.margin = '0';
-    contentClone.style.padding = '0';
+    contentClone.style.padding = `${PAGE_PADDING_TOP}px ${PAGE_PADDING_LEFT}px ${PAGE_PADDING_BOTTOM}px ${PAGE_PADDING_RIGHT}px`;
     contentClone.style.minHeight = 'auto';
     contentClone.style.boxShadow = 'none';
     contentClone.style.backgroundColor = '#ffffff';
     contentClone.style.width = '100%';
     contentClone.style.boxSizing = 'border-box';
     
-    // 临时添加到DOM以计算高度
-    const tempContainer = document.createElement('div');
-    tempContainer.style.position = 'absolute';
-    tempContainer.style.top = '-10000px';
-    tempContainer.style.left = '0';
-    tempContainer.style.width = `${A4_WIDTH_PX - PAGE_PADDING_LEFT - PAGE_PADDING_RIGHT}px`;
-    tempContainer.style.padding = '0';
-    tempContainer.appendChild(contentClone);
-    document.body.appendChild(tempContainer);
+    // 确保所有子元素的样式被正确保留
+    const allElements = contentClone.querySelectorAll('*');
+    allElements.forEach((el) => {
+      const elem = el as HTMLElement;
+      const elStyle = window.getComputedStyle(elem);
+      if (elStyle.lineHeight && elStyle.lineHeight !== 'normal') {
+        elem.style.lineHeight = elStyle.lineHeight;
+      }
+      if (elStyle.marginTop) elem.style.marginTop = elStyle.marginTop;
+      if (elStyle.marginBottom) elem.style.marginBottom = elStyle.marginBottom;
+      if (elStyle.paddingTop) elem.style.paddingTop = elStyle.paddingTop;
+      if (elStyle.paddingBottom) elem.style.paddingBottom = elStyle.paddingBottom;
+    });
+    
+    shadowContainer.appendChild(contentClone);
+    document.body.appendChild(shadowContainer);
     
     await waitForImages(contentClone);
     
-    // 获取所有顶级子元素
-    const children = Array.from(contentClone.children) as HTMLElement[];
-    const totalContentHeight = contentClone.scrollHeight;
-    
-    // 如果内容不超过一页，直接返回
-    if (totalContentHeight <= CONTENT_HEIGHT_PER_PAGE) {
-      document.body.removeChild(tempContainer);
-      
-      const singlePageContent = sourceElement.cloneNode(true) as HTMLElement;
-      singlePageContent.style.transform = 'none';
-      singlePageContent.style.margin = '0';
-      singlePageContent.style.padding = `${PAGE_PADDING_TOP}px ${PAGE_PADDING_RIGHT}px ${PAGE_PADDING_BOTTOM}px ${PAGE_PADDING_LEFT}px`;
-      singlePageContent.style.minHeight = `${A4_HEIGHT_PX}px`;
-      singlePageContent.style.boxShadow = 'none';
-      singlePageContent.style.backgroundColor = '#ffffff';
-      singlePageContent.style.width = '100%';
-      singlePageContent.style.boxSizing = 'border-box';
-      
-      shadowContainer.appendChild(singlePageContent);
-      document.body.appendChild(shadowContainer);
-      await waitForImages(singlePageContent);
-      
-      return { shadowContainer, contentClone: singlePageContent };
-    }
-    
-    // 需要分页处理
-    const pages: HTMLElement[] = [];
-    let currentPage = document.createElement('div');
-    currentPage.style.padding = `${PAGE_PADDING_TOP}px ${PAGE_PADDING_RIGHT}px ${PAGE_PADDING_BOTTOM}px ${PAGE_PADDING_LEFT}px`;
-    currentPage.style.minHeight = `${A4_HEIGHT_PX}px`;
-    currentPage.style.boxSizing = 'border-box';
-    currentPage.style.backgroundColor = '#ffffff';
-    currentPage.style.width = `${A4_WIDTH_PX}px`;
-    currentPage.style.pageBreakAfter = 'always';
-    
-    let currentPageHeight = 0;
-    
-    // 遍历所有子元素进行分页
-    for (const child of children) {
-      const childHeight = child.offsetHeight;
-      const childMarginTop = parseInt(window.getComputedStyle(child).marginTop) || 0;
-      const childMarginBottom = parseInt(window.getComputedStyle(child).marginBottom) || 0;
-      const totalChildHeight = childHeight + childMarginTop + childMarginBottom;
-      
-      // 如果当前元素加入后会超出页面
-      if (currentPageHeight + totalChildHeight > CONTENT_HEIGHT_PER_PAGE && currentPageHeight > 0) {
-        // 保存当前页，开始新页
-        pages.push(currentPage);
-        currentPage = document.createElement('div');
-        currentPage.style.padding = `${PAGE_PADDING_TOP}px ${PAGE_PADDING_RIGHT}px ${PAGE_PADDING_BOTTOM}px ${PAGE_PADDING_LEFT}px`;
-        currentPage.style.minHeight = `${A4_HEIGHT_PX}px`;
-        currentPage.style.boxSizing = 'border-box';
-        currentPage.style.backgroundColor = '#ffffff';
-        currentPage.style.width = `${A4_WIDTH_PX}px`;
-        currentPage.style.pageBreakAfter = 'always';
-        currentPageHeight = 0;
-      }
-      
-      // 克隆并添加元素到当前页
-      const childClone = child.cloneNode(true) as HTMLElement;
-      currentPage.appendChild(childClone);
-      currentPageHeight += totalChildHeight;
-    }
-    
-    // 添加最后一页
-    if (currentPage.children.length > 0) {
-      pages.push(currentPage);
-    }
-    
-    // 清理临时容器
-    document.body.removeChild(tempContainer);
-    
-    // 将所有页面添加到 shadow container
-    const pagesContainer = document.createElement('div');
-    pagesContainer.style.backgroundColor = '#ffffff';
-    
-    pages.forEach((page, index) => {
-      if (index > 0) {
-        // 添加分页标记
-        page.style.borderTop = 'none';
-      }
-      pagesContainer.appendChild(page);
-    });
-    
-    shadowContainer.appendChild(pagesContainer);
-    document.body.appendChild(shadowContainer);
-    
-    await waitForImages(pagesContainer);
-    
-    return { shadowContainer, contentClone: pagesContainer };
+    return { shadowContainer, contentClone };
   };
 
   const handleExportImage = async () => {
@@ -618,44 +537,36 @@ const App: React.FC = () => {
     const { shadowContainer, contentClone } = await preparePaginatedDom(element);
 
     try {
+      // 渲染整个内容为一张大图
+      const canvas = await html2canvas(contentClone, {
+        scale: 3,
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        logging: false,
+        width: A4_WIDTH_PX,
+        windowWidth: 1024
+      });
+
+      const imgData = canvas.toDataURL('image/jpeg', 0.95);
       const pdf = new jsPDF('p', 'mm', 'a4');
       const pdfWidth = 210; 
       const pdfHeight = 297;
+      const imgProps = pdf.getImageProperties(imgData);
+      const imgHeightInPdf = (imgProps.height * pdfWidth) / imgProps.width;
       
-      // 检查是否有多页（通过子元素数量判断）
-      const pages = contentClone.children;
+      let heightLeft = imgHeightInPdf;
+      let position = 0;
       
-      for (let i = 0; i < pages.length; i++) {
-        const page = pages[i] as HTMLElement;
-        
-        // 为每页生成 canvas
-        const canvas = await html2canvas(page, {
-          scale: 3,
-          useCORS: true,
-          backgroundColor: '#ffffff',
-          logging: false,
-          width: A4_WIDTH_PX,
-          windowWidth: 1024
-        });
+      // 第一页
+      pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, imgHeightInPdf);
+      heightLeft -= pdfHeight;
 
-        const imgData = canvas.toDataURL('image/jpeg', 0.95);
-        
-        if (i > 0) {
-          pdf.addPage();
-        }
-        
-        // 计算图片在 PDF 中的尺寸
-        const imgProps = pdf.getImageProperties(imgData);
-        const imgHeightInPdf = (imgProps.height * pdfWidth) / imgProps.width;
-        
-        // 如果单页内容高度超过 PDF 页面高度，需要裁剪
-        if (imgHeightInPdf > pdfHeight) {
-          // 按 A4 比例裁剪
-          pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, imgHeightInPdf);
-        } else {
-          // 单页内容，居中或顶部对齐
-          pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, imgHeightInPdf);
-        }
+      // 后续页面 - 按 A4 高度裁剪，允许在任意位置截断
+      while (heightLeft > 5) { 
+        position -= pdfHeight; 
+        pdf.addPage();
+        pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, imgHeightInPdf);
+        heightLeft -= pdfHeight;
       }
       
       pdf.save(getResumeFileName('pdf'));
