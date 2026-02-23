@@ -6,7 +6,6 @@ import {
   createXorPayOrder, 
   handlePaymentSuccess,
   formatXorPayPrice,
-  isXorPayConfigured,
   generateQRCodeUrl,
 } from '../services/xorpayService';
 import { supabase, isSupabaseConfigured } from '../services/supabaseClient';
@@ -309,7 +308,7 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
               </button>
 
               {/* 开发模式：模拟支付成功按钮 */}
-              {!isXorPayConfigured() && (
+              {(window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && (
                 <button
                   onClick={handleSimulateSuccess}
                   className="mt-3 text-xs text-blue-500 hover:text-blue-600 underline"

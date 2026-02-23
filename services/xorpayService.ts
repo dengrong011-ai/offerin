@@ -337,9 +337,12 @@ export const createXorPayOrder = async (
     return { success: false, error: '无效的产品' };
   }
 
-  // 开发模式：如果未配置 XorPay，使用模拟模式
-  if (!isXorPayConfigured()) {
-    console.warn('XorPay 未配置，使用模拟模式');
+  // 判断是否为本地开发环境
+  const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+
+  // 本地开发模式：如果未配置 XorPay，使用模拟模式
+  if (isLocalDev && !isXorPayConfigured()) {
+    console.warn('本地开发模式：XorPay 未配置，使用模拟模式');
     // 创建本地模拟订单
     const localOrder = await createLocalOrder(userId, productId, product.priceInCents);
     if (!localOrder.success || !localOrder.orderId) {
@@ -354,7 +357,7 @@ export const createXorPayOrder = async (
     };
   }
 
-  // 生产模式：调用服务端 API 创建订单
+  // 生产模式或本地已配置：调用服务端 API 创建订单
   try {
     const response = await fetch('/api/xorpay/create', {
       method: 'POST',
@@ -367,6 +370,12 @@ export const createXorPayOrder = async (
         notifyUrl,
       }),
     });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('API 响应错误:', response.status, errorText);
+      throw new Error(`服务器错误: ${response.status}`);
+    }
 
     const result = await response.json();
 
