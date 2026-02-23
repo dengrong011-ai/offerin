@@ -378,13 +378,15 @@ export const createXorPayOrder = async (
     }
 
     const result = await response.json();
+    
+    console.log('服务端返回结果:', result);
 
     if (result.success) {
       return {
         success: true,
         orderId: result.orderId,
         xorpayOrderId: result.xorpayOrderId,
-        qrCode: result.qrCode || '',
+        qrCode: result.qrCode || result.payUrl || '',
         expiresIn: result.expiresIn || 7200,
       };
     } else {

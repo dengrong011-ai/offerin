@@ -302,7 +302,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const xorpayResult = await xorpayResponse.json();
 
-    console.log('XorPay 响应:', xorpayResult);
+    console.log('XorPay 完整响应:', JSON.stringify(xorpayResult, null, 2));
 
     if (xorpayResult.status === 'ok') {
       // 更新订单的 XorPay 订单号
@@ -311,11 +311,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .update({ xorpay_order_id: xorpayResult.aoid })
         .eq('id', orderId);
 
+      // 支付宝可能返回 info.qr 或 info.url_qrcode 或直接在 info 里
+      const qrCode = xorpayResult.info?.qr || xorpayResult.info?.url_qrcode || xorpayResult.qr || '';
+      console.log('提取的二维码:', qrCode);
+
       return res.status(200).json({
         success: true,
         orderId: orderId,
         xorpayOrderId: xorpayResult.aoid,
-        qrCode: xorpayResult.info?.qr || '',
+        qrCode: qrCode,
+        payUrl: xorpayResult.info?.url || '', // 支付宝可能返回支付链接
         expiresIn: xorpayResult.expires_in || 7200,
       });
     } else {
