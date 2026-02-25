@@ -20,6 +20,18 @@ import { transcribeAudio, extractTextFromFile } from '../services/geminiService'
 import { useAuth } from '../contexts/AuthContext';
 import { checkUsageLimit, logUsage, checkInterviewExportPermission } from '../services/authService';
 
+// Markdown 预处理：确保标题、列表等块级元素前后有空行，增强渲染鲁棒性
+const normalizeMarkdown = (text: string): string => {
+  return text
+    // 确保 #/##/### 等标题前有空行（如果前面不是空行或字符串开头）
+    .replace(/([^\n])\n(#{1,6}\s)/g, '$1\n\n$2')
+    // 确保标题后有空行（如果后面不是空行）
+    .replace(/(#{1,6}\s[^\n]+)\n([^\n#])/g, '$1\n\n$2')
+    // 确保列表项开始前有空行（当前面是非列表非空行时）
+    .replace(/([^\n\-\*\d])\n([\-\*]\s)/g, '$1\n\n$2')
+    .replace(/([^\n\-\*\d])\n(\d+\.\s)/g, '$1\n\n$2');
+};
+
 // 文件数据类型
 interface FileData {
   name: string;
@@ -1009,7 +1021,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
           <div className="max-w-[80%] bg-zinc-100 rounded-lg px-4 py-3">
             <div className="text-[11px] text-zinc-400 mb-1.5 font-medium">岗位 JD</div>
             <div className="text-[13px] text-zinc-800 prose prose-sm max-w-none prose-zinc">
-              <ReactMarkdown>{content}</ReactMarkdown>
+              <ReactMarkdown>{normalizeMarkdown(content)}</ReactMarkdown>
             </div>
           </div>
         </div>
@@ -1029,7 +1041,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
             </div>
             <div className="bg-white border border-zinc-200 rounded-lg px-4 py-3">
               <div className="text-[13px] text-zinc-800 prose prose-sm max-w-none prose-zinc">
-                <ReactMarkdown>{content || '...'}</ReactMarkdown>
+                <ReactMarkdown>{normalizeMarkdown(content || '...')}</ReactMarkdown>
               </div>
             </div>
           </div>
@@ -1061,7 +1073,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
                 : 'bg-zinc-50 border-zinc-200'
             }`}>
               <div className="text-[13px] text-zinc-800 prose prose-sm max-w-none prose-zinc">
-                <ReactMarkdown>{content || '...'}</ReactMarkdown>
+                <ReactMarkdown>{normalizeMarkdown(content || '...')}</ReactMarkdown>
               </div>
             </div>
           </div>
@@ -1086,7 +1098,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
             </div>
             <div className="p-5">
               <div className="text-[14px] text-zinc-700 leading-relaxed interview-report">
-                <ReactMarkdown>{reportContent?.trim() || '正在生成评估报告...'}</ReactMarkdown>
+                <ReactMarkdown>{normalizeMarkdown(reportContent?.trim() || '正在生成评估报告...')}</ReactMarkdown>
               </div>
             </div>
           </div>
@@ -1101,7 +1113,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
               </div>
               <div className="p-5">
                 <div className="text-[14px] text-zinc-700 leading-relaxed interview-questions">
-                  <ReactMarkdown>{questionsContent.trim()}</ReactMarkdown>
+                  <ReactMarkdown>{normalizeMarkdown(questionsContent.trim())}</ReactMarkdown>
                 </div>
               </div>
             </div>
@@ -1282,7 +1294,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
                     key={role.value}
                     onClick={() => setSettings({ ...settings, interviewerRole: role.value as any })}
                     disabled={status === 'running' || status === 'waiting_input'}
-                    className={`relative flex flex-col items-center py-3 px-2 rounded-lg border-2 transition-all ${
+                    className={`relative flex flex-col items-center py-2 px-2 rounded-lg border-2 transition-all ${
                       settings.interviewerRole === role.value
                         ? 'bg-zinc-900 text-white border-zinc-900 shadow-md'
                         : 'bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400 hover:bg-zinc-50'
@@ -1297,17 +1309,17 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
                       第{index + 1}轮
                     </span>
                     {/* 图标和名称 */}
-                    <span className="text-[16px] mb-1">{role.icon}</span>
+                    <span className="text-[14px] mb-0.5">{role.icon}</span>
                     <span className="text-[12px] font-medium">{role.label}</span>
                     {/* 核心关注点 */}
-                    <span className={`text-[10px] mt-1 ${
+                    <span className={`text-[10px] ${
                       settings.interviewerRole === role.value ? 'text-zinc-300' : 'text-zinc-400'
                     }`}>
                       {role.focus}
                     </span>
                     {/* 详细描述 - 仅选中时显示 */}
                     {settings.interviewerRole === role.value && (
-                      <span className="text-[9px] mt-1 text-zinc-400 text-center leading-tight">
+                      <span className="text-[9px] mt-0.5 text-zinc-400 text-center leading-tight">
                         {role.desc}
                       </span>
                     )}
@@ -1480,8 +1492,9 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
                 {showSupplementInfo && (
                   <div className="p-4 bg-zinc-50 border border-zinc-200 rounded-lg space-y-3">
                     <p className="text-[11px] text-zinc-500 leading-relaxed">
-                      以下信息仅用于本次模拟面试，帮助 AI 更真实地模拟谈薪环节，助你更好地争取利益。
-                      <span className="text-amber-600 font-medium"> 🔒 不会被存储</span>
+                      以下信息仅在<span className="text-zinc-700 font-semibold">「纯模拟模式」</span>下作为 AI 候选人的背景知识，帮助更真实地模拟谈薪环节。
+                      <span className="text-amber-600 font-medium"> 人机交互模式下不会发送给面试官，由你自己回答。</span>
+                      <span className="text-zinc-400"> 🔒 不会被存储</span>
                     </p>
                     
                     <div className="grid grid-cols-2 gap-3">
