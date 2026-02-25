@@ -1,5 +1,5 @@
 
-import { GoogleGenAI } from "@google/genai";
+import { createAIClient, type AIClient } from "./geminiProxy";
 import type { InterviewMessage, InterviewSettings, InterviewMode, InterviewerRole, InterviewSupplementInfo } from '../types';
 import {
   saveInterviewHistory as saveInterviewHistoryToService,
@@ -7,8 +7,6 @@ import {
   extractInterviewContent,
   type InterviewHistoryRecord
 } from './interviewHistoryService';
-
-const getApiKey = () => process.env.API_KEY || process.env.GEMINI_API_KEY || '';
 
 // ==================== 面试历史管理（问题多样性控制）====================
 // 注意：面试历史现在通过 interviewHistoryService.ts 管理，支持云端同步
@@ -161,7 +159,7 @@ const isRetryableError = (error: any): boolean => {
 
 // 带重试的流式 API 调用
 async function generateContentStreamWithRetry(
-  ai: GoogleGenAI,
+  client: AIClient,
   options: {
     model: string;
     contents: any[];
@@ -177,7 +175,7 @@ async function generateContentStreamWithRetry(
     }
     
     try {
-      const stream = await ai.models.generateContentStream(options);
+      const stream = await client.generateContentStream(options);
       return stream;
     } catch (error: any) {
       lastError = error;
@@ -925,8 +923,8 @@ export const runInterview = async (
   abortSignal?: AbortSignal,
   supplementInfo?: InterviewSupplementInfo
 ) => {
-  const apiKey = getApiKey();
-  const ai = new GoogleGenAI({ apiKey });
+  const client = createAIClient();
+  
   
   const conversationHistory: Array<{role: string, content: string}> = [];
   const { totalRounds, interviewerRole } = settings;
@@ -984,7 +982,7 @@ export const runInterview = async (
 
       let interviewerResponse = '';
       try {
-        const stream = await generateContentStreamWithRetry(ai, {
+        const stream = await generateContentStreamWithRetry(client, {
           model: "gemini-3-pro-preview",
           contents: [{ parts: [{ text: "请根据当前面试阶段，提出你的问题。" }] }],
           config: {
@@ -1045,7 +1043,7 @@ export const runInterview = async (
 
       let intervieweeResponse = '';
       try {
-        const stream = await generateContentStreamWithRetry(ai, {
+        const stream = await generateContentStreamWithRetry(client, {
           model: "gemini-3-pro-preview",
           contents: [{ parts: [{ text: `面试官的问题：\n${interviewerResponse}\n\n请专业地回答这个问题。` }] }],
           config: {
@@ -1106,7 +1104,7 @@ export const runInterview = async (
     
     let summaryContent = '';
     try {
-      const stream = await generateContentStreamWithRetry(ai, {
+      const stream = await generateContentStreamWithRetry(client, {
         model: "gemini-3-pro-preview",
         contents: [{ parts: [{ text: summaryPrompt }] }],
         config: {
@@ -1180,8 +1178,8 @@ export const generateFirstQuestion = async (
   abortSignal?: AbortSignal,
   supplementInfo?: InterviewSupplementInfo
 ): Promise<InteractiveInterviewState | null> => {
-  const apiKey = getApiKey();
-  const ai = new GoogleGenAI({ apiKey });
+  const client = createAIClient();
+  
   
   const { totalRounds, interviewerRole } = settings;
   const conversationHistory: Array<{role: string, content: string}> = [];
@@ -1227,7 +1225,7 @@ export const generateFirstQuestion = async (
 
   let interviewerResponse = '';
   try {
-    const stream = await generateContentStreamWithRetry(ai, {
+    const stream = await generateContentStreamWithRetry(client, {
       model: "gemini-3-pro-preview",
       contents: [{ parts: [{ text: "请根据当前面试阶段，提出你的问题。" }] }],
       config: {
@@ -1295,8 +1293,8 @@ export const processUserAnswer = async (
   callbacks: InterviewCallbacks,
   abortSignal?: AbortSignal
 ): Promise<InteractiveInterviewState | null> => {
-  const apiKey = getApiKey();
-  const ai = new GoogleGenAI({ apiKey });
+  const client = createAIClient();
+  
   
   const { resume, jobDescription, settings, conversationHistory, currentRound, supplementInfo } = state;
   const { totalRounds, interviewerRole } = settings;
@@ -1328,7 +1326,7 @@ export const processUserAnswer = async (
     
     let summaryContent = '';
     try {
-      const stream = await generateContentStreamWithRetry(ai, {
+      const stream = await generateContentStreamWithRetry(client, {
         model: "gemini-3-pro-preview",
         contents: [{ parts: [{ text: summaryPrompt }] }],
         config: {
@@ -1428,7 +1426,7 @@ export const processUserAnswer = async (
 
   let interviewerResponse = '';
   try {
-    const stream = await generateContentStreamWithRetry(ai, {
+    const stream = await generateContentStreamWithRetry(client, {
       model: "gemini-3-pro-preview",
       contents: [{ parts: [{ text: "请对候选人的回答进行点评，并提出下一个问题。" }] }],
       config: {

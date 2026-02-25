@@ -1,5 +1,5 @@
 
-import { GoogleGenAI } from "@google/genai";
+import { createAIClient, type AIClient } from "./geminiProxy";
 
 // 重试配置
 const RETRY_CONFIG = {
@@ -24,7 +24,7 @@ const isRetryableError = (error: any): boolean => {
 
 // 带重试的流式 API 调用
 async function generateContentStreamWithRetry(
-  ai: GoogleGenAI,
+  client: AIClient,
   options: {
     model: string;
     contents: any[];
@@ -35,7 +35,7 @@ async function generateContentStreamWithRetry(
   
   for (let attempt = 0; attempt < RETRY_CONFIG.maxRetries; attempt++) {
     try {
-      const stream = await ai.models.generateContentStream(options);
+      const stream = await client.generateContentStream(options);
       return stream;
     } catch (error: any) {
       lastError = error;
@@ -61,7 +61,7 @@ async function generateContentStreamWithRetry(
 
 // 带重试的普通 API 调用
 async function generateContentWithRetry(
-  ai: GoogleGenAI,
+  client: AIClient,
   options: {
     model: string;
     contents: any[];
@@ -72,7 +72,7 @@ async function generateContentWithRetry(
   
   for (let attempt = 0; attempt < RETRY_CONFIG.maxRetries; attempt++) {
     try {
-      const response = await ai.models.generateContent(options);
+      const response = await client.generateContent(options);
       return response;
     } catch (error: any) {
       lastError = error;
@@ -200,8 +200,6 @@ export interface StreamCallbacks {
   onError: (error: string) => void;
 }
 
-const getApiKey = () => process.env.API_KEY || process.env.GEMINI_API_KEY || '';
-
 const handleApiError = (error: any): string => {
   const errMsg = error.message || "";
   if (errMsg.includes("Requested entity was not found") || errMsg.includes("404")) {
@@ -225,8 +223,7 @@ export const analyzeResumeStream = async (
   jdFile?: FileData,
   resumeFile?: FileData
 ) => {
-  const apiKey = getApiKey();
-  const ai = new GoogleGenAI({ apiKey });
+  const client = createAIClient();
 
   const simulationDate = getCurrentDateChinese();
   
@@ -261,7 +258,7 @@ ${aspiration || '无特定诉求'}`;
     });
 
     try {
-      const stream = await generateContentStreamWithRetry(ai, {
+      const stream = await generateContentStreamWithRetry(client, {
         model: "gemini-3-pro-preview",
         contents: [{ parts }],
         config: {
@@ -312,7 +309,7 @@ ${diagnosisResult}
     });
 
     try {
-      const stream = await generateContentStreamWithRetry(ai, {
+      const stream = await generateContentStreamWithRetry(client, {
         model: "gemini-3-pro-preview",
         contents: [{ parts }],
         config: {
@@ -355,8 +352,8 @@ ${diagnosisResult}
 };
 
 export const translateResume = async (content: string) => {
-  const apiKey = getApiKey();
-  const ai = new GoogleGenAI({ apiKey });
+  const client = createAIClient();
+  
   
   const systemInstruction = `You are an elite Resume Editor for the US/Global Tech market (Silicon Valley standards).
   Your task is to translate a Chinese resume into **extremely concise, high-impact English**.
@@ -397,7 +394,7 @@ export const translateResume = async (content: string) => {
   const prompt = `Translate to professional, concise English:\n\n${content}`;
 
   try {
-     const response = await generateContentWithRetry(ai, {
+     const response = await generateContentWithRetry(client, {
       model: "gemini-3-pro-preview",
       contents: [{ parts: [{ text: prompt }] }],
       config: {
@@ -424,8 +421,8 @@ export const transcribeAudio = async (
   audioBlob: Blob,
   callbacks: AudioTranscriptionCallbacks
 ) => {
-  const apiKey = getApiKey();
-  const ai = new GoogleGenAI({ apiKey });
+  const client = createAIClient();
+  
 
   callbacks.onTranscribing();
 
@@ -451,7 +448,7 @@ export const transcribeAudio = async (
 4. 如果音频是纯英语或其他非中文语言，则输出对应语言的文字
 5. 只输出转录的文字内容，不要添加任何解释或说明`;
 
-    const response = await generateContentStreamWithRetry(ai, {
+    const response = await generateContentStreamWithRetry(client, {
       model: "gemini-2.0-flash",
       contents: [{
         parts: [
@@ -493,11 +490,11 @@ export const transcribeAudio = async (
 export const extractTextFromFile = async (
   fileData: { data: string; mimeType: string }
 ): Promise<string> => {
-  const apiKey = getApiKey();
-  const ai = new GoogleGenAI({ apiKey });
+  const client = createAIClient();
+  
 
   try {
-    const response = await generateContentWithRetry(ai, {
+    const response = await generateContentWithRetry(client, {
       model: "gemini-2.0-flash",
       contents: [{
         parts: [
@@ -529,8 +526,8 @@ export const condenseResume = async (
   currentPercentage: number, // 当前占用百分比，如 122
   targetPercentage: number = 95 // 目标百分比，默认 95%
 ): Promise<string> => {
-  const apiKey = getApiKey();
-  const ai = new GoogleGenAI({ apiKey });
+  const client = createAIClient();
+  
 
   // 计算需要精简的比例（保守一点，目标设为 93% 而不是太低）
   const safeTarget = Math.max(targetPercentage, 90); // 最少保留 90%
@@ -591,7 +588,7 @@ ${resumeMarkdown}
   try {
     console.log(`[精简简历] 当前 ${currentPercentage}%，目标 ${targetPercentage}%，需删减 ${reductionNeeded}%`);
     
-    const response = await generateContentWithRetry(ai, {
+    const response = await generateContentWithRetry(client, {
       model: "gemini-3-pro-preview",
       contents: [{ parts: [{ text: prompt }] }],
       config: {
