@@ -56,65 +56,71 @@ async function proxyStreamRequest(options: {
     throw new Error('Failed to get response stream');
   }
 
-  // 将 SSE stream 转换为 AsyncIterable<{ text: string }>
+  // 将 SSE stream 转为 AsyncIterable<{ text: string }>
+  // Google SSE 格式: "data: {json}\r\n\r\n" 或 "data: {json}\n\n"
   const decoder = new TextDecoder();
-  
+
+  // 先将所有 SSE 文本 chunk 解析出来放入队列
+  const textQueue: string[] = [];
+  let streamDone = false;
+  let buffer = '';
+
+  const parseSSEEvents = () => {
+    // 统一换行符，处理 \r\n 和 \n
+    buffer = buffer.replace(/\r\n/g, '\n');
+    
+    // 按双换行分割事件
+    let eventEnd: number;
+    while ((eventEnd = buffer.indexOf('\n\n')) !== -1) {
+      const event = buffer.slice(0, eventEnd);
+      buffer = buffer.slice(eventEnd + 2);
+      
+      // 提取所有 data: 行并拼接
+      const dataLines = event.split('\n')
+        .filter(line => line.startsWith('data: '))
+        .map(line => line.slice(6));
+      
+      if (dataLines.length === 0) continue;
+      
+      const jsonStr = dataLines.join('');
+      if (jsonStr.trim() === '[DONE]') continue;
+      
+      try {
+        const parsed = JSON.parse(jsonStr);
+        const text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) {
+          textQueue.push(text);
+        }
+      } catch {
+        // 跳过无法解析的事件
+      }
+    }
+  };
+
   return {
     [Symbol.asyncIterator]() {
-      let buffer = '';
       return {
         async next(): Promise<IteratorResult<{ text: string }>> {
-          while (true) {
-            // 检查 buffer 中是否有完整的 SSE 事件
-            const eventEnd = buffer.indexOf('\n\n');
-            if (eventEnd !== -1) {
-              const event = buffer.slice(0, eventEnd);
-              buffer = buffer.slice(eventEnd + 2);
-              
-              // 解析 SSE data 行
-              const dataLine = event.split('\n').find(line => line.startsWith('data: '));
-              if (dataLine) {
-                const jsonStr = dataLine.slice(6); // 去掉 "data: "
-                if (jsonStr.trim() === '[DONE]') {
-                  return { done: true, value: undefined as any };
-                }
-                try {
-                  const parsed = JSON.parse(jsonStr);
-                  const text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-                  if (text) {
-                    return { done: false, value: { text } };
-                  }
-                } catch {
-                  // 跳过无法解析的行
-                }
-              }
-              continue;
-            }
-
-            // 需要更多数据
+          // 如果队列中有数据，直接返回
+          while (textQueue.length === 0 && !streamDone) {
             const { done, value } = await reader.read();
             if (done) {
-              // 处理 buffer 中剩余的数据
+              streamDone = true;
+              // 处理 buffer 中剩余数据
               if (buffer.trim()) {
-                const dataLine = buffer.split('\n').find(line => line.startsWith('data: '));
-                if (dataLine) {
-                  const jsonStr = dataLine.slice(6);
-                  try {
-                    const parsed = JSON.parse(jsonStr);
-                    const text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-                    buffer = '';
-                    if (text) {
-                      return { done: false, value: { text } };
-                    }
-                  } catch {
-                    // ignore
-                  }
-                }
+                buffer += '\n\n'; // 确保最后一个事件能被解析
+                parseSSEEvents();
               }
-              return { done: true, value: undefined as any };
+              break;
             }
             buffer += decoder.decode(value, { stream: true });
+            parseSSEEvents();
           }
+
+          if (textQueue.length > 0) {
+            return { done: false, value: { text: textQueue.shift()! } };
+          }
+          return { done: true, value: undefined as any };
         }
       };
     }
