@@ -58,6 +58,8 @@ const App: React.FC = () => {
   
   const [densityMultiplier, setDensityMultiplier] = useState<number>(1.0); 
   const [resumeHeight, setResumeHeight] = useState<number>(0);
+  // 预览分页点（CSS像素级别），与 PDF 导出使用完全相同的像素扫描逻辑计算
+  const [previewPageBreaks, setPreviewPageBreaks] = useState<number[]>([0]);
   
   const jdFileInputRef = useRef<HTMLInputElement>(null);
   const resumeFileInputRef = useRef<HTMLInputElement>(null);
@@ -75,23 +77,206 @@ const App: React.FC = () => {
   useEffect(() => {
     if (step !== 'EDITOR' && step !== 'ENGLISH_VERSION') return;
 
-    // 延迟计算以确保内容渲染完成
-    const measureHeight = () => {
+    let cancelled = false;
+    
+    // 计算分页点：使用和 PDF 导出完全相同的像素扫描逻辑
+    const computePageBreaks = async () => {
       const measureContainer = document.getElementById('resume-measure-container');
-      if (measureContainer) {
-        // 获取内容的实际高度（不受 transform scale 影响）
-        const height = measureContainer.scrollHeight;
-        console.log('测量内容高度:', height, 'px', '每页可用高度:', CONTENT_HEIGHT_PER_PAGE, 'px', '页数:', Math.ceil(height / CONTENT_HEIGHT_PER_PAGE));
-        setResumeHeight(height);
+      if (!measureContainer) return;
+      
+      const height = measureContainer.scrollHeight;
+      if (cancelled) return;
+      setResumeHeight(height);
+      
+      const contentWidth = A4_WIDTH_PX - PAGE_PADDING_LEFT - PAGE_PADDING_RIGHT;
+      const maxDrawableHeight = A4_HEIGHT_PX - PAGE_PADDING_TOP - PAGE_PADDING_BOTTOM;
+      const tolerancePx = PAGE_TOLERANCE;
+      
+      // 单页内容（含容差），不需要像素扫描
+      if (height <= maxDrawableHeight + tolerancePx) {
+        if (!cancelled) setPreviewPageBreaks([0, height]);
+        return;
+      }
+      
+      // 多页内容：使用 html2canvas 渲染并像素扫描找安全分页点
+      try {
+        const html2canvas = (await import('html2canvas')).default;
+        const contentClone = measureContainer.cloneNode(true) as HTMLElement;
+        contentClone.id = '';
+        
+        const tempContainer = document.createElement('div');
+        tempContainer.style.position = 'absolute';
+        tempContainer.style.top = '-20000px';
+        tempContainer.style.left = '0';
+        tempContainer.style.overflow = 'visible';
+        
+        const wrapper = document.createElement('div');
+        wrapper.style.width = `${contentWidth}px`;
+        wrapper.style.backgroundColor = '#ffffff';
+        wrapper.style.overflow = 'visible';
+        wrapper.style.paddingBottom = '60px';
+        wrapper.appendChild(contentClone);
+        tempContainer.appendChild(wrapper);
+        document.body.appendChild(tempContainer);
+        
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        const canvas = await html2canvas(wrapper, {
+          scale: 2, // 预览用较低 scale 提升性能
+          useCORS: true,
+          backgroundColor: '#ffffff',
+          logging: false,
+          width: contentWidth,
+          height: wrapper.scrollHeight,
+        });
+        
+        document.body.removeChild(tempContainer);
+        if (cancelled) return;
+        
+        const canvasScale = canvas.width / contentWidth;
+        const maxDrawableInCanvas = maxDrawableHeight * canvasScale;
+        const toleranceInCanvas = tolerancePx * canvasScale;
+        
+        // 从 canvas 底部向上扫描找实际内容底部
+        const ctx = canvas.getContext('2d');
+        let actualContentHeight = canvas.height;
+        if (ctx) {
+          for (let y = canvas.height - 1; y >= 0; y--) {
+            const imageData = ctx.getImageData(0, y, canvas.width, 1);
+            const data = imageData.data;
+            let hasContent = false;
+            for (let x = 0; x < canvas.width * 4; x += 4) {
+              if (data[x] < 250 || data[x + 1] < 250 || data[x + 2] < 250) {
+                hasContent = true;
+                break;
+              }
+            }
+            if (hasContent) {
+              actualContentHeight = Math.min(canvas.height, y + Math.ceil(15 * canvasScale));
+              break;
+            }
+          }
+        }
+        
+        // 单页判断（含容差）
+        if (actualContentHeight <= maxDrawableInCanvas + toleranceInCanvas) {
+          if (!cancelled) setPreviewPageBreaks([0, Math.round(actualContentHeight / canvasScale)]);
+          return;
+        }
+        
+        // 像素扫描找安全分页点（与 PDF 导出的 findSafeBreakPoint 完全相同）
+        const findSafeBreak = (startY: number, maxY: number): number => {
+          if (!ctx) return maxY - 30 * canvasScale;
+          const width = canvas.width;
+          const searchRange = Math.min(300 * canvasScale, maxY - startY);
+          const safetyMargin = 10 * canvasScale;
+          const effectiveMaxY = maxY - safetyMargin;
+          const minWhiteGap = Math.ceil(10 * canvasScale);
+          
+          let consecutiveWhiteLines = 0;
+          
+          for (let y = Math.floor(effectiveMaxY); y > effectiveMaxY - searchRange; y--) {
+            const imageData = ctx.getImageData(0, y, width, 1);
+            const data = imageData.data;
+            let isWhiteLine = true;
+            for (let x = 0; x < width * 4; x += 4) {
+              if (data[x] < 250 || data[x + 1] < 250 || data[x + 2] < 250) {
+                isWhiteLine = false;
+                break;
+              }
+            }
+            if (isWhiteLine) {
+              consecutiveWhiteLines++;
+            } else {
+              if (consecutiveWhiteLines >= minWhiteGap) {
+                return y + 1;
+              }
+              consecutiveWhiteLines = 0;
+            }
+          }
+          
+          // 没找到足够大的空白，找最大的
+          let maxGap = 0;
+          let maxGapBreak = -1;
+          consecutiveWhiteLines = 0;
+          for (let y = Math.floor(effectiveMaxY); y > effectiveMaxY - searchRange; y--) {
+            const imageData = ctx.getImageData(0, y, width, 1);
+            const data = imageData.data;
+            let isWhiteLine = true;
+            for (let x = 0; x < width * 4; x += 4) {
+              if (data[x] < 250 || data[x + 1] < 250 || data[x + 2] < 250) {
+                isWhiteLine = false;
+                break;
+              }
+            }
+            if (isWhiteLine) {
+              consecutiveWhiteLines++;
+            } else {
+              if (consecutiveWhiteLines > maxGap) {
+                maxGap = consecutiveWhiteLines;
+                maxGapBreak = y + 1;
+              }
+              consecutiveWhiteLines = 0;
+            }
+          }
+          if (maxGap >= 5 * canvasScale && maxGapBreak > 0) return maxGapBreak;
+          return Math.max(startY + 50 * canvasScale, effectiveMaxY - 50 * canvasScale);
+        };
+        
+        // 计算分页位置
+        const breaks: number[] = [0];
+        let currentY = 0;
+        while (currentY < actualContentHeight) {
+          const remaining = actualContentHeight - currentY;
+          if (remaining <= maxDrawableInCanvas + toleranceInCanvas) {
+            breaks.push(actualContentHeight);
+            break;
+          }
+          const nextPageEnd = currentY + maxDrawableInCanvas;
+          const safeBreak = findSafeBreak(currentY, nextPageEnd);
+          breaks.push(safeBreak);
+          currentY = safeBreak;
+        }
+        if (breaks[breaks.length - 1] < actualContentHeight) {
+          breaks.push(actualContentHeight);
+        }
+        
+        // 转换回 CSS 像素
+        const cssBreaks = breaks.map(b => Math.round(b / canvasScale));
+        console.log('预览分页点(CSS px):', cssBreaks);
+        if (!cancelled) setPreviewPageBreaks(cssBreaks);
+        
+      } catch (e) {
+        console.warn('预览分页计算失败，回退到固定分页:', e);
+        // 回退：简单固定分页
+        const breaks = [0];
+        let pos = 0;
+        while (pos < height) {
+          if (height - pos <= maxDrawableHeight + tolerancePx) {
+            breaks.push(height);
+            break;
+          }
+          pos += maxDrawableHeight;
+          breaks.push(pos);
+        }
+        if (breaks[breaks.length - 1] < height) breaks.push(height);
+        if (!cancelled) setPreviewPageBreaks(breaks);
       }
     };
 
-    // 初次测量，延迟更长时间确保渲染完成
-    const timer = setTimeout(measureHeight, 200);
+    // 初次计算
+    const timer = setTimeout(computePageBreaks, 300);
     
-    // 使用 ResizeObserver 监听内容变化
+    // 监听内容变化时重新计算
+    // 使用防抖避免频繁渲染 canvas
+    let debounceTimer: ReturnType<typeof setTimeout>;
     const observer = new ResizeObserver(() => {
-      measureHeight();
+      const measureContainer = document.getElementById('resume-measure-container');
+      if (measureContainer) {
+        setResumeHeight(measureContainer.scrollHeight);
+      }
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(computePageBreaks, 500);
     });
 
     const target = document.getElementById('resume-measure-container');
@@ -100,7 +285,9 @@ const App: React.FC = () => {
     }
 
     return () => {
+      cancelled = true;
       clearTimeout(timer);
+      clearTimeout(debounceTimer);
       observer.disconnect();
     };
   }, [step, editableResume, englishResume, densityMultiplier]);
@@ -462,6 +649,8 @@ const App: React.FC = () => {
 
   // 每页可用内容高度（A4高度 - 上下padding）
   const CONTENT_HEIGHT_PER_PAGE = A4_HEIGHT_PX - PAGE_PADDING_TOP - PAGE_PADDING_BOTTOM; // 1043px
+  // 与 PDF 导出一致的容差：允许内容侵入底部 padding 最多 30px（保留 10px 底部边距）
+  const PAGE_TOLERANCE = 30;
 
   const handleExportImage = async () => {
     const element = document.getElementById('resume-measure-container');
@@ -878,7 +1067,8 @@ const App: React.FC = () => {
   const getCapacityStatus = () => {
     // 计算内容相对于单页A4的总体占用百分比
     // 如果内容超过一页，百分比会大于100%
-    const pageCount = Math.max(1, Math.ceil(resumeHeight / CONTENT_HEIGHT_PER_PAGE));
+    // 使用预览分页点计算页数（与预览和PDF一致）
+    const pageCount = Math.max(1, previewPageBreaks.length - 1);
     // 总体占用百分比 = 内容高度 / 单页可用高度 * 100
     const totalPercentage = Math.round((resumeHeight / CONTENT_HEIGHT_PER_PAGE) * 100);
     
@@ -1749,7 +1939,7 @@ const App: React.FC = () => {
                    </div>
                 )}
 
-                 {/* 简历预览 - 单个A4容器，内容自然流动 */}
+                 {/* 简历预览 - 分页显示，每页独立A4纸，与PDF下载效果一致 */}
                  <div className="flex flex-col items-center min-w-min relative"> 
                    {/* 占位符提示 - 固定在A4纸右上角，与A4边缘对齐 */}
                    {/X+%/i.test(step === 'ENGLISH_VERSION' ? englishResume : editableResume) && (
@@ -1766,22 +1956,18 @@ const App: React.FC = () => {
                           </span>
                        </div>
                    )}
+                   
+                   {/* 隐藏的测量容器：用于测量内容真实高度 */}
                    <div 
-                     className="bg-white shadow-sm relative"
                      style={{
-                       width: `${A4_WIDTH_PX}px`, 
-                       minHeight: `${A4_HEIGHT_PX}px`,
-                       padding: `${PAGE_PADDING_TOP}px ${PAGE_PADDING_RIGHT}px ${PAGE_PADDING_BOTTOM}px ${PAGE_PADDING_LEFT}px`,
-                       boxSizing: 'border-box',
-                       transform: `scale(${previewScale})`,
-                       transformOrigin: 'top center',
+                       position: 'absolute',
+                       top: '-10000px',
+                       left: '0',
+                       width: `${A4_WIDTH_PX - PAGE_PADDING_LEFT - PAGE_PADDING_RIGHT}px`,
+                       visibility: 'hidden',
                      }}
                    >
-                     {/* 内容测量和显示 */}
-                     <div 
-                       id="resume-measure-container"
-                       className="text-slate-900"
-                     >
+                     <div id="resume-measure-container">
                        <MarkdownRenderer 
                          content={step === 'ENGLISH_VERSION' ? englishResume : editableResume} 
                          isResumePreview={true} 
@@ -1789,27 +1975,67 @@ const App: React.FC = () => {
                          mode="resume" 
                        />
                      </div>
+                   </div>
+
+                   {/* 分页预览：使用与 PDF 导出完全相同的像素扫描分页点 */}
+                   {(() => {
+                     const pageCount = Math.max(1, previewPageBreaks.length - 1);
+                     const maxVisibleHeight = CONTENT_HEIGHT_PER_PAGE + PAGE_TOLERANCE;
                      
-                     {/* 分页线 - 在每页边界处显示 */}
-                     {(() => {
-                       const pageCount = Math.max(1, Math.ceil(resumeHeight / CONTENT_HEIGHT_PER_PAGE));
-                       if (pageCount <= 1) return null;
+                     return Array.from({ length: pageCount }, (_, pageIndex) => {
+                       const contentOffset = previewPageBreaks[pageIndex] || 0;
+                       const nextBreak = previewPageBreaks[pageIndex + 1] || contentOffset;
+                       const pageContentHeight = nextBreak - contentOffset;
+                       const visibleHeight = Math.min(pageContentHeight, maxVisibleHeight);
                        
-                       return Array.from({ length: pageCount - 1 }, (_, i) => (
+                       return (
                          <div 
-                           key={i}
-                           className="absolute left-0 right-0 border-t-2 border-dashed border-red-400 pointer-events-none"
+                           key={pageIndex}
+                           className="bg-white shadow-sm relative"
                            style={{
-                             top: `${PAGE_PADDING_TOP + (i + 1) * CONTENT_HEIGHT_PER_PAGE}px`,
+                             width: `${A4_WIDTH_PX}px`, 
+                             height: `${A4_HEIGHT_PX}px`,
+                             overflow: 'hidden',
+                             transform: `scale(${previewScale})`,
+                             transformOrigin: 'top center',
+                             marginBottom: `${-(A4_HEIGHT_PX * (1 - previewScale)) + (pageIndex < pageCount - 1 ? 20 : 0)}px`,
                            }}
                          >
-                          <span className="absolute left-1/2 -translate-x-1/2 -top-3 bg-red-100 text-red-600 text-[10px] px-2 py-0.5 rounded whitespace-nowrap">
-                            第 {i + 1} 页结束，下载时将分页排版
-                          </span>
+                           <div
+                             className="absolute"
+                             style={{
+                               top: `${PAGE_PADDING_TOP}px`,
+                               left: `${PAGE_PADDING_LEFT}px`,
+                               right: `${PAGE_PADDING_RIGHT}px`,
+                               height: `${visibleHeight}px`,
+                               overflow: 'hidden',
+                             }}
+                           >
+                             <div
+                               className="text-slate-900"
+                               style={{
+                                 marginTop: `-${contentOffset}px`,
+                               }}
+                             >
+                               <MarkdownRenderer 
+                                 content={step === 'ENGLISH_VERSION' ? englishResume : editableResume} 
+                                 isResumePreview={true} 
+                                 densityMultiplier={densityMultiplier} 
+                                 mode="resume" 
+                               />
+                             </div>
+                           </div>
+
+                           {/* 页码标签 */}
+                           {pageCount > 1 && (
+                             <div className="absolute bottom-2 right-3 text-[10px] text-zinc-300 select-none">
+                               {pageIndex + 1} / {pageCount}
+                             </div>
+                           )}
                          </div>
-                       ));
-                     })()}
-                   </div>
+                       );
+                     });
+                   })()}
                  </div>
                </div>
             </div>
