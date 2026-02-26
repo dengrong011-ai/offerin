@@ -6,13 +6,16 @@ import InterviewChat from './components/InterviewChat';
 import { LoginModal, UserAvatar } from './components/LoginModal';
 import { VIPUpgradeModal } from './components/VIPUpgradeModal';
 import { DownloadPayModal } from './components/DownloadPayModal';
+import ResumeLibrary from './components/ResumeLibrary';
 import { useAuth } from './contexts/AuthContext';
 import { checkUsageLimit, logUsage, checkTranslationLimit, VIP_WHITELIST_EMAILS } from './services/authService';
-import { FileText, Target, Send, Loader2, RefreshCw, ChevronRight, Upload, X, Paperclip, Image as ImageIcon, File, AlertCircle, PenTool, ArrowLeft, Maximize2, Minimize2, ZoomIn, ZoomOut, CheckCircle2, AlertTriangle, AlignJustify, Languages, Globe, ArrowRight, Sparkles, MessageSquare, Mic, Play, Users, Lock, Briefcase, Crown } from 'lucide-react';
+import { createSavedResume, updateSavedResume, extractResumeTitle } from './services/resumeService';
+import type { SavedResume } from './types';
+import { FileText, Target, Send, Loader2, RefreshCw, ChevronRight, Upload, X, Paperclip, Image as ImageIcon, File, AlertCircle, PenTool, ArrowLeft, Maximize2, Minimize2, ZoomIn, ZoomOut, CheckCircle2, AlertTriangle, AlignJustify, Languages, Globe, ArrowRight, Sparkles, MessageSquare, Mic, Play, Users, Lock, Briefcase, Crown, Save, FolderOpen } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 
-type Step = 'INPUT' | 'UPLOAD' | 'ANALYSIS' | 'EDITOR' | 'ENGLISH_VERSION' | 'INTERVIEW';
+type Step = 'INPUT' | 'UPLOAD' | 'ANALYSIS' | 'EDITOR' | 'ENGLISH_VERSION' | 'INTERVIEW' | 'RESUME_LIBRARY';
 
 const App: React.FC = () => {
   const { user, profile, loading: authLoading } = useAuth();
@@ -46,6 +49,11 @@ const App: React.FC = () => {
   const [isCondensing, setIsCondensing] = useState(false);
   
   const [isTranslating, setIsTranslating] = useState(false);
+
+  // 简历库相关
+  const [currentSavedResumeId, setCurrentSavedResumeId] = useState<string | null>(null);
+  const [isSavingResume, setIsSavingResume] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
   
   const [diagnosisContent, setDiagnosisContent] = useState<string>('');
   const [resumeContent, setResumeContent] = useState<string>('');
@@ -604,6 +612,9 @@ const App: React.FC = () => {
     setIsFullscreen(false);
     setDensityMultiplier(1.0);
     setEnglishResume('');
+    setCurrentSavedResumeId(null);
+    setIsSavingResume(false);
+    setSaveSuccess(false);
   };
 
   // 用于取消分析并返回上传页面
@@ -1033,6 +1044,68 @@ const App: React.FC = () => {
     }
   };
 
+  // 保存/更新简历到简历库
+  const handleSaveResume = async () => {
+    if (!user || !editableResume) return;
+    
+    // VIP 检查
+    const isVIP = profile?.membership_type === 'vip' || profile?.membership_type === 'pro';
+    const isWhitelist = user.email && VIP_WHITELIST_EMAILS.includes(user.email.toLowerCase());
+    if (!isVIP && !isWhitelist) {
+      setShowVIPModal(true);
+      return;
+    }
+
+    setIsSavingResume(true);
+    setSaveSuccess(false);
+
+    try {
+      if (currentSavedResumeId) {
+        // 更新已有简历
+        const { success, error: err } = await updateSavedResume(currentSavedResumeId, {
+          resumeMarkdown: editableResume,
+          englishResumeMarkdown: englishResume || undefined,
+          jobDescription: jd || undefined,
+          aspiration: aspiration || undefined,
+          densityMultiplier,
+        });
+        if (!success) throw new Error(err);
+      } else {
+        // 新建保存
+        const title = extractResumeTitle(editableResume, jd);
+        const { data, error: err } = await createSavedResume({
+          userId: user.id,
+          title,
+          resumeMarkdown: editableResume,
+          englishResumeMarkdown: englishResume || undefined,
+          jobDescription: jd || undefined,
+          aspiration: aspiration || undefined,
+          densityMultiplier,
+          source: 'reconstruction',
+        });
+        if (err || !data) throw new Error(err || '保存失败');
+        setCurrentSavedResumeId(data.id);
+      }
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2000);
+    } catch (err: any) {
+      setError(err.message || '保存失败');
+    } finally {
+      setIsSavingResume(false);
+    }
+  };
+
+  // 从简历库打开简历进入编辑器
+  const handleOpenSavedResume = (resume: SavedResume) => {
+    setCurrentSavedResumeId(resume.id);
+    setEditableResume(resume.resume_markdown);
+    setEnglishResume(resume.english_resume_markdown || '');
+    setJd(resume.job_description || '');
+    setAspiration(resume.aspiration || '');
+    setDensityMultiplier(resume.density_multiplier || 1.0);
+    setStep('EDITOR');
+  };
+
   const zoomIn = () => setPreviewScale(prev => Math.min(prev + 0.1, 1.5));
   const zoomOut = () => setPreviewScale(prev => Math.max(prev - 0.1, 0.4));
 
@@ -1116,6 +1189,11 @@ const App: React.FC = () => {
               <button onClick={() => setStep('INTERVIEW')} className={`px-2 py-1 rounded transition-colors flex items-center gap-1 ${step === 'INTERVIEW' ? 'text-zinc-900 font-medium' : 'hover:text-zinc-600'}`}>
                 <Mic size={11} />
                 模拟面试
+              </button>
+              <span className="text-zinc-300 mx-1">|</span>
+              <button onClick={() => requireLogin(() => setStep('RESUME_LIBRARY'))} className={`px-2 py-1 rounded transition-colors flex items-center gap-1 ${step === 'RESUME_LIBRARY' ? 'text-zinc-900 font-medium' : 'hover:text-zinc-600'}`}>
+                <FolderOpen size={11} />
+                简历库
               </button>
             </div>
           )}
@@ -1815,6 +1893,20 @@ const App: React.FC = () => {
                          <Mic size={12} />
                          模拟面试
                        </button>
+                       <span className="text-zinc-200">|</span>
+                       <button 
+                         onClick={handleSaveResume}
+                         disabled={isSavingResume}
+                         className={`flex items-center gap-1.5 text-[12px] font-medium px-2.5 py-1 rounded transition-colors ${
+                           saveSuccess 
+                             ? 'bg-green-50 text-green-600 border border-green-200' 
+                             : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
+                         }`}
+                       >
+                         {isSavingResume ? <Loader2 size={11} className="animate-spin" /> : 
+                          saveSuccess ? <CheckCircle2 size={11} /> : <Save size={11} />}
+                         {isSavingResume ? '保存中...' : saveSuccess ? '已保存' : currentSavedResumeId ? '更新保存' : '保存简历'}
+                       </button>
                      </>
                    ) : (
                      <>
@@ -1829,6 +1921,20 @@ const App: React.FC = () => {
                         >
                            {isTranslating ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
                            重新翻译
+                        </button>
+                        <span className="text-zinc-200">|</span>
+                        <button 
+                           onClick={handleSaveResume}
+                           disabled={isSavingResume}
+                           className={`flex items-center gap-1.5 text-[12px] font-medium px-2.5 py-1 rounded transition-colors ${
+                             saveSuccess 
+                               ? 'bg-green-50 text-green-600 border border-green-200' 
+                               : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
+                           }`}
+                        >
+                           {isSavingResume ? <Loader2 size={11} className="animate-spin" /> : 
+                            saveSuccess ? <CheckCircle2 size={11} /> : <Save size={11} />}
+                           {isSavingResume ? '保存中...' : saveSuccess ? '已保存' : currentSavedResumeId ? '更新保存' : '保存简历'}
                         </button>
                      </>
                    )}
@@ -2050,6 +2156,16 @@ const App: React.FC = () => {
             initialJd={jd}
             initialJdFile={jdFile ? { name: jdFile.name, data: jdFile.data, mime: jdFile.mime } : null}
             initialResumeFile={resumeFile ? { name: resumeFile.name, data: resumeFile.data, mime: resumeFile.mime } : null}
+            onShowVIPModal={() => setShowVIPModal(true)}
+          />
+        )}
+
+        {/* Step 6: Resume Library */}
+        {step === 'RESUME_LIBRARY' && (
+          <ResumeLibrary
+            onBack={() => setStep('INPUT')}
+            onOpenResume={handleOpenSavedResume}
+            onNewResume={() => { resetAll(); setStep('INPUT'); }}
             onShowVIPModal={() => setShowVIPModal(true)}
           />
         )}

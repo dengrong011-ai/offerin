@@ -43,3 +43,20 @@ export interface InterviewSettings {
 }
 
 export type InterviewStatus = 'idle' | 'running' | 'completed' | 'stopped' | 'error' | 'waiting_input';
+
+// ============ 简历库相关类型 ============
+
+export interface SavedResume {
+  id: string;
+  user_id: string;
+  title: string;
+  resume_markdown: string;
+  english_resume_markdown: string | null;
+  job_description: string | null;
+  aspiration: string | null;
+  density_multiplier: number;
+  source: 'reconstruction' | 'manual' | 'import';
+  is_favorited: boolean;
+  created_at: string;
+  updated_at: string;
+}
