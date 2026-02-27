@@ -51,9 +51,9 @@ export interface UsageLog {
 // 会员权限配置
 export const MEMBERSHIP_LIMITS = {
   free: {
-    // 免费用户：诊断+面试共5次体验，但面试单独限1次
-    total_trial_count: 5,          // 诊断+面试共5次体验机会
-    interview_trial_count: 1,      // 面试单独限1次
+    // 免费用户：诊断(含全局重构)3次 + 面试1次，分开计算
+    diagnosis_trial_count: 3,      // 简历诊断+全局重构 共3次
+    interview_trial_count: 1,      // 模拟面试 独立1次
     translation_trial_count: 3,    // 英文翻译共3次体验机会
     daily_diagnosis: -1,           // 不限制每日，只限制总次数
     daily_interview: -1,           // 不限制每日，只限制总次数
@@ -65,7 +65,7 @@ export const MEMBERSHIP_LIMITS = {
     features: ['basic_diagnosis', 'basic_interview'],
   },
   vip: {
-    total_trial_count: -1,         // VIP 不限制总次数
+    diagnosis_trial_count: -1,     // VIP 不限制
     interview_trial_count: -1,     // VIP 不限制体验
     translation_trial_count: -1,   // VIP 翻译无限
     daily_diagnosis: 50,           // VIP 每日50次诊断上限
@@ -78,7 +78,7 @@ export const MEMBERSHIP_LIMITS = {
     features: ['basic_diagnosis', 'basic_interview', 'advanced_diagnosis', 'resume_export', 'interview_history', 'translation', 'interview_export'],
   },
   pro: {
-    total_trial_count: -1,         // Pro 无限制
+    diagnosis_trial_count: -1,     // Pro 无限制
     interview_trial_count: -1,
     translation_trial_count: -1,   // Pro 翻译无限
     daily_diagnosis: -1,           // Pro 无限制

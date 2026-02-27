@@ -406,9 +406,9 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
       const limitCheck = await checkUsageLimit(user.id, 'interview', user.email || undefined);
       if (!limitCheck.allowed) {
         if (limitCheck.isTrialLimit) {
-          setUsageLimitError(`免费体验次数已用完（共${limitCheck.limit}次）。升级 VIP 享每日50次使用！`);
+          setUsageLimitError(`模拟面试免费体验次数已用完（共${limitCheck.limit}次）。升级 VIP 享每月10次面试！`);
         } else {
-          setUsageLimitError(`今日使用次数已达上限（${limitCheck.limit}次/天）。`);
+          setUsageLimitError(`本月面试次数已达上限（${limitCheck.limit}次/月）。`);
         }
         return;
       }
@@ -493,9 +493,9 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
       const limitCheck = await checkUsageLimit(user.id, 'interview', user.email || undefined);
       if (!limitCheck.allowed) {
         if (limitCheck.isTrialLimit) {
-          setUsageLimitError(`免费体验次数已用完（共${limitCheck.limit}次）。升级 VIP 享每日50次使用！`);
+          setUsageLimitError(`模拟面试免费体验次数已用完（共${limitCheck.limit}次）。升级 VIP 享每月10次面试！`);
         } else {
-          setUsageLimitError(`今日使用次数已达上限（${limitCheck.limit}次/天）。`);
+          setUsageLimitError(`本月面试次数已达上限（${limitCheck.limit}次/月）。`);
         }
         return;
       }

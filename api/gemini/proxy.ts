@@ -24,7 +24,7 @@ const VIP_WHITELIST_EMAILS = [
 
 // 会员配额（服务端权威配置）
 const MEMBERSHIP_LIMITS: Record<string, {
-  total_trial_count: number;
+  diagnosis_trial_count: number;
   interview_trial_count: number;
   translation_trial_count: number;
   daily_diagnosis: number;
@@ -32,15 +32,15 @@ const MEMBERSHIP_LIMITS: Record<string, {
   monthly_interview: number;
 }> = {
   free: {
-    total_trial_count: 5,        // 诊断+面试共5次体验
-    interview_trial_count: 1,    // 面试单独限1次
+    diagnosis_trial_count: 3,    // 简历诊断+全局重构 独立3次
+    interview_trial_count: 1,    // 模拟面试 独立1次
     translation_trial_count: 3,
     daily_diagnosis: -1,
     daily_interview: -1,
     monthly_interview: -1,
   },
   vip: {
-    total_trial_count: -1,
+    diagnosis_trial_count: -1,
     interview_trial_count: -1,
     translation_trial_count: -1,
     daily_diagnosis: 50,
@@ -48,7 +48,7 @@ const MEMBERSHIP_LIMITS: Record<string, {
     monthly_interview: 10,       // 每月10次面试
   },
   pro: {
-    total_trial_count: -1,
+    diagnosis_trial_count: -1,
     interview_trial_count: -1,
     translation_trial_count: -1,
     daily_diagnosis: -1,
@@ -187,33 +187,31 @@ async function checkAndLogUsage(
   }
 
   if (membershipType === 'free') {
-    // 免费用户：检查总体验次数（诊断+面试共5次）
-    const normalizedAction = (actionType === 'diagnosis' || actionType === 'interview') 
-      ? actionType : null;
+    // 免费用户：诊断(含全局重构)3次 和 面试1次，分开计算
     
-    if (normalizedAction) {
-      // 先检查面试单独限额（1次）
-      if (normalizedAction === 'interview') {
-        const { count: interviewCount } = await supabaseAdmin
-          .from('usage_logs')
-          .select('*', { count: 'exact', head: true })
-          .eq('user_id', userId)
-          .eq('action_type', 'interview');
-        
-        if ((interviewCount || 0) >= limits.interview_trial_count) {
-          return { allowed: false, reason: 'INTERVIEW_TRIAL_LIMIT_EXCEEDED' };
-        }
+    // 面试独立限额（1次）
+    if (actionType === 'interview') {
+      const { count: interviewCount } = await supabaseAdmin
+        .from('usage_logs')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .eq('action_type', 'interview');
+      
+      if ((interviewCount || 0) >= limits.interview_trial_count) {
+        return { allowed: false, reason: 'INTERVIEW_TRIAL_LIMIT_EXCEEDED' };
       }
-
-      // 再检查总体验次数（诊断+面试共5次）
+    }
+    
+    // 诊断(含全局重构/resume_edit) 独立限额（3次）
+    if (actionType === 'diagnosis' || actionType === 'resume_edit') {
       const { count } = await supabaseAdmin
         .from('usage_logs')
         .select('*', { count: 'exact', head: true })
         .eq('user_id', userId)
-        .in('action_type', ['diagnosis', 'interview']);
+        .in('action_type', ['diagnosis', 'resume_edit']);
 
-      if ((count || 0) >= limits.total_trial_count) {
-        return { allowed: false, reason: 'TRIAL_LIMIT_EXCEEDED' };
+      if ((count || 0) >= limits.diagnosis_trial_count) {
+        return { allowed: false, reason: 'DIAGNOSIS_TRIAL_LIMIT_EXCEEDED' };
       }
     }
 

@@ -129,12 +129,11 @@ export const checkUsageLimit = async (
     const membership = profile.membership_type;
     const limits = MEMBERSHIP_LIMITS[membership];
     
-    // 免费用户：检查总体验次数（诊断+面试共5次）+ 面试单独限1次
+    // 免费用户：诊断(含全局重构)3次 和 面试1次，分开计算
     if (membership === 'free') {
-      const totalTrialLimit = limits.total_trial_count;
-      
-      // 面试单独限额检查
       if (actionType === 'interview') {
+        // 面试独立限额
+        const interviewLimit = limits.interview_trial_count;
         const { count: interviewCount, error: intError } = await supabase
           .from('usage_logs')
           .select('*', { count: 'exact', head: true })
@@ -143,28 +142,26 @@ export const checkUsageLimit = async (
         
         if (intError) throw intError;
         const interviewUsed = interviewCount || 0;
-        const interviewLimit = limits.interview_trial_count;
-        if (interviewUsed >= interviewLimit) {
-          return { allowed: false, remaining: 0, limit: interviewLimit, isTrialLimit: true };
-        }
+        const remaining = interviewLimit - interviewUsed;
+        return { allowed: remaining > 0, remaining: Math.max(0, remaining), limit: interviewLimit, isTrialLimit: true };
       }
 
-      // 总体验次数（诊断+面试）
+      // 诊断(含全局重构/resume_edit) 独立限额
+      const diagnosisLimit = limits.diagnosis_trial_count;
       const { count, error } = await supabase
         .from('usage_logs')
         .select('*', { count: 'exact', head: true })
         .eq('user_id', userId)
-        .in('action_type', ['diagnosis', 'interview']);
+        .in('action_type', ['diagnosis', 'resume_edit']);
 
       if (error) throw error;
-
       const usedCount = count || 0;
-      const remaining = totalTrialLimit - usedCount;
+      const remaining = diagnosisLimit - usedCount;
 
       return { 
         allowed: remaining > 0, 
         remaining: Math.max(0, remaining), 
-        limit: totalTrialLimit,
+        limit: diagnosisLimit,
         isTrialLimit: true
       };
     }

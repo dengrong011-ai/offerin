@@ -479,7 +479,7 @@ const App: React.FC = () => {
     const limitCheck = await checkUsageLimit(user.id, 'diagnosis', user.email || undefined);
     if (!limitCheck.allowed) {
       if (limitCheck.isTrialLimit) {
-        setUsageLimitError(`免费体验次数已用完（共${limitCheck.limit}次）。升级 VIP 享每日50次使用！`);
+        setUsageLimitError(`简历诊断免费体验次数已用完（共${limitCheck.limit}次）。升级 VIP 享每日50次使用！`);
       } else {
         setUsageLimitError(`今日使用次数已达上限（${limitCheck.limit}次/天）。`);
       }
@@ -647,7 +647,7 @@ const App: React.FC = () => {
       const limitCheck = await checkUsageLimit(user.id, 'diagnosis', user.email || undefined);
       if (!limitCheck.allowed) {
         if (limitCheck.isTrialLimit) {
-          setUsageLimitError(`免费体验次数已用完（共${limitCheck.limit}次）。升级 VIP 享每日50次使用！`);
+          setUsageLimitError(`简历诊断+全局重构免费体验次数已用完（共${limitCheck.limit}次）。升级 VIP 享每日50次使用！`);
         } else {
           setUsageLimitError(`今日使用次数已达上限（${limitCheck.limit}次/天）。`);
         }
@@ -1691,12 +1691,12 @@ const App: React.FC = () => {
                     
                     <div className="space-y-2.5 mb-5 flex-grow">
                       <div className="flex items-center gap-2.5 text-[13px] text-zinc-600">
-                        <span className="w-5 h-5 rounded bg-zinc-100 flex items-center justify-center text-[10px] font-semibold text-zinc-500 shrink-0">5</span>
-                        <span>简历诊断 + 模拟面试 共5次体验</span>
+                        <span className="w-5 h-5 rounded bg-zinc-100 flex items-center justify-center text-[10px] font-semibold text-zinc-500 shrink-0">3</span>
+                        <span>简历诊断 + 全局重构 共3次体验</span>
                       </div>
                       <div className="flex items-center gap-2.5 text-[13px] text-zinc-600">
                         <span className="w-5 h-5 rounded bg-zinc-100 flex items-center justify-center text-[10px] font-semibold text-zinc-500 shrink-0">1</span>
-                        <span>模拟面试 仅1次体验</span>
+                        <span>模拟面试 独立1次体验</span>
                       </div>
                       <div className="flex items-center gap-2.5 text-[13px] text-zinc-600">
                         <span className="w-5 h-5 rounded bg-zinc-100 flex items-center justify-center text-[10px] font-semibold text-zinc-500 shrink-0">3</span>
