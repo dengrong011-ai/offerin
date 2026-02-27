@@ -642,6 +642,19 @@ const App: React.FC = () => {
   };
 
   const handleProceedToEditor = async () => {
+    // 检查使用限制（resume_edit 共享 diagnosis 体验次数）
+    if (user) {
+      const limitCheck = await checkUsageLimit(user.id, 'diagnosis', user.email || undefined);
+      if (!limitCheck.allowed) {
+        if (limitCheck.isTrialLimit) {
+          setUsageLimitError(`免费体验次数已用完（共${limitCheck.limit}次）。升级 VIP 享每日50次使用！`);
+        } else {
+          setUsageLimitError(`今日使用次数已达上限（${limitCheck.limit}次/天）。`);
+        }
+        return;
+      }
+    }
+
     // 点击后触发 AI 全局重构，先显示 loading
     setIsRewriting(true);
     setResumeContent('');
@@ -663,7 +676,11 @@ const App: React.FC = () => {
           },
           onError: (errorMsg) => {
             console.error('Rewrite error:', errorMsg);
-            setError(`重构失败：${errorMsg}`);
+            if (errorMsg.includes('LIMIT_EXCEEDED') || errorMsg.includes('UNAUTHORIZED')) {
+              setUsageLimitError('使用次数已达上限，升级 VIP 解锁更多使用次数！');
+            } else {
+              setError(`重构失败：${errorMsg}`);
+            }
             setIsRewriting(false);
           }
         },
@@ -672,7 +689,11 @@ const App: React.FC = () => {
       );
     } catch (err: any) {
       setIsRewriting(false);
-      setError(`重构失败：${err.message || '未知错误'}`);
+      if (err.message?.includes('LIMIT_EXCEEDED') || err.message?.includes('UNAUTHORIZED')) {
+        setUsageLimitError('使用次数已达上限，升级 VIP 解锁更多使用次数！');
+      } else {
+        setError(`重构失败：${err.message || '未知错误'}`);
+      }
     }
   };
 
@@ -1159,7 +1180,8 @@ const App: React.FC = () => {
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2000);
     } catch (err: any) {
-      setError(err.message || '保存失败');
+      console.error('保存简历失败:', err);
+      alert(`保存失败：${err.message || '未知错误，请重试'}`);
     } finally {
       setIsSavingResume(false);
     }
@@ -1924,6 +1946,12 @@ const App: React.FC = () => {
                   修改输入
                 </button>
               </div>
+              {error && (
+                <div className="mx-6 md:mx-8 mb-4 p-3.5 bg-red-50 border border-red-100 rounded-md flex items-start gap-2.5">
+                  <AlertCircle size={15} className="text-red-500 mt-0.5 shrink-0" />
+                  <p className="text-[12px] text-red-600 leading-relaxed">{error}</p>
+                </div>
+              )}
               <div className="p-6 md:p-8 overflow-y-auto max-h-[calc(100vh-260px)] custom-scrollbar">
                 {diagnosisContent ? (
                   <div className="prose prose-zinc max-w-none">
