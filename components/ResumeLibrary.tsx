@@ -4,39 +4,36 @@ import {
   getSavedResumes, 
   deleteSavedResume, 
   duplicateSavedResume, 
-  toggleFavorite 
+  toggleFavorite,
+  updateSavedResume 
 } from '../services/resumeService';
-import { VIP_WHITELIST_EMAILS } from '../services/authService';
 import type { SavedResume } from '../types';
 import { 
   FileText, Star, Copy, Trash2, Edit3, Plus, 
   Loader2, ArrowLeft, Search, MoreHorizontal,
-  Clock, Briefcase, Crown, X
+  Clock, Briefcase, X, Type
 } from 'lucide-react';
 
 interface ResumeLibraryProps {
   onBack: () => void;
   onOpenResume: (resume: SavedResume) => void;
   onNewResume: () => void;
-  onShowVIPModal: () => void;
 }
 
 const ResumeLibrary: React.FC<ResumeLibraryProps> = ({ 
   onBack, 
   onOpenResume, 
   onNewResume,
-  onShowVIPModal 
 }) => {
-  const { user, profile } = useAuth();
+  const { user } = useAuth();
   const [resumes, setResumes] = useState<SavedResume[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-
-  const isWhitelist = user?.email ? VIP_WHITELIST_EMAILS.includes(user.email.toLowerCase()) : false;
-  const isVIP = profile?.membership_type === 'vip' || profile?.membership_type === 'pro' || isWhitelist;
+  const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
+  const [editingTitleValue, setEditingTitleValue] = useState('');
 
   const loadResumes = useCallback(async () => {
     if (!user) return;
@@ -84,6 +81,26 @@ const ResumeLibrary: React.FC<ResumeLibraryProps> = ({
     setActionLoading(null);
   };
 
+  const handleStartRename = (resume: SavedResume) => {
+    setEditingTitleId(resume.id);
+    setEditingTitleValue(resume.title);
+    setActiveMenu(null);
+  };
+
+  const handleFinishRename = async (resumeId: string) => {
+    const trimmed = editingTitleValue.trim();
+    if (!trimmed) {
+      setEditingTitleId(null);
+      return;
+    }
+    const original = resumes.find(r => r.id === resumeId);
+    if (original && trimmed !== original.title) {
+      await updateSavedResume(resumeId, { title: trimmed });
+      setResumes(prev => prev.map(r => r.id === resumeId ? { ...r, title: trimmed } : r));
+    }
+    setEditingTitleId(null);
+  };
+
   const formatTime = (dateStr: string) => {
     const date = new Date(dateStr);
     const now = new Date();
@@ -105,48 +122,6 @@ const ResumeLibrary: React.FC<ResumeLibraryProps> = ({
         (r.job_description && r.job_description.toLowerCase().includes(searchQuery.toLowerCase()))
       )
     : resumes;
-
-  // 非 VIP 用户显示升级提示
-  if (!isVIP) {
-    return (
-      <div className="w-full max-w-3xl mx-auto">
-        <div className="flex items-center gap-3 mb-6">
-          <button onClick={onBack} className="p-2 hover:bg-zinc-100 rounded-md transition-colors text-zinc-500">
-            <ArrowLeft size={18} />
-          </button>
-          <h2 className="font-display font-semibold text-[18px] text-zinc-900">我的简历库</h2>
-        </div>
-
-        <div className="border border-zinc-200 rounded-xl bg-white p-12 text-center">
-          <div className="w-16 h-16 bg-zinc-100 rounded-2xl flex items-center justify-center mx-auto mb-5">
-            <Crown size={28} className="text-zinc-400" />
-          </div>
-          <h3 className="text-[18px] font-semibold text-zinc-900 mb-2">简历库为 VIP 专属功能</h3>
-          <p className="text-[14px] text-zinc-500 mb-2 max-w-md mx-auto leading-relaxed">
-            升级 VIP 即可保存和管理多版本简历，支持随时编辑和二次修改，轻松应对多个岗位申请。
-          </p>
-          <ul className="text-[13px] text-zinc-500 mb-8 space-y-1.5">
-            <li className="flex items-center justify-center gap-2">
-              <FileText size={13} className="text-zinc-400" /> 不限数量保存简历版本
-            </li>
-            <li className="flex items-center justify-center gap-2">
-              <Edit3 size={13} className="text-zinc-400" /> 随时打开编辑、二次修改
-            </li>
-            <li className="flex items-center justify-center gap-2">
-              <Copy size={13} className="text-zinc-400" /> 一键复制副本，微调投不同岗位
-            </li>
-          </ul>
-          <button 
-            onClick={onShowVIPModal}
-            className="px-6 py-2.5 bg-zinc-900 hover:bg-zinc-800 text-white rounded-lg text-[14px] font-medium transition-colors inline-flex items-center gap-2"
-          >
-            <Crown size={15} />
-            升级 VIP
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="w-full max-w-4xl mx-auto">
@@ -230,7 +205,7 @@ const ResumeLibrary: React.FC<ResumeLibraryProps> = ({
             >
               {/* 卡片主体 - 可点击 */}
               <button
-                onClick={() => onOpenResume(resume)}
+                onClick={() => editingTitleId !== resume.id && onOpenResume(resume)}
                 className="w-full text-left p-5 pb-3"
               >
                 <div className="flex items-start justify-between mb-3">
@@ -239,9 +214,28 @@ const ResumeLibrary: React.FC<ResumeLibraryProps> = ({
                       {resume.is_favorited && (
                         <Star size={12} className="text-amber-500 fill-amber-500 shrink-0" />
                       )}
-                      <h3 className="font-medium text-[14px] text-zinc-900 truncate">
-                        {resume.title}
-                      </h3>
+                      {editingTitleId === resume.id ? (
+                        <input
+                          autoFocus
+                          value={editingTitleValue}
+                          onChange={e => setEditingTitleValue(e.target.value)}
+                          onBlur={() => handleFinishRename(resume.id)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') handleFinishRename(resume.id);
+                            if (e.key === 'Escape') setEditingTitleId(null);
+                          }}
+                          onClick={e => e.stopPropagation()}
+                          className="font-medium text-[14px] text-zinc-900 w-full bg-zinc-50 border border-zinc-300 rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-zinc-400"
+                        />
+                      ) : (
+                        <h3 
+                          className="font-medium text-[14px] text-zinc-900 truncate cursor-text hover:text-zinc-600"
+                          onClick={e => { e.stopPropagation(); handleStartRename(resume); }}
+                          title="点击重命名"
+                        >
+                          {resume.title}
+                        </h3>
+                      )}
                     </div>
                     {resume.job_description && (
                       <p className="text-[12px] text-zinc-400 truncate flex items-center gap-1">
@@ -315,6 +309,12 @@ const ResumeLibrary: React.FC<ResumeLibraryProps> = ({
                           className="w-full px-3 py-2 text-left text-[12px] text-zinc-700 hover:bg-zinc-50 flex items-center gap-2 transition-colors"
                         >
                           <Edit3 size={12} /> 编辑简历
+                        </button>
+                        <button
+                          onClick={() => handleStartRename(resume)}
+                          className="w-full px-3 py-2 text-left text-[12px] text-zinc-700 hover:bg-zinc-50 flex items-center gap-2 transition-colors"
+                        >
+                          <Type size={12} /> 重命名
                         </button>
                         <button
                           onClick={() => handleDuplicate(resume)}

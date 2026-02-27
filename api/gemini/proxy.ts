@@ -1,32 +1,304 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { createClient } from '@supabase/supabase-js';
 
 /**
- * Vercel Serverless 代理 — 将前端请求转发到 Google Generative AI API
+ * Vercel Serverless 代理 — 安全版
  * 
- * 解决两个问题：
- * 1. 国内用户无需 VPN 即可访问（Vercel 服务器在海外）
- * 2. API Key 不暴露在前端代码中
- * 
- * 支持两种模式：
- * - 普通请求：POST body 中 mode=generate
- * - 流式请求：POST body 中 mode=stream
+ * 安全特性：
+ * 1. JWT 鉴权：验证 Supabase Auth Token，获取用户身份
+ * 2. 服务端使用量校验：检查用户配额，防止前端绕过
+ * 3. IP 级别 Rate Limiting：防止恶意刷接口
+ * 4. VIP 白名单在服务端判断：不暴露给前端
  */
 
-// Vercel Hobby 计划最长 60 秒，Pro 计划最长 300 秒
 export const maxDuration = 60;
 
 const GOOGLE_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
+// ============ 服务端配置 ============
+
+// VIP 白名单（仅服务端可见）
+const VIP_WHITELIST_EMAILS = [
+  'dengrong011@gmail.com',
+];
+
+// 会员配额（服务端权威配置）
+const MEMBERSHIP_LIMITS: Record<string, {
+  total_trial_count: number;
+  interview_trial_count: number;
+  translation_trial_count: number;
+  daily_diagnosis: number;
+  daily_interview: number;
+  monthly_interview: number;
+}> = {
+  free: {
+    total_trial_count: 5,        // 诊断+面试共5次体验
+    interview_trial_count: 1,    // 面试单独限1次
+    translation_trial_count: 3,
+    daily_diagnosis: -1,
+    daily_interview: -1,
+    monthly_interview: -1,
+  },
+  vip: {
+    total_trial_count: -1,
+    interview_trial_count: -1,
+    translation_trial_count: -1,
+    daily_diagnosis: 50,
+    daily_interview: -1,         // 面试不限每日，改为月限
+    monthly_interview: 10,       // 每月10次面试
+  },
+  pro: {
+    total_trial_count: -1,
+    interview_trial_count: -1,
+    translation_trial_count: -1,
+    daily_diagnosis: -1,
+    daily_interview: -1,
+    monthly_interview: -1,
+  },
+};
+
+// 允许的 actionType 白名单（防止前端传入非法值绕过配额）
+const ALLOWED_ACTION_TYPES = new Set(['diagnosis', 'interview', 'translation', 'resume_edit']);
+
+// 允许的模型白名单（防止调用非预期的昂贵模型）
+const ALLOWED_MODELS = new Set([
+  'gemini-3.1-pro-preview',
+  'gemini-3-pro-preview',
+  'gemini-2.0-flash',
+  'gemini-2.0-flash-lite',
+]);
+
+// ============ Rate Limiting（内存级，适合 Serverless 单实例） ============
+
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+const RATE_LIMIT_WINDOW_MS = 60_000; // 1 分钟
+const RATE_LIMIT_MAX = 30; // 每分钟最多 30 次请求
+
+function checkRateLimit(key: string): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(key);
+  
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    return true;
+  }
+  
+  entry.count++;
+  if (entry.count > RATE_LIMIT_MAX) {
+    return false;
+  }
+  return true;
+}
+
+// 定期清理过期条目（防内存泄漏）
+function cleanupRateLimit() {
+  const now = Date.now();
+  for (const [key, entry] of rateLimitMap) {
+    if (now > entry.resetAt) {
+      rateLimitMap.delete(key);
+    }
+  }
+}
+
+// ============ Supabase 服务端客户端 ============
+
+function getSupabaseAdmin() {
+  const url = process.env.VITE_SUPABASE_URL || '';
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+  return createClient(url, serviceKey);
+}
+
+function getSupabaseAuth(jwt: string) {
+  const url = process.env.VITE_SUPABASE_URL || '';
+  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || '';
+  return createClient(url, anonKey, {
+    global: { headers: { Authorization: `Bearer ${jwt}` } }
+  });
+}
+
+// ============ 核心鉴权 + 配额校验 ============
+
+interface AuthResult {
+  userId: string;
+  email: string;
+  membershipType: string;
+}
+
+async function authenticateUser(authHeader: string | undefined): Promise<AuthResult | null> {
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+  
+  const jwt = authHeader.slice(7);
+  if (!jwt) return null;
+
+  try {
+    const supabaseAuth = getSupabaseAuth(jwt);
+    const { data: { user }, error } = await supabaseAuth.auth.getUser();
+    if (error || !user) return null;
+
+    // 用 service role 获取 profile（绕过 RLS 读用户会员状态）
+    const supabaseAdmin = getSupabaseAdmin();
+    const { data: profile } = await supabaseAdmin
+      .from('profiles')
+      .select('membership_type, vip_expires_at')
+      .eq('id', user.id)
+      .single();
+
+    let membershipType = profile?.membership_type || 'free';
+
+    // 检查 VIP 是否过期
+    if (membershipType === 'vip' && profile?.vip_expires_at) {
+      if (new Date(profile.vip_expires_at) < new Date()) {
+        // VIP 过期，降级为 free
+        await supabaseAdmin
+          .from('profiles')
+          .update({ membership_type: 'free', updated_at: new Date().toISOString() })
+          .eq('id', user.id);
+        membershipType = 'free';
+      }
+    }
+
+    // 服务端白名单覆盖
+    if (user.email && VIP_WHITELIST_EMAILS.includes(user.email.toLowerCase())) {
+      membershipType = 'pro'; // 白名单等同 pro
+    }
+
+    return {
+      userId: user.id,
+      email: user.email || '',
+      membershipType,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function checkAndLogUsage(
+  userId: string,
+  membershipType: string,
+  actionType: string
+): Promise<{ allowed: boolean; reason?: string }> {
+  const supabaseAdmin = getSupabaseAdmin();
+  const limits = MEMBERSHIP_LIMITS[membershipType] || MEMBERSHIP_LIMITS.free;
+
+  // Pro 用户无限制
+  if (membershipType === 'pro') {
+    await supabaseAdmin.from('usage_logs').insert({ user_id: userId, action_type: actionType });
+    return { allowed: true };
+  }
+
+  if (membershipType === 'free') {
+    // 免费用户：检查总体验次数（诊断+面试共5次）
+    const normalizedAction = (actionType === 'diagnosis' || actionType === 'interview') 
+      ? actionType : null;
+    
+    if (normalizedAction) {
+      // 先检查面试单独限额（1次）
+      if (normalizedAction === 'interview') {
+        const { count: interviewCount } = await supabaseAdmin
+          .from('usage_logs')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', userId)
+          .eq('action_type', 'interview');
+        
+        if ((interviewCount || 0) >= limits.interview_trial_count) {
+          return { allowed: false, reason: 'INTERVIEW_TRIAL_LIMIT_EXCEEDED' };
+        }
+      }
+
+      // 再检查总体验次数（诊断+面试共5次）
+      const { count } = await supabaseAdmin
+        .from('usage_logs')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .in('action_type', ['diagnosis', 'interview']);
+
+      if ((count || 0) >= limits.total_trial_count) {
+        return { allowed: false, reason: 'TRIAL_LIMIT_EXCEEDED' };
+      }
+    }
+
+    if (actionType === 'translation') {
+      const { count } = await supabaseAdmin
+        .from('usage_logs')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .eq('action_type', 'translation');
+
+      if ((count || 0) >= limits.translation_trial_count) {
+        return { allowed: false, reason: 'TRANSLATION_LIMIT_EXCEEDED' };
+      }
+    }
+  }
+
+  if (membershipType === 'vip') {
+    // VIP 用户：面试按月限制（10次/月），其他按日限制（50次/天）
+    if (actionType === 'interview') {
+      // 月度面试限额
+      const monthlyLimit = limits.monthly_interview;
+      if (monthlyLimit > 0) {
+        const now = new Date();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+        const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999).toISOString();
+        
+        const { count } = await supabaseAdmin
+          .from('usage_logs')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', userId)
+          .eq('action_type', 'interview')
+          .gte('created_at', monthStart)
+          .lte('created_at', monthEnd);
+
+        if ((count || 0) >= monthlyLimit) {
+          return { allowed: false, reason: 'MONTHLY_INTERVIEW_LIMIT_EXCEEDED' };
+        }
+      }
+    } else {
+      // 诊断/翻译/编辑 按日限制
+      const today = new Date().toISOString().split('T')[0];
+      const dailyLimit = limits.daily_diagnosis; // 统一用 daily_diagnosis (50)
+
+      if (dailyLimit > 0) {
+        const { count } = await supabaseAdmin
+          .from('usage_logs')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', userId)
+          .eq('action_type', actionType)
+          .gte('created_at', `${today}T00:00:00.000Z`)
+          .lte('created_at', `${today}T23:59:59.999Z`);
+
+        if ((count || 0) >= dailyLimit) {
+          return { allowed: false, reason: 'DAILY_LIMIT_EXCEEDED' };
+        }
+      }
+    }
+  }
+
+  // 记录使用
+  await supabaseAdmin.from('usage_logs').insert({ user_id: userId, action_type: actionType });
+  return { allowed: true };
+}
+
+// ============ 主处理函数 ============
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS 预检
+  // CORS
+  const allowedOrigins = [
+    'https://offerin.co',
+    'https://www.offerin.co',
+    'http://localhost:5173',
+    'http://localhost:5174',
+  ];
+  const origin = req.headers.origin || '';
+  if (allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
   if (req.method === 'OPTIONS') {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     return res.status(200).end();
   }
 
-  // 只允许 POST
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -36,32 +308,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: 'GEMINI_API_KEY not configured on server' });
   }
 
+  // ---- Rate Limiting (IP 级别) ----
+  cleanupRateLimit();
+  const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || 
+                   req.socket?.remoteAddress || 'unknown';
+  if (!checkRateLimit(clientIp)) {
+    return res.status(429).json({ error: 'RATE_LIMIT_EXCEEDED' });
+  }
+
+  // ---- JWT 鉴权 ----
+  const authUser = await authenticateUser(req.headers.authorization);
+  if (!authUser) {
+    return res.status(401).json({ error: 'UNAUTHORIZED' });
+  }
+
   try {
-    const { model, contents, config, mode } = req.body;
+    const { model, contents, config, mode, actionType } = req.body;
 
     if (!model || !contents) {
       return res.status(400).json({ error: 'Missing required fields: model, contents' });
     }
 
-    // 确保 contents 中每个条目都有 role 字段（REST API 要求）
+    // ---- 模型白名单校验 ----
+    if (!ALLOWED_MODELS.has(model)) {
+      return res.status(400).json({ error: 'INVALID_MODEL' });
+    }
+
+    // ---- 服务端使用量校验 ----
+    // actionType 由前端传入，用于区分操作类型；白名单校验防止绕过配额
+    const normalizedAction = (actionType && ALLOWED_ACTION_TYPES.has(actionType)) ? actionType : 'diagnosis';
+    const usageCheck = await checkAndLogUsage(authUser.userId, authUser.membershipType, normalizedAction);
+    if (!usageCheck.allowed) {
+      return res.status(403).json({ error: usageCheck.reason || 'USAGE_LIMIT_EXCEEDED' });
+    }
+
+    // ---- 转发到 Google API ----
     const normalizedContents = contents.map((item: any) => ({
       role: item.role || 'user',
       parts: item.parts,
     }));
 
-    // 构建 Google API 请求体
-    const requestBody: any = {
-      contents: normalizedContents,
-    };
+    const requestBody: any = { contents: normalizedContents };
 
-    // 处理 config 中的各项配置
     if (config) {
       if (config.systemInstruction) {
         requestBody.systemInstruction = {
           parts: [{ text: config.systemInstruction }]
         };
       }
-      // 构建 generationConfig
       const genConfig: any = {};
       if (config.temperature !== undefined) genConfig.temperature = config.temperature;
       if (config.maxOutputTokens !== undefined) genConfig.maxOutputTokens = config.maxOutputTokens;
@@ -97,23 +391,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (isStream) {
-      // 流式响应：转发 SSE
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
-      res.setHeader('Access-Control-Allow-Origin', '*');
 
-      // 使用 Node.js 兼容的方式读取流
       const body = googleResponse.body;
       if (!body) {
         return res.status(500).json({ error: 'Failed to get response stream' });
       }
 
       try {
-        // Node.js 18+ fetch 返回的 body 是 Web ReadableStream
-        // 使用 for-await 迭代（Node.js 兼容）
         for await (const chunk of body as any) {
-          // chunk 可能是 Buffer 或 Uint8Array
           const text = typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf-8');
           res.write(text);
         }
@@ -123,7 +411,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         res.end();
       }
     } else {
-      // 普通响应
       const data = await googleResponse.json();
       return res.status(200).json(data);
     }

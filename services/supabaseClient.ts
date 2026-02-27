@@ -51,23 +51,27 @@ export interface UsageLog {
 // 会员权限配置
 export const MEMBERSHIP_LIMITS = {
   free: {
-    // 免费用户：总共3次体验（诊断+面试共享），不是每天
-    total_trial_count: 3,          // 诊断+面试共3次体验机会
+    // 免费用户：诊断+面试共5次体验，但面试单独限1次
+    total_trial_count: 5,          // 诊断+面试共5次体验机会
+    interview_trial_count: 1,      // 面试单独限1次
     translation_trial_count: 3,    // 英文翻译共3次体验机会
     daily_diagnosis: -1,           // 不限制每日，只限制总次数
     daily_interview: -1,           // 不限制每日，只限制总次数
     daily_total: -1,               // 不限制每日
+    monthly_interview: -1,         // 免费用户不按月限制
     can_download: false,           // 需单次付费 ¥4.9
-    can_export_interview: false,   // 不支持面试记录导出
+    can_export_interview: false,   // 需单次付费 ¥4.9
     can_translate: true,           // 可以翻译，但有次数限制
     features: ['basic_diagnosis', 'basic_interview'],
   },
   vip: {
     total_trial_count: -1,         // VIP 不限制总次数
+    interview_trial_count: -1,     // VIP 不限制体验
     translation_trial_count: -1,   // VIP 翻译无限
     daily_diagnosis: 50,           // VIP 每日50次诊断上限
-    daily_interview: 50,           // VIP 每日50次面试上限
+    daily_interview: -1,           // VIP 面试不限每日，改为月限
     daily_total: 50,               // VIP 每日总操作上限
+    monthly_interview: 10,         // VIP 每月10次面试
     can_download: true,            // VIP 可以无限下载
     can_export_interview: true,    // VIP 支持面试记录导出
     can_translate: true,           // VIP 翻译无限
@@ -75,10 +79,12 @@ export const MEMBERSHIP_LIMITS = {
   },
   pro: {
     total_trial_count: -1,         // Pro 无限制
+    interview_trial_count: -1,
     translation_trial_count: -1,   // Pro 翻译无限
     daily_diagnosis: -1,           // Pro 无限制
     daily_interview: -1,
     daily_total: -1,
+    monthly_interview: -1,         // Pro 无限制
     can_download: true,
     can_export_interview: true,
     can_translate: true,
@@ -93,5 +99,11 @@ export const SINGLE_PURCHASE_PRODUCTS = {
     name: '简历下载',
     price: 490,              // ¥4.9
     description: '下载优化后的简历 PDF',
+  },
+  interview_export: {
+    id: 'interview_export',
+    name: '面试记录保存',
+    price: 490,              // ¥4.9
+    description: '保存当前面试记录',
   },
 };

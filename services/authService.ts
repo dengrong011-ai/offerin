@@ -109,25 +109,17 @@ export const updateUserProfile = async (userId: string, updates: Partial<UserPro
 
 // ============ 使用限制相关 ============
 
-// VIP 白名单邮箱（无限使用）
-export const VIP_WHITELIST_EMAILS = [
-  'dengrong011@gmail.com',
-];
+// VIP 白名单已移至服务端 (api/gemini/proxy.ts)
+// 前端不再暴露白名单邮箱
 
 // 检查用户是否可以执行操作（诊断/面试）
-// 免费用户：共3次体验机会（诊断+面试共享）
-// VIP用户：每日50次
+// 注意：这是前端预检查（用于 UI 提示），真正的权威校验在服务端 proxy 层
 export const checkUsageLimit = async (
   userId: string, 
   actionType: 'diagnosis' | 'interview' | 'resume_edit',
-  userEmail?: string
+  _userEmail?: string
 ): Promise<{ allowed: boolean; remaining: number; limit: number; isTrialLimit?: boolean }> => {
   try {
-    // 白名单邮箱无限使用
-    if (userEmail && VIP_WHITELIST_EMAILS.includes(userEmail.toLowerCase())) {
-      return { allowed: true, remaining: -1, limit: -1 };
-    }
-
     // 获取用户资料
     const profile = await getUserProfile(userId);
     if (!profile) {
@@ -137,11 +129,27 @@ export const checkUsageLimit = async (
     const membership = profile.membership_type;
     const limits = MEMBERSHIP_LIMITS[membership];
     
-    // 免费用户：检查总体验次数（诊断+面试共享3次）
+    // 免费用户：检查总体验次数（诊断+面试共5次）+ 面试单独限1次
     if (membership === 'free') {
       const totalTrialLimit = limits.total_trial_count;
       
-      // 统计总使用次数（诊断+面试）
+      // 面试单独限额检查
+      if (actionType === 'interview') {
+        const { count: interviewCount, error: intError } = await supabase
+          .from('usage_logs')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', userId)
+          .eq('action_type', 'interview');
+        
+        if (intError) throw intError;
+        const interviewUsed = interviewCount || 0;
+        const interviewLimit = limits.interview_trial_count;
+        if (interviewUsed >= interviewLimit) {
+          return { allowed: false, remaining: 0, limit: interviewLimit, isTrialLimit: true };
+        }
+      }
+
+      // 总体验次数（诊断+面试）
       const { count, error } = await supabase
         .from('usage_logs')
         .select('*', { count: 'exact', head: true })
@@ -157,11 +165,35 @@ export const checkUsageLimit = async (
         allowed: remaining > 0, 
         remaining: Math.max(0, remaining), 
         limit: totalTrialLimit,
-        isTrialLimit: true  // 标记这是体验次数限制
+        isTrialLimit: true
       };
     }
     
-    // VIP/Pro 用户：检查每日限制
+    // VIP 用户：面试按月限制，其他按日限制
+    if (membership === 'vip' && actionType === 'interview') {
+      const monthlyLimit = limits.monthly_interview;
+      if (monthlyLimit > 0) {
+        const now = new Date();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+        const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999).toISOString();
+        
+        const { count, error } = await supabase
+          .from('usage_logs')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', userId)
+          .eq('action_type', 'interview')
+          .gte('created_at', monthStart)
+          .lte('created_at', monthEnd);
+
+        if (error) throw error;
+        const usedCount = count || 0;
+        const remaining = monthlyLimit - usedCount;
+        return { allowed: remaining > 0, remaining: Math.max(0, remaining), limit: monthlyLimit };
+      }
+      return { allowed: true, remaining: -1, limit: -1 };
+    }
+
+    // VIP/Pro 用户：检查每日限制（诊断等）
     const dailyLimit = actionType === 'diagnosis' 
       ? limits.daily_diagnosis 
       : limits.daily_interview;
@@ -201,14 +233,9 @@ export const checkUsageLimit = async (
 // VIP用户：无限
 export const checkTranslationLimit = async (
   userId: string,
-  userEmail?: string
+  _userEmail?: string
 ): Promise<{ allowed: boolean; remaining: number; limit: number }> => {
   try {
-    // 白名单邮箱无限使用
-    if (userEmail && VIP_WHITELIST_EMAILS.includes(userEmail.toLowerCase())) {
-      return { allowed: true, remaining: -1, limit: -1 };
-    }
-
     // 获取用户资料
     const profile = await getUserProfile(userId);
     if (!profile) {
@@ -247,18 +274,13 @@ export const checkTranslationLimit = async (
 };
 
 // 检查面试记录导出权限
-// 免费用户：不支持
+// 免费用户：需单次付费 ¥4.9
 // VIP用户：支持
 export const checkInterviewExportPermission = async (
   userId: string,
-  userEmail?: string
-): Promise<{ allowed: boolean; reason?: string }> => {
+  _userEmail?: string
+): Promise<{ allowed: boolean; reason?: string; needPurchase?: boolean }> => {
   try {
-    // 白名单邮箱无限使用
-    if (userEmail && VIP_WHITELIST_EMAILS.includes(userEmail.toLowerCase())) {
-      return { allowed: true };
-    }
-
     // 获取用户资料
     const profile = await getUserProfile(userId);
     if (!profile) {
@@ -272,7 +294,7 @@ export const checkInterviewExportPermission = async (
       return { allowed: true };
     }
 
-    return { allowed: false, reason: '面试记录导出为 VIP 专属功能，请升级会员' };
+    return { allowed: false, reason: '面试记录保存需付费 ¥4.9/次，或升级 VIP 免费保存', needPurchase: true };
   } catch (error) {
     console.error('检查面试导出权限失败:', error);
     return { allowed: false, reason: '检查权限失败' };

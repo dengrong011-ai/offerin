@@ -22,13 +22,13 @@ export const VIP_PLANS: VIPPlan[] = [
   {
     id: 'vip_monthly',
     name: '月度会员',
-    price: 1990,           // ¥19.9
-    originalPrice: 2990,   // 原价 ¥29.9
+    price: 2990,           // ¥29.9
+    originalPrice: 3990,   // 原价 ¥39.9
     duration: 30,
     description: '求职黄金期必备',
     features: [
       '简历诊断 50次/天',
-      '模拟面试 50次/天',
+      '模拟面试 10次/月',
       'PDF 导出无限',
       '英文简历翻译无限',
       '面试记录导出',
@@ -52,6 +52,12 @@ export const SINGLE_PRODUCTS: SingleProduct[] = [
     name: '简历下载',
     price: 490,            // ¥4.9
     description: '下载当前优化后的简历 PDF',
+  },
+  {
+    id: 'interview_export',
+    name: '面试记录保存',
+    price: 490,            // ¥4.9
+    description: '保存当前面试记录',
   },
 ];
 

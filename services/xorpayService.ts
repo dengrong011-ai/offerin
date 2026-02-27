@@ -7,16 +7,12 @@ import { supabase, isSupabaseConfigured } from './supabaseClient';
 
 // ============ XorPay 配置 ============
 
-// 从环境变量获取配置（在 .env 文件中设置）
+// APP_SECRET 已移至服务端，前端不再持有支付密钥
 const XORPAY_APP_ID = import.meta.env.VITE_XORPAY_APP_ID || '';
-const XORPAY_APP_SECRET = import.meta.env.VITE_XORPAY_APP_SECRET || '';
-
-// API 端点
-const XORPAY_API_BASE = 'https://xorpay.com/api';
 
 // 检查 XorPay 是否已配置
 export const isXorPayConfigured = (): boolean => {
-  return !!(XORPAY_APP_ID && XORPAY_APP_SECRET);
+  return !!XORPAY_APP_ID;
 };
 
 // ============ 签名算法 ============
@@ -217,7 +213,7 @@ export const generateSign = (...params: string[]): string => {
 
 // ============ 产品配置 ============
 
-export type XorPayProductType = 'vip_monthly' | 'resume_download';
+export type XorPayProductType = 'vip_monthly' | 'resume_download' | 'interview_export';
 
 export interface XorPayProduct {
   id: XorPayProductType;
@@ -231,9 +227,9 @@ export const XORPAY_PRODUCTS: Record<XorPayProductType, XorPayProduct> = {
   vip_monthly: {
     id: 'vip_monthly',
     name: 'VIP月度会员',
-    price: '19.90',
-    priceInCents: 1990,
-    description: '无限简历诊断、模拟面试、PDF导出',
+    price: '29.90',
+    priceInCents: 2990,
+    description: '无限简历诊断、模拟面试10次/月、PDF导出',
   },
   resume_download: {
     id: 'resume_download',
@@ -241,6 +237,13 @@ export const XORPAY_PRODUCTS: Record<XorPayProductType, XorPayProduct> = {
     price: '4.90',
     priceInCents: 490,
     description: '下载当前优化后的简历PDF',
+  },
+  interview_export: {
+    id: 'interview_export',
+    name: '面试记录保存',
+    price: '4.90',
+    priceInCents: 490,
+    description: '保存当前面试记录',
   },
 };
 
@@ -400,13 +403,18 @@ export const queryXorPayOrderStatus = async (
   }
 
   try {
-    // 使用商户订单号查询（方式2）
-    const sign = generateSign(orderId, XORPAY_APP_SECRET);
-    
-    const url = `${XORPAY_API_BASE}/query2/${XORPAY_APP_ID}?order_id=${encodeURIComponent(orderId)}&sign=${sign}`;
-    const response = await fetch(url);
-    const result = await response.json();
+    // 通过服务端 API 查询，避免前端暴露 APP_SECRET
+    const response = await fetch('/api/xorpay/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId }),
+    });
 
+    if (!response.ok) {
+      throw new Error(`查询失败: ${response.status}`);
+    }
+
+    const result = await response.json();
     return {
       success: true,
       status: result.status as XorPayOrderStatus,
@@ -418,19 +426,9 @@ export const queryXorPayOrderStatus = async (
 };
 
 /**
- * 验证 XorPay 回调签名
+ * 验证 XorPay 回调签名 — 已移至服务端 (api/xorpay/notify.ts)
+ * 前端不再持有 APP_SECRET，无法在客户端验证签名
  */
-export const verifyXorPayNotify = (
-  aoid: string,
-  orderId: string,
-  payPrice: string,
-  payTime: string,
-  sign: string
-): boolean => {
-  // 签名规则：aoid + order_id + pay_price + pay_time + app_secret
-  const expectedSign = generateSign(aoid, orderId, payPrice, payTime, XORPAY_APP_SECRET);
-  return sign === expectedSign;
-};
 
 /**
  * 处理支付成功后的业务逻辑

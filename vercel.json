@@ -27,6 +27,10 @@
       "dest": "/api/xorpay/notify.ts"
     },
     {
+      "src": "/api/xorpay/query",
+      "dest": "/api/xorpay/query.ts"
+    },
+    {
       "src": "/api/xunhupay/(.*)",
       "dest": "/api/xunhupay/$1.ts"
     },

@@ -12,19 +12,24 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 // XorPay 配置
-const XORPAY_APP_ID = process.env.VITE_XORPAY_APP_ID || '';
-const XORPAY_APP_SECRET = process.env.VITE_XORPAY_APP_SECRET || '';
+const XORPAY_APP_ID = (process.env.XORPAY_APP_ID || process.env.VITE_XORPAY_APP_ID || '').trim();
+const XORPAY_APP_SECRET = process.env.XORPAY_APP_SECRET || process.env.VITE_XORPAY_APP_SECRET || '';
 const XORPAY_API_BASE = 'https://xorpay.com/api';
 
 // 产品配置
 const PRODUCTS: Record<string, { name: string; price: string; priceInCents: number }> = {
   vip_monthly: {
     name: 'VIP月度会员',
-    price: '19.90',
-    priceInCents: 1990,
+    price: '29.90',
+    priceInCents: 2990,
   },
   resume_download: {
     name: '简历下载',
+    price: '4.90',
+    priceInCents: 490,
+  },
+  interview_export: {
+    name: '面试记录保存',
     price: '4.90',
     priceInCents: 490,
   },
@@ -217,10 +222,14 @@ const getErrorMessage = (status: string): string => {
 };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // 设置 CORS 头
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  // CORS: 限制为项目域名
+  const allowedOrigins = ['https://offerin.co', 'https://www.offerin.co', 'http://localhost:5173', 'http://localhost:5174'];
+  const reqOrigin = req.headers.origin || '';
+  if (allowedOrigins.includes(reqOrigin)) {
+    res.setHeader('Access-Control-Allow-Origin', reqOrigin);
+  }
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   // 处理预检请求
   if (req.method === 'OPTIONS') {

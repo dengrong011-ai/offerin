@@ -13,7 +13,7 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 // XorPay 配置
-const XORPAY_APP_SECRET = process.env.VITE_XORPAY_APP_SECRET || '';
+const XORPAY_APP_SECRET = process.env.XORPAY_APP_SECRET || process.env.VITE_XORPAY_APP_SECRET || '';
 
 /**
  * MD5 签名算法（与前端一致）

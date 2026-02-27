@@ -38,7 +38,7 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
 
   const product = XORPAY_PRODUCTS['vip_monthly'];
-  const originalPrice = 2990; // 原价 29.9
+  const originalPrice = 3990; // 原价 39.9
   const discount = Math.round((1 - product.priceInCents / originalPrice) * 100);
 
   // 清理定时器
@@ -345,7 +345,7 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
                 <div className="space-y-2.5">
                   {[
                     { icon: FileText, text: '简历诊断 50次/天', desc: '智能分析，精准优化' },
-                    { icon: MessageSquare, text: '模拟面试 50次/天', desc: '多轮面试，全真模拟' },
+                    { icon: MessageSquare, text: '模拟面试 10次/月', desc: '多轮面试，全真模拟' },
                     { icon: Download, text: 'PDF 导出无限', desc: '一键下载，随时使用' },
                     { icon: Globe, text: '英文简历翻译无限', desc: '专业翻译，助力海外求职' },
                     { icon: Crown, text: '面试记录导出', desc: '保存复盘，持续提升' },
@@ -368,7 +368,7 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
               <div className="bg-zinc-100 rounded-lg p-3 mb-5">
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-zinc-500">免费版</span>
-                  <span className="text-zinc-400">共3次体验 · PDF单次付费</span>
+                  <span className="text-zinc-400">共5次体验(面试1次) · PDF/面试记录 ¥4.9/次</span>
                 </div>
               </div>
 

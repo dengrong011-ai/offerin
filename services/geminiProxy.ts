@@ -4,31 +4,49 @@
  * 通过 Vercel Serverless Function 代理访问 Google Gemini API，
  * 解决国内用户无法直接访问 Google API 的问题，同时避免 API Key 暴露在前端。
  * 
- * 使用方式：
- * - 部署到 Vercel 后，自动走 /api/gemini/proxy 代理（服务端持有 API Key）
- * - 本地开发时（localhost），仍走 @google/genai SDK 直连（需要 VPN）
+ * 安全特性：
+ * - 生产环境所有请求携带 Supabase Auth JWT Token
+ * - 服务端验证用户身份和使用配额
+ * - 传递 actionType 用于服务端使用量计数
  */
 
 import { GoogleGenAI } from "@google/genai";
+import { supabase } from "./supabaseClient";
 
 // 判断是否应该使用代理
-// 本地开发时直连（开发者通常有 VPN），生产环境走代理
 const shouldUseProxy = (): boolean => {
   if (typeof window === 'undefined') return false;
   const hostname = window.location.hostname;
-  // localhost / 127.0.0.1 视为本地开发环境，直连
   return hostname !== 'localhost' && hostname !== '127.0.0.1';
 };
 
-// 获取代理 API 的 base URL
-const getProxyUrl = (): string => {
-  return '/api/gemini/proxy';
-};
+const getProxyUrl = (): string => '/api/gemini/proxy';
 
-// 获取本地开发用的 API Key
 const getLocalApiKey = (): string => {
   return process.env.API_KEY || process.env.GEMINI_API_KEY || '';
 };
+
+// 获取当前用户的 auth token（用于服务端鉴权）
+async function getAuthToken(): Promise<string> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token || '';
+  } catch {
+    return '';
+  }
+}
+
+// 构建包含鉴权信息的请求头
+async function buildAuthHeaders(): Promise<Record<string, string>> {
+  const token = await getAuthToken();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+}
 
 /**
  * 通过代理发起流式请求，返回 AsyncIterable 兼容格式
@@ -37,17 +55,36 @@ async function proxyStreamRequest(options: {
   model: string;
   contents: any[];
   config: any;
+  actionType?: string;
 }): Promise<AsyncIterable<{ text: string }>> {
-  const { model, contents, config } = options;
+  const { model, contents, config, actionType } = options;
+  const headers = await buildAuthHeaders();
 
   const response = await fetch(getProxyUrl(), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, contents, config, mode: 'stream' }),
+    headers,
+    body: JSON.stringify({ model, contents, config, mode: 'stream', actionType: actionType || 'diagnosis' }),
   });
 
   if (!response.ok) {
     const errorData = await response.text();
+    // 解析特定错误码给前端处理
+    try {
+      const errorJson = JSON.parse(errorData);
+      if (errorJson.error === 'UNAUTHORIZED') {
+        throw new Error('UNAUTHORIZED');
+      }
+      if (errorJson.error === 'RATE_LIMIT_EXCEEDED') {
+        throw new Error('RATE_LIMIT_EXCEEDED');
+      }
+      if (errorJson.error?.includes('LIMIT_EXCEEDED')) {
+        throw new Error(errorJson.error);
+      }
+    } catch (e: any) {
+      if (e.message === 'UNAUTHORIZED' || e.message === 'RATE_LIMIT_EXCEEDED' || e.message?.includes('LIMIT_EXCEEDED')) {
+        throw e;
+      }
+    }
     throw new Error(`Proxy API error ${response.status}: ${errorData}`);
   }
 
@@ -56,35 +93,23 @@ async function proxyStreamRequest(options: {
     throw new Error('Failed to get response stream');
   }
 
-  // 将 SSE stream 转为 AsyncIterable<{ text: string }>
-  // Google SSE 格式: "data: {json}\r\n\r\n" 或 "data: {json}\n\n"
   const decoder = new TextDecoder();
-
-  // 先将所有 SSE 文本 chunk 解析出来放入队列
   const textQueue: string[] = [];
   let streamDone = false;
   let buffer = '';
 
   const parseSSEEvents = () => {
-    // 统一换行符，处理 \r\n 和 \n
     buffer = buffer.replace(/\r\n/g, '\n');
-    
-    // 按双换行分割事件
     let eventEnd: number;
     while ((eventEnd = buffer.indexOf('\n\n')) !== -1) {
       const event = buffer.slice(0, eventEnd);
       buffer = buffer.slice(eventEnd + 2);
-      
-      // 提取所有 data: 行并拼接
       const dataLines = event.split('\n')
         .filter(line => line.startsWith('data: '))
         .map(line => line.slice(6));
-      
       if (dataLines.length === 0) continue;
-      
       const jsonStr = dataLines.join('');
       if (jsonStr.trim() === '[DONE]') continue;
-      
       try {
         const parsed = JSON.parse(jsonStr);
         const text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -101,14 +126,12 @@ async function proxyStreamRequest(options: {
     [Symbol.asyncIterator]() {
       return {
         async next(): Promise<IteratorResult<{ text: string }>> {
-          // 如果队列中有数据，直接返回
           while (textQueue.length === 0 && !streamDone) {
             const { done, value } = await reader.read();
             if (done) {
               streamDone = true;
-              // 处理 buffer 中剩余数据
               if (buffer.trim()) {
-                buffer += '\n\n'; // 确保最后一个事件能被解析
+                buffer += '\n\n';
                 parseSSEEvents();
               }
               break;
@@ -116,7 +139,6 @@ async function proxyStreamRequest(options: {
             buffer += decoder.decode(value, { stream: true });
             parseSSEEvents();
           }
-
           if (textQueue.length > 0) {
             return { done: false, value: { text: textQueue.shift()! } };
           }
@@ -134,17 +156,32 @@ async function proxyGenerateRequest(options: {
   model: string;
   contents: any[];
   config: any;
+  actionType?: string;
 }): Promise<{ text: string }> {
-  const { model, contents, config } = options;
+  const { model, contents, config, actionType } = options;
+  const headers = await buildAuthHeaders();
 
   const response = await fetch(getProxyUrl(), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, contents, config, mode: 'generate' }),
+    headers,
+    body: JSON.stringify({ model, contents, config, mode: 'generate', actionType: actionType || 'diagnosis' }),
   });
 
   if (!response.ok) {
     const errorData = await response.text();
+    try {
+      const errorJson = JSON.parse(errorData);
+      if (errorJson.error === 'UNAUTHORIZED') {
+        throw new Error('UNAUTHORIZED');
+      }
+      if (errorJson.error?.includes('LIMIT_EXCEEDED')) {
+        throw new Error(errorJson.error);
+      }
+    } catch (e: any) {
+      if (e.message === 'UNAUTHORIZED' || e.message?.includes('LIMIT_EXCEEDED')) {
+        throw e;
+      }
+    }
     throw new Error(`Proxy API error ${response.status}: ${errorData}`);
   }
 
@@ -156,11 +193,13 @@ async function proxyGenerateRequest(options: {
 /**
  * 统一的 AI 客户端 — 自动选择代理或直连
  * 
- * 提供与 GoogleGenAI SDK 兼容的接口：
- * - generateContentStream: 流式生成
- * - generateContent: 普通生成
+ * actionType 参数用于服务端使用量计数：
+ * - 'diagnosis': 简历诊断
+ * - 'interview': 面试模拟
+ * - 'translation': 翻译
+ * - 'resume_edit': 局部重写/精简
  */
-export function createAIClient() {
+export function createAIClient(actionType?: string) {
   const useProxy = shouldUseProxy();
 
   if (!useProxy) {
@@ -177,13 +216,13 @@ export function createAIClient() {
     };
   }
 
-  // 生产环境：通过代理
+  // 生产环境：通过代理（携带 JWT + actionType）
   return {
     generateContentStream: async (options: { model: string; contents: any[]; config: any }) => {
-      return proxyStreamRequest(options);
+      return proxyStreamRequest({ ...options, actionType });
     },
     generateContent: async (options: { model: string; contents: any[]; config: any }) => {
-      return proxyGenerateRequest(options);
+      return proxyGenerateRequest({ ...options, actionType });
     },
   };
 }

@@ -88,7 +88,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           }
           console.warn('获取用户 profile 失败，已达最大重试次数');
         };
-        fetchProfileWithRetry(session.user.id);
+        fetchProfileWithRetry(session.user.id).catch(err => {
+          console.error('获取用户 profile 异常:', err);
+        });
       } else {
         setProfile(null);
       }

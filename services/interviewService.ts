@@ -186,7 +186,7 @@ export const runInterview = async (
   abortSignal?: AbortSignal,
   supplementInfo?: InterviewSupplementInfo
 ) => {
-  const client = createAIClient();
+  const client = createAIClient('interview');
   const conversationHistory: Array<{role: string, content: string}> = [];
   const { totalRounds, interviewerRole } = settings;
 
@@ -242,7 +242,7 @@ export const runInterview = async (
       let interviewerResponse = '';
       try {
         const stream = await generateContentStreamWithRetry(client, {
-          model: "gemini-3-pro-preview",
+          model: "gemini-3.1-pro-preview",
           contents: [{ parts: [{ text: "请根据当前面试阶段，提出你的问题。" }] }],
           config: {
             systemInstruction: interviewerPrompt,
@@ -296,7 +296,7 @@ export const runInterview = async (
       let intervieweeResponse = '';
       try {
         const stream = await generateContentStreamWithRetry(client, {
-          model: "gemini-3-pro-preview",
+          model: "gemini-3.1-pro-preview",
           contents: [{ parts: [{ text: `面试官的问题：\n${interviewerResponse}\n\n请专业地回答这个问题。` }] }],
           config: {
             systemInstruction: intervieweePrompt,
@@ -351,7 +351,7 @@ export const runInterview = async (
     let summaryContent = '';
     try {
       const stream = await generateContentStreamWithRetry(client, {
-        model: "gemini-3-pro-preview",
+        model: "gemini-3.1-pro-preview",
         contents: [{ parts: [{ text: summaryPrompt }] }],
         config: {
           systemInstruction: `你是 ${roleConfig.title}，刚刚完成了对候选人的面试。现在你需要以第一人称（"我"）的视角撰写面试评价，就像你在公司内部面试系统中填写面评一样。语气应该是专业、直接的，体现你作为 ${roleConfig.name} 面试官的判断和洞察。`,
@@ -416,7 +416,7 @@ export const generateFirstQuestion = async (
   abortSignal?: AbortSignal,
   supplementInfo?: InterviewSupplementInfo
 ): Promise<InteractiveInterviewState | null> => {
-  const client = createAIClient();
+  const client = createAIClient('interview');
   const { totalRounds, interviewerRole } = settings;
   const conversationHistory: Array<{role: string, content: string}> = [];
   const currentRound = 1;
@@ -460,7 +460,7 @@ export const generateFirstQuestion = async (
   let interviewerResponse = '';
   try {
     const stream = await generateContentStreamWithRetry(client, {
-      model: "gemini-3-pro-preview",
+      model: "gemini-3.1-pro-preview",
       contents: [{ parts: [{ text: "请根据当前面试阶段，提出你的问题。" }] }],
       config: {
         systemInstruction: interviewerPrompt,
@@ -517,7 +517,7 @@ export const processUserAnswer = async (
   callbacks: InterviewCallbacks,
   abortSignal?: AbortSignal
 ): Promise<InteractiveInterviewState | null> => {
-  const client = createAIClient();
+  const client = createAIClient('interview');
   const { resume, jobDescription, settings, conversationHistory, currentRound, supplementInfo } = state;
   const { totalRounds, interviewerRole } = settings;
 
@@ -548,7 +548,7 @@ export const processUserAnswer = async (
     let summaryContent = '';
     try {
       const stream = await generateContentStreamWithRetry(client, {
-        model: "gemini-3-pro-preview",
+        model: "gemini-3.1-pro-preview",
         contents: [{ parts: [{ text: summaryPrompt }] }],
         config: {
           systemInstruction: `你是 ${roleConfig.title}，刚刚完成了对候选人的面试。现在你需要以第一人称（"我"）的视角撰写面试评价，就像你在公司内部面试系统中填写面评一样。语气应该是专业、直接的，体现你作为 ${roleConfig.name} 面试官的判断和洞察。注意：面试者的回答是真实用户输入的，请基于其实际表现进行评估。`,
@@ -643,7 +643,7 @@ export const processUserAnswer = async (
   let interviewerResponse = '';
   try {
     const stream = await generateContentStreamWithRetry(client, {
-      model: "gemini-3-pro-preview",
+      model: "gemini-3.1-pro-preview",
       contents: [{ parts: [{ text: "请对候选人的回答进行点评，并提出下一个问题。" }] }],
       config: {
         systemInstruction: feedbackPrompt,

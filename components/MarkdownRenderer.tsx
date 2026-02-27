@@ -53,28 +53,75 @@ const MarkdownRenderer: React.FC<Props> = ({
   const formatResumeText = (text: string) => {
     let html = text.replace(/^\s+/, '');
 
-    const headerRegex = /^# (.*?)\n+> (.*?)(?:\n!\[.*?\]\((.*?)\))?$/m;
-    const match = headerRegex.exec(html);
+    // === 第一步：全局提取照片 URL（不管在哪一行），然后从原文移除 ===
+    // 支持: ![photo](url)、![ ](url)、] 和 ( 之间有换行、URL内部有换行
+    let imgUrl = '';
+    // 匹配 ![photo](url)，URL 内部允许换行但不含 )
+    const photoRegex = /!\[(?:photo|avatar|头像|照片)?\]\s*\(\s*([^)]*?)\s*\)/;
+    const photoMatch = html.match(photoRegex);
+    if (photoMatch) {
+      const rawUrl = photoMatch[1].replace(/\s+/g, '');
+      // 只有有效的 http/https URL 才使用，否则丢弃
+      if (/^https?:\/\/.+/i.test(rawUrl)) {
+        imgUrl = rawUrl;
+      }
+      // 不管URL是否有效，都从原文移除照片markdown（包括前后空行）
+      html = html.replace(/\n*!\[(?:photo|avatar|头像|照片)?\]\s*\(\s*[^)]*?\s*\)\n*/g, '\n');
+      html = html.replace(/\n{3,}/g, '\n\n');
+    }
 
-    if (match) {
-      const name = match[1];
-      const contact = match[2];
-      const imgUrl = match[3];
+    // === 第二步：收集头部区域的所有 > 行（# 姓名之后、第一个 ## 之前的所有 > 行）===
+    // 先找到 # 姓名
+    const nameMatch = html.match(/^# (.*?)$/m);
+    let headerName = '';
+    let contactLines: string[] = [];
+    let headerMatchStr = '';
 
+    let summaryLines: string[] = [];
+
+    if (nameMatch) {
+      headerName = nameMatch[1];
+      // 获取从 # 姓名行到第一个 ## 或 ### 之间的所有文本
+      const nameIdx = nameMatch.index ?? 0;
+      const afterName = html.slice(nameIdx + nameMatch[0].length);
+      // 找到下一个 ## 标题的位置
+      const nextSectionMatch = afterName.match(/\n(?=##\s)/);
+      const headerArea = nextSectionMatch ? afterName.slice(0, nextSectionMatch.index) : afterName;
+      
+      // 从 headerArea 中提取 > 行（联系方式）和非空普通文本行（个人简介/摘要）
+      const areaLines = headerArea.split('\n');
+      for (const line of areaLines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        if (trimmed.startsWith('> ')) {
+          contactLines.push(trimmed.replace(/^> /, ''));
+        } else if (!trimmed.startsWith('#')) {
+          // 非标题、非引用的普通文本行，作为个人简介/摘要
+          summaryLines.push(trimmed);
+        }
+      }
+      
+      // 构建需要替换的完整 header 区域字符串
+      headerMatchStr = html.slice(nameIdx, nameIdx + nameMatch[0].length + (nextSectionMatch ? (nextSectionMatch.index ?? 0) : headerArea.length));
+    }
+
+    if (nameMatch && headerMatchStr) {
+      // 头部区域：照片在右侧与姓名+联系方式并排
       const headerHtml = `
-        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-top: 0; margin-bottom: 12px; width: 100%; border-bottom: 2px solid #000; padding-bottom: 8px;">
-          <div style="flex: 1;">
-            <h1 class="font-bold text-slate-900 uppercase" style="font-size: 24pt; margin-top: 0; margin-bottom: 6px; font-family: ${s.fontFamily}; letter-spacing: 0.5px; line-height: 1.2;">${name}</h1>
-            <div style="font-size: 10pt; line-height: 1.4;" class="text-slate-700 break-words font-serif italic">${contact}</div>
+        <div style="display:flex;align-items:flex-start;gap:12px;margin-top:0;margin-bottom:8px;width:100%;padding-top:2px;">
+          <div style="flex:1;min-width:0;">
+            <h1 class="font-bold text-slate-900 uppercase" style="font-size: 24pt; margin: 0 0 6px 0; padding: 0; font-family: ${s.fontFamily}; letter-spacing: 0.5px; line-height: 1;">${headerName}</h1>
+            ${contactLines.map((line: string) => 
+              `<div style="font-size: 10.5pt; line-height: ${s.lineHeightPx}; margin-top: 2px;" class="text-slate-700 break-words font-serif italic">${line}</div>`
+            ).join('\n')}
+            ${summaryLines.length ? summaryLines.map((line: string) => 
+              `<div style="font-size: ${s.baseTextSize}; line-height: ${s.lineHeightPx}; margin-top: 4px; font-family: ${s.fontFamily};" class="text-slate-900 break-words">${processCommonMarkdown(line)}</div>`
+            ).join('\n') : ''}
           </div>
-          ${imgUrl ? `
-            <div style="margin-left: 2rem; flex-shrink: 0;">
-              <img src="${imgUrl}" style="width: 100px; height: 130px; object-fit: cover; border: 1px solid #ddd;" alt="Profile" />
-            </div>
-          ` : ''}
+          ${imgUrl ? `<div style="flex-shrink:0;"><img src="${imgUrl}" style="width:80px;height:107px;object-fit:cover;border:1px solid #ddd;border-radius:2px;display:block;" alt="Profile" /></div>` : ''}
         </div>
       `;
-      html = html.replace(match[0], headerHtml);
+      html = html.replace(headerMatchStr, headerHtml);
     } else {
       html = html
         .replace(/^# (.*$)/gm, `<h1 class="font-bold text-slate-900 uppercase" style="font-size: 24pt; margin-top: 0; margin-bottom: 6px; font-family: ${s.fontFamily}; border-bottom: 2px solid #000; padding-bottom: 8px; line-height: 1.2;">$1</h1>`)
@@ -136,115 +183,180 @@ const MarkdownRenderer: React.FC<Props> = ({
   const formatDiagnosisText = (text: string) => {
     let html = text;
     
-    // 统一字体大小常量
     const fontSize = '14px';
     const lineHeight = '1.7';
     const textColor = '#27272a';
     const headingColor = '#18181b';
 
-    // === 1. 清理无效内容 ===
-    // 移除重复标题
+    const getScoreColor = (percent: number) => {
+      if (percent >= 85) return { bar: 'linear-gradient(90deg, #6ee7b7, #059669)', bg: '#ecfdf5', text: '#047857' };
+      if (percent >= 70) return { bar: 'linear-gradient(90deg, #93c5fd, #3b82f6)', bg: '#eff6ff', text: '#1d4ed8' };
+      if (percent >= 50) return { bar: 'linear-gradient(90deg, #fcd34d, #f59e0b)', bg: '#fffbeb', text: '#b45309' };
+      return { bar: 'linear-gradient(90deg, #fca5a5, #ef4444)', bg: '#fef2f2', text: '#dc2626' };
+    };
+
+    // === 1. 清理 ===
     html = html.replace(/^#{1,2}\s*(诊断报告|Diagnosis Report|简历诊断).*$/gm, '');
-    // 清理时间相关描述
     html = html.replace(/^.*(?:以下是基于|基于|截止).*(?:时间节点|日期).*(?:诊断报告|分析).*[:：]?\s*$/gm, '');
-    // 清理空加粗标记
     html = html.replace(/\*{2,4}(?:\s*\*{2,4})*/g, '');
     html = html.replace(/匹配评分[:：]\s*$/gm, '');
+    // 清理旧版"评分明细"标题
+    html = html.replace(/^#{1,3}\s*评分明细.*$/gm, '');
+    html = html.replace(/^评分明细[:：]?\s*$/gm, '');
 
-    // === 2. 评分卡片（按分数范围显示不同颜色）===
-    html = html.replace(/(?:匹配评分[:：]\s*)?(\d+)\/100/g, (match, score) => {
-      const numScore = parseInt(score);
-      let barColor = '#ef4444';  // 红色 - <70分
-      let bgColor = '#fef2f2';   // 浅红背景
-      let borderColor = '#fecaca'; // 红色边框
-      let scoreColor = '#ef4444'; // 分数红色
-      
-      if (numScore >= 85) {
-        barColor = '#16a34a';    // 绿色
-        bgColor = '#f0fdf4';     // 浅绿背景
-        borderColor = '#bbf7d0'; // 绿色边框
-        scoreColor = '#16a34a';  // 分数绿色
-      } else if (numScore >= 70) {
-        barColor = '#ca8a04';    // 黄色
-        bgColor = '#fefce8';     // 浅黄背景
-        borderColor = '#fef08a'; // 黄色边框
-        scoreColor = '#ca8a04';  // 分数琥珀色
+    // === 2. 候选人画像整合卡片（总分 + 画像文本 + 维度进度条） ===
+    let totalScore = 0;
+    let profileText = '';
+    let dimensionScores: { label: string; score: number; max: number }[] = [];
+
+    // 提取总分
+    const scoreMatch = html.match(/(?:匹配评分[:：]\s*)?(\d+)\/100/);
+    if (scoreMatch) {
+      totalScore = parseInt(scoreMatch[1]);
+      html = html.replace(/(?:匹配评分[:：]\s*)?\d+\/100/, '{{SCORE_CARD}}');
+    }
+
+    // 提取维度得分 — 新格式（一行 | 分隔）
+    const dimMatch = html.match(/(?:维度得分[:：]\s*)(.+?)(?=\n|$)/m);
+    if (dimMatch) {
+      const scoresLine = dimMatch[1];
+      const dims = [
+        { label: '技能匹配', key: '技能匹配', max: 25 },
+        { label: '经验匹配', key: '经验匹配', max: 25 },
+        { label: '项目贴合', key: '项目贴合', max: 25 },
+        { label: '内容规范', key: '内容规范', max: 25 },
+      ];
+      dimensionScores = dims.map(dim => {
+        const regex = new RegExp(dim.key + '\\s*(\\d+)\\/' + dim.max);
+        const m = scoresLine.match(regex);
+        return { label: dim.label, score: m ? parseInt(m[1]) : 0, max: dim.max };
+      });
+      html = html.replace(/(?:维度得分[:：]\s*).+?(?=\n|$)/m, '{{DIM_BARS}}');
+    } else {
+      // 旧格式兼容：从列表行中提取维度得分（如 "- 硬技能匹配：18/30（...）"）
+      const oldDims = [
+        { label: '技能匹配', pattern: /硬技能匹配/, max: 30 },
+        { label: '经验匹配', pattern: /经验匹配/, max: 25 },
+        { label: '项目贴合', pattern: /项目相关性/, max: 15 },
+        { label: '内容规范', pattern: /(?:量化成果|简历规范性)/, max: 20 },
+      ];
+      const oldScoreLines = html.match(/^[-*•]\s*.+?[:：]\s*\d+\/\d+.*/gm);
+      if (oldScoreLines && oldScoreLines.length >= 3) {
+        dimensionScores = [];
+        for (const line of oldScoreLines) {
+          const numMatch = line.match(/(\d+)\/(\d+)/);
+          if (!numMatch) continue;
+          const score = parseInt(numMatch[1]);
+          const max = parseInt(numMatch[2]);
+          let label = '其他';
+          for (const dim of oldDims) {
+            if (dim.pattern.test(line)) { label = dim.label; break; }
+          }
+          // 合并量化成果和简历规范性为"内容规范"
+          const existing = dimensionScores.find(d => d.label === label);
+          if (existing) {
+            existing.score += score;
+            existing.max += max;
+          } else {
+            dimensionScores.push({ label, score, max });
+          }
+        }
+        // 移除旧的维度得分列表行
+        html = html.replace(/^[-*•]\s*(?:硬技能匹配|经验匹配|量化成果|项目相关性|简历规范性)\s*[:：]\s*\d+\/\d+.*$/gm, '');
       }
+    }
 
-      return `
-        <div style="margin: 16px 0; padding: 16px; background: ${bgColor}; border: 1px solid ${borderColor}; border-radius: 6px;">
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-            <span style="font-size: 12px; font-weight: 500; color: #71717a; text-transform: uppercase; letter-spacing: 0.05em;">匹配评分</span>
-            <span style="font-size: 20px; font-weight: 700; color: ${scoreColor};">${score}<span style="font-size: 12px; color: #a1a1aa; font-weight: 400;">/100</span></span>
+    // 提取候选人画像文本
+    const profileMatch = html.match(/(?:候选人画像[:：]\s*)(.+?)(?=\n|$)/m);
+    if (profileMatch) {
+      profileText = profileMatch[1].trim();
+      html = html.replace(/(?:候选人画像[:：]\s*).+?(?=\n|$)/m, '{{PROFILE}}');
+    }
+
+    // 构建整合卡片
+    const scoreColors = getScoreColor(totalScore);
+    const barsHtml = dimensionScores.map(dim => {
+      const pct = Math.round((dim.score / dim.max) * 100);
+      const c = getScoreColor(pct);
+      return `<div style="display:flex;align-items:center;gap:8px;"><span style="font-size:12px;color:#71717a;white-space:nowrap;width:56px;text-align:right;flex-shrink:0;letter-spacing:0.02em;">${dim.label}</span><div style="flex:1;height:6px;background:#f4f4f5;border-radius:3px;overflow:hidden;"><div style="height:100%;background:${c.bar};width:${pct}%;border-radius:3px;transition:width 0.6s ease;"></div></div><span style="font-size:11px;font-weight:600;color:${c.text};white-space:nowrap;width:32px;flex-shrink:0;text-align:right;">${pct}%</span></div>`;
+    }).join('');
+
+    const integratedCard = `
+      <div style="margin:12px 0;padding:14px 16px;background:#fafafa;border:1px solid #e4e4e7;border-radius:10px;">
+        <div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:${dimensionScores.length ? '12px' : '0'};">
+          <div style="position:relative;width:52px;height:52px;flex-shrink:0;">
+            <svg viewBox="0 0 36 36" style="width:52px;height:52px;transform:rotate(-90deg);">
+              <circle cx="18" cy="18" r="15.9" fill="none" stroke="#e4e4e7" stroke-width="3"></circle>
+              <circle cx="18" cy="18" r="15.9" fill="none" stroke="${scoreColors.text}" stroke-width="3" stroke-dasharray="${totalScore} ${100 - totalScore}" stroke-linecap="round"></circle>
+            </svg>
+            <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;">
+              <span style="font-size:15px;font-weight:800;color:${scoreColors.text};">${totalScore}</span>
+            </div>
           </div>
-          <div style="width: 100%; height: 4px; background: #e4e4e7; border-radius: 2px; overflow: hidden;">
-            <div style="height: 100%; background: ${barColor}; width: ${score}%; transition: width 1s ease-out;"></div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:11px;color:#a1a1aa;font-weight:500;letter-spacing:0.05em;margin-bottom:2px;">匹配评分 / 100</div>
+            ${profileText ? `<div style="font-size:13px;color:${headingColor};line-height:1.5;font-weight:500;">${profileText}</div>` : ''}
           </div>
         </div>
-      `;
+        ${dimensionScores.length ? `<div style="display:flex;flex-direction:column;gap:6px;">${barsHtml}</div>` : ''}
+      </div>
+    `;
+
+    // 替换占位符
+    html = html.replace('{{SCORE_CARD}}', integratedCard);
+    html = html.replace('{{DIM_BARS}}', '');
+    html = html.replace('{{PROFILE}}', '');
+
+    // === 3. 标题 ===
+    html = html.replace(/^##\s+(.+)$/gm, `<div style="margin-top:22px;margin-bottom:12px;padding-bottom:7px;border-bottom:2px solid ${headingColor};"><span style="font-size:15px;font-weight:700;color:${headingColor};letter-spacing:0.02em;">$1</span></div>`);
+    html = html.replace(/^###\s+(.+)$/gm, `<div style="margin-top:16px;margin-bottom:8px;"><span style="font-size:${fontSize};font-weight:700;color:${headingColor};">$1</span></div>`);
+
+    // === 4. 列表 ===
+    // 不足项：加粗标题 + 问题 + 建议
+    html = html.replace(/^[-*]\s+\*\*([^*]+)\*\*\s*[:：]\s*(.+)$/gm, (_m, title: string, desc: string) => {
+      const parts = desc.split(/\s*→\s*/);
+      if (parts.length >= 2) {
+        return `<div style="display:flex;align-items:flex-start;gap:8px;margin:8px 0 2px;font-size:${fontSize};line-height:${lineHeight};color:${textColor};"><span style="color:#ef4444;flex-shrink:0;margin-top:2px;font-size:8px;">●</span><span style="flex:1;"><strong style="font-weight:600;color:${headingColor};">${title}</strong>：${parts[0]}</span></div><div style="margin:2px 0 8px 16px;font-size:13px;line-height:1.6;color:#4338ca;">→ ${parts.slice(1).join(' → ')}</div>`;
+      }
+      return `<div style="display:flex;align-items:flex-start;gap:8px;margin:8px 0;font-size:${fontSize};line-height:${lineHeight};color:${textColor};"><span style="color:#ef4444;flex-shrink:0;margin-top:2px;font-size:8px;">●</span><span style="flex:1;"><strong style="font-weight:600;color:${headingColor};">${title}</strong>：${desc}</span></div>`;
     });
 
-    // === 3. 标题处理 ===
-    // H2 标题
-    html = html.replace(/^##\s+(.+)$/gm, `<div style="margin-top: 24px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 2px solid ${headingColor};"><span style="font-size: ${fontSize}; font-weight: 700; color: ${headingColor};">$1</span></div>`);
+    // 有序列表：合并后续缩进行（非编号、非标题的续行归入上一个编号项）
+    html = html.replace(/^(\d+)\.\s+(.+?)(?=\n\d+\.|\n##|\n###|\n\n|\n*$)/gms, (_m, num: string, content: string) => {
+      const merged = content.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+      return `<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:6px;font-size:${fontSize};line-height:${lineHeight};color:${textColor};"><span style="font-weight:600;color:${headingColor};flex-shrink:0;">${num}.</span><span style="flex:1;">${merged}</span></div>`;
+    });
     
-    // H3 标题
-    html = html.replace(/^###\s+(.+)$/gm, `<div style="margin-top: 20px; margin-bottom: 8px;"><span style="font-size: ${fontSize}; font-weight: 700; color: ${headingColor};">$1</span></div>`);
+    // 无序列表
+    html = html.replace(/^[-*]\s+(.+)$/gm, `<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:5px;font-size:${fontSize};line-height:${lineHeight};color:${textColor};"><span style="margin-top:9px;width:4px;height:4px;border-radius:50%;background:#a1a1aa;flex-shrink:0;"></span><span style="flex:1;">$1</span></div>`);
 
-    // === 4. 列表处理 ===
-    // Gap 标题特殊处理 - 加粗显示 (匹配 "* Gap 1: xxx" 或 "- Gap 1: xxx" 格式)
-    html = html.replace(/^[-*]\s+\*\*(Gap\s*\d+)\*\*\s*[:：]\s*(.+)$/gm, `<div style="display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; margin-top: 12px; font-size: ${fontSize}; line-height: ${lineHeight}; color: ${textColor};"><span style="margin-top: 8px; width: 4px; height: 4px; border-radius: 50%; background: #a1a1aa; flex-shrink: 0;"></span><span style="flex: 1;"><strong style="font-weight: 700; color: ${headingColor};">$1：</strong>$2</span></div>`);
-    
-    // Gap 标题 - 纯文本格式 (匹配 "* Gap 1: xxx" 或 "- Gap 1：xxx" 无加粗)
-    html = html.replace(/^[-*]\s+(Gap\s*\d+)\s*[:：]\s*(.+)$/gm, `<div style="display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; margin-top: 12px; font-size: ${fontSize}; line-height: ${lineHeight}; color: ${textColor};"><span style="margin-top: 8px; width: 4px; height: 4px; border-radius: 50%; background: #a1a1aa; flex-shrink: 0;"></span><span style="flex: 1;"><strong style="font-weight: 700; color: ${headingColor};">$1：</strong>$2</span></div>`);
+    html = html.replace(/•\s*/g, '<br/><span style="display:inline-block;width:4px;height:4px;border-radius:50%;background:#a1a1aa;margin:0 8px 0 0;vertical-align:middle;"></span>');
 
-    // 有序列表
-    html = html.replace(/^(\d+)\.\s+(.+)$/gm, `<div style="display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; font-size: ${fontSize}; line-height: ${lineHeight}; color: ${textColor};"><span style="font-weight: 700; color: ${headingColor}; flex-shrink: 0;">$1.</span><span style="flex: 1;">$2</span></div>`);
-    
-    // 无序列表 - 开头
-    html = html.replace(/^[-*]\s+(.+)$/gm, `<div style="display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; font-size: ${fontSize}; line-height: ${lineHeight}; color: ${textColor};"><span style="margin-top: 8px; width: 4px; height: 4px; border-radius: 50%; background: #a1a1aa; flex-shrink: 0;"></span><span style="flex: 1;">$1</span></div>`);
+    // === 5. 行内格式 ===
+    html = html.replace(/`([^`]+)`/g, `<code style="background:#f4f4f5;color:${headingColor};padding:2px 6px;border-radius:3px;font-size:${fontSize};font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;">$1</code>`);
 
-    // 段落内的 • 符号
-    html = html.replace(/•\s*/g, '<br/><span style="display: inline-block; width: 4px; height: 4px; border-radius: 50%; background: #a1a1aa; margin: 0 8px 0 0; vertical-align: middle;"></span>');
-
-    // === 5. 行内格式处理 ===
-    // 行内代码
-    html = html.replace(/`([^`]+)`/g, `<code style="background: #f4f4f5; color: ${headingColor}; padding: 2px 6px; border-radius: 3px; font-size: ${fontSize}; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;">$1</code>`);
-
-    // 简历亮点标签 - 支持多种格式（加粗格式）- 独立成行
-    html = html.replace(/\*\*(简历亮点[^*]*)\*\*\s*[:：]?/g, `<div style="display: flex; align-items: center; gap: 4px; color: #ca8a04; font-size: ${fontSize}; font-weight: 700; margin: 12px 0 6px 0;">✨ $1：</div>`);
+    // 简历亮点
+    html = html.replace(/\*\*(简历亮点[^*]*)\*\*\s*[:：]?/g, `<div style="color:#b45309;font-size:${fontSize};font-weight:700;margin:12px 0 6px;">✨ $1：</div>`);
+    html = html.replace(/(简历亮点\s*\(Highlights\)\s*[:：]?)/g, `<div style="color:#b45309;font-size:${fontSize};font-weight:700;margin:12px 0 6px;">✨ 简历亮点 (Highlights)：</div>`);
     
-    // 简历亮点标签 - 支持纯文本格式（非加粗）
-    html = html.replace(/(简历亮点\s*\(Highlights\)\s*[:：]?)/g, `<div style="display: flex; align-items: center; gap: 4px; color: #ca8a04; font-size: ${fontSize}; font-weight: 700; margin: 12px 0 6px 0;">✨ 简历亮点 (Highlights)：</div>`);
+    // 潜在不足标签
+    html = html.replace(/\*\*(潜在不足[^*]*)\*\*\s*[:：]?/g, `<div style="color:#dc2626;font-size:${fontSize};font-weight:700;margin:12px 0 6px;">⚠️ $1：</div>`);
+    html = html.replace(/(潜在不足\s*\(Lowlights\)\s*[:：]?)/g, `<div style="color:#dc2626;font-size:${fontSize};font-weight:700;margin:12px 0 6px;">⚠️ 潜在不足 (Lowlights)：</div>`);
     
-    // 潜在不足标签 - 支持多种格式（加粗格式）- 独立成行
-    html = html.replace(/\*\*(潜在不足[^*]*)\*\*\s*[:：]?/g, `<div style="display: flex; align-items: center; gap: 4px; color: #dc2626; font-size: ${fontSize}; font-weight: 700; margin: 12px 0 6px 0;">⚠️ $1：</div>`);
-    
-    // 潜在不足标签 - 支持纯文本格式（非加粗）
-    html = html.replace(/(潜在不足\s*\(Lowlights\)\s*[:：]?)/g, `<div style="display: flex; align-items: center; gap: 4px; color: #dc2626; font-size: ${fontSize}; font-weight: 700; margin: 12px 0 6px 0;">⚠️ 潜在不足 (Lowlights)：</div>`);
-    
-    // 兼容旧版：硬伤标签 -> 潜在不足样式
-    html = html.replace(/\*\*(硬伤[^*]*)\*\*\s*[:：]?/g, `<div style="display: flex; align-items: center; gap: 4px; color: #dc2626; font-size: ${fontSize}; font-weight: 700; margin: 12px 0 6px 0;">⚠️ $1：</div>`);
-    
-    // 兼容旧版：潜在亮点标签 -> 简历亮点样式
-    html = html.replace(/\*\*(潜在亮点[^*]*)\*\*\s*[:：]?/g, `<div style="display: flex; align-items: center; gap: 4px; color: #ca8a04; font-size: ${fontSize}; font-weight: 700; margin: 12px 0 6px 0;">✨ $1：</div>`);
+    // 兼容旧版
+    html = html.replace(/\*\*(硬伤[^*]*)\*\*\s*[:：]?/g, `<div style="color:#dc2626;font-size:${fontSize};font-weight:700;margin:12px 0 6px;">⚠️ $1：</div>`);
+    html = html.replace(/\*\*(潜在亮点[^*]*)\*\*\s*[:：]?/g, `<div style="color:#b45309;font-size:${fontSize};font-weight:700;margin:12px 0 6px;">✨ $1：</div>`);
 
     // 普通加粗
-    html = html.replace(/\*\*(.+?)\*\*/g, `<strong style="font-weight: 700; color: ${headingColor};">$1</strong>`);
+    html = html.replace(/\*\*(.+?)\*\*/g, `<strong style="font-weight:700;color:${headingColor};">$1</strong>`);
+    html = html.replace(/(^|[\s\p{P}])\*([^*\n]+?)\*(?=[\s\p{P}]|$)/gmu, '$1<em style="font-style:italic;">$2</em>');
 
-    // 斜体
-    html = html.replace(/(^|[\s\p{P}])\*([^*\n]+?)\*(?=[\s\p{P}]|$)/gmu, '$1<em style="font-style: italic;">$2</em>');
-
-    // === 6. 最终清理 ===
-    // 移除孤立星号
+    // === 6. 清理 ===
     html = html.replace(/\*{1,2}(?![^<]*>)/g, '');
-    
-    // 段落间距
-    html = html.replace(/\n\n+/g, '<div style="height: 12px;"></div>');
+    html = html.replace(/\n\n+/g, '<div style="height:10px;"></div>');
     html = html.replace(/\n/g, ' ');
 
-    // 包裹整体内容，确保统一字体
-    html = `<div style="font-size: ${fontSize}; line-height: ${lineHeight}; color: ${textColor};">${html}</div>`;
+    html = `<div style="font-size:${fontSize};line-height:${lineHeight};color:${textColor};">${html}</div>`;
 
     return html;
   };
