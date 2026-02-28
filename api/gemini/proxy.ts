@@ -25,6 +25,8 @@ const VIP_WHITELIST_EMAILS = [
 // Special 白名单：独立日限额组（每日所有操作共 10 次）
 const SPECIAL_WHITELIST_EMAILS = [
   '814341364@qq.com',
+  'aliciagu36@hotmail.com',
+  '805786138@qq.com',
 ];
 
 // 会员配额（服务端权威配置）

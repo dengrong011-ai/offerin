@@ -4,7 +4,7 @@ import {
   Briefcase, User, Hash, Info, AlertCircle, Award, 
   Send, Square, Plus, X, FileText, Upload, Settings,
   Download, RefreshCw, Loader2, ArrowLeft, ChevronDown, Image as ImageIcon,
-  Play, MessageSquare, Users, Mic, MicOff, StopCircle, CheckCircle2, File, Paperclip, Lock, Crown
+  Play, MessageSquare, Users, Mic, MicOff, StopCircle, CheckCircle2, File, Paperclip, Lock, Crown, Save
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import html2canvas from 'html2canvas';
@@ -17,8 +17,9 @@ import {
   InteractiveInterviewState 
 } from '../services/interviewService';
 import { transcribeAudio, extractTextFromFile } from '../services/geminiService';
+import { saveInterviewRecord } from '../services/interviewRecordService';
+import type { SavedInterviewRecord } from '../services/interviewRecordService';
 import { useAuth } from '../contexts/AuthContext';
-import { checkUsageLimit, logUsage, checkInterviewExportPermission } from '../services/authService';
 
 // Markdown 预处理：确保标题、列表等块级元素前后有空行，增强渲染鲁棒性
 const normalizeMarkdown = (text: string): string => {
@@ -46,6 +47,7 @@ interface InterviewChatProps {
   initialJdFile?: FileData | null;
   initialResumeFile?: FileData | null;
   onShowVIPModal?: () => void;
+  viewingRecord?: SavedInterviewRecord | null;
 }
 
 const InterviewChat: React.FC<InterviewChatProps> = ({ 
@@ -54,7 +56,8 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
   initialJd = '',
   initialJdFile = null,
   initialResumeFile = null,
-  onShowVIPModal
+  onShowVIPModal,
+  viewingRecord = null
 }) => {
   const { user, profile } = useAuth();
   const [messages, setMessages] = useState<InterviewMessage[]>([]);
@@ -66,6 +69,8 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
   const [showSettings, setShowSettings] = useState(true);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [isSavingRecord, setIsSavingRecord] = useState(false);
+  const [saveRecordSuccess, setSaveRecordSuccess] = useState(false);
   const [status, setStatus] = useState<InterviewStatus>('idle');
   
   // 使用限制相关状态
@@ -378,6 +383,21 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
     extractInitialFileText();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // 仅在组件挂载时执行一次
+
+  // 如果是查看已保存的记录，初始化消息和设置
+  useEffect(() => {
+    if (viewingRecord) {
+      setMessages(viewingRecord.messages_json || []);
+      setSettings({
+        totalRounds: viewingRecord.total_rounds,
+        interviewerRole: viewingRecord.interviewer_role as InterviewerRole,
+        mode: viewingRecord.interview_mode
+      });
+      setStatus('completed');
+      setShowSettings(false);
+      setShowInputPanel(false);
+    }
+  }, [viewingRecord]);
 
   // 点击外部关闭导出菜单
   useEffect(() => {
@@ -972,6 +992,61 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
     }
   };
 
+  // 保存面试记录到记录库
+  const handleSaveToLibrary = async () => {
+    if (!user) {
+      setUsageLimitError('请先登录后再保存面试记录');
+      return;
+    }
+
+    if (messages.length === 0) {
+      return;
+    }
+
+    // 如果是查看已保存的记录，不允许重复保存
+    if (viewingRecord) {
+      setSaveRecordSuccess(true);
+      setTimeout(() => setSaveRecordSuccess(false), 2000);
+      return;
+    }
+
+    setIsSavingRecord(true);
+    setShowExportMenu(false);
+
+    try {
+      const roleLabels: Record<string, string> = {
+        ta: '第一轮/TA',
+        peers: '第二轮/Peers',
+        leader: '第三轮/+1',
+        director: '第四轮/+2',
+        hrbp: '第五轮/HRBP'
+      };
+      const modeLabel = settings.mode === 'interactive' ? '人机交互' : '纯AI模拟';
+      const timestamp = new Date().toLocaleDateString('zh-CN');
+      const title = `${modeLabel} - ${roleLabels[settings.interviewerRole] || settings.interviewerRole} (${timestamp})`;
+
+      const result = await saveInterviewRecord(user.id, {
+        title,
+        interview_mode: settings.mode,
+        interviewer_role: settings.interviewerRole,
+        total_rounds: settings.totalRounds,
+        messages
+      });
+
+      if (result) {
+        setSaveRecordSuccess(true);
+        setTimeout(() => setSaveRecordSuccess(false), 3000);
+      } else {
+        setUsageLimitError('保存失败，请稍后重试');
+      }
+    } catch (error) {
+      console.error('Save interview record error:', error);
+      setUsageLimitError('保存失败，请稍后重试');
+    } finally {
+      setIsSavingRecord(false);
+    }
+  };
+
   const handleReset = () => {
     // 先中止正在进行的请求
     if (abortControllerRef.current) {
@@ -1197,10 +1272,10 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
             <div className="relative" ref={exportMenuRef}>
               <button
                 onClick={() => setShowExportMenu(!showExportMenu)}
-                disabled={isExporting}
+                disabled={isExporting || isSavingRecord}
                 className="p-2 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-md transition-colors flex items-center gap-1.5"
               >
-                {isExporting ? (
+                {isExporting || isSavingRecord ? (
                   <Loader2 size={16} className="animate-spin" />
                 ) : (
                   <Download size={16} />
@@ -1208,7 +1283,25 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
                 <span className="text-[12px]">下载记录</span>
               </button>
               {showExportMenu && (
-                <div className="absolute right-0 top-full mt-1 bg-white border border-zinc-200 rounded-lg shadow-lg py-1 z-50 min-w-[140px]">
+                <div className="absolute right-0 top-full mt-1 bg-white border border-zinc-200 rounded-lg shadow-lg py-1 z-50 min-w-[160px]">
+                  {/* 保存到记录库 */}
+                  {!viewingRecord && (
+                    <>
+                      <button
+                        onClick={handleSaveToLibrary}
+                        disabled={isSavingRecord}
+                        className="w-full px-3 py-2 text-left text-[13px] text-zinc-700 hover:bg-zinc-50 flex items-center gap-2 transition-colors"
+                      >
+                        {isSavingRecord ? (
+                          <Loader2 size={14} className="animate-spin text-zinc-400" />
+                        ) : (
+                          <Save size={14} className="text-zinc-400" />
+                        )}
+                        保存到记录库
+                      </button>
+                      <div className="border-t border-zinc-100 my-1" />
+                    </>
+                  )}
                   <button
                     onClick={handleExportMarkdown}
                     className="w-full px-3 py-2 text-left text-[13px] text-zinc-700 hover:bg-zinc-50 flex items-center gap-2 transition-colors"
@@ -1225,6 +1318,13 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
                   </button>
                 </div>
               )}
+            </div>
+          )}
+          {/* 保存成功提示 */}
+          {saveRecordSuccess && (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-green-50 text-green-600 rounded-md text-[12px]">
+              <CheckCircle2 size={14} />
+              已保存到记录库
             </div>
           )}
           {(status !== 'idle' || messages.length > 0) && (

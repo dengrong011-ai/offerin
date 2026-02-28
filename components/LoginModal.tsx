@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Mail, Loader2, X, Check, Crown, User, LogOut, ChevronDown } from 'lucide-react';
+import { Mail, Loader2, X, Check, Crown, User, LogOut, ChevronDown, FolderOpen, MessageSquare } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { sendOTP, verifyOTP, signOut } from '../services/authService';
 
@@ -230,9 +230,11 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
 interface UserAvatarProps {
   onLoginClick: () => void;
   onUpgradeClick?: () => void;
+  onResumeLibrary?: () => void;
+  onInterviewLibrary?: () => void;
 }
 
-export const UserAvatar: React.FC<UserAvatarProps> = ({ onLoginClick, onUpgradeClick }) => {
+export const UserAvatar: React.FC<UserAvatarProps> = ({ onLoginClick, onUpgradeClick, onResumeLibrary, onInterviewLibrary }) => {
   const { user, profile, loading } = useAuth();
   const [showDropdown, setShowDropdown] = useState(false);
 
@@ -329,6 +331,27 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({ onLoginClick, onUpgradeC
                   升级 VIP
                 </button>
               )}
+              <button
+                onClick={() => {
+                  setShowDropdown(false);
+                  onResumeLibrary?.();
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-zinc-600 hover:bg-zinc-50 rounded-md transition-colors"
+              >
+                <FolderOpen size={14} />
+                简历库
+              </button>
+              <button
+                onClick={() => {
+                  setShowDropdown(false);
+                  onInterviewLibrary?.();
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-zinc-600 hover:bg-zinc-50 rounded-md transition-colors"
+              >
+                <MessageSquare size={14} />
+                面试记录库
+              </button>
+              <div className="border-t border-zinc-100 my-1" />
               <button
                 onClick={handleSignOut}
                 className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-zinc-600 hover:bg-zinc-50 rounded-md transition-colors"

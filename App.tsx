@@ -7,17 +7,19 @@ import { LoginModal, UserAvatar } from './components/LoginModal';
 import { VIPUpgradeModal } from './components/VIPUpgradeModal';
 import { DownloadPayModal } from './components/DownloadPayModal';
 import ResumeLibrary from './components/ResumeLibrary';
+import InterviewLibrary from './components/InterviewLibrary';
 import SelectionToolbar from './components/SelectionToolbar';
 import PhotoUploadPanel from './components/PhotoUploadPanel';
 import { useAuth } from './contexts/AuthContext';
 import { checkUsageLimit, logUsage, checkTranslationLimit } from './services/authService';
 import { createSavedResume, updateSavedResume, extractResumeTitle } from './services/resumeService';
+import type { SavedInterviewRecord } from './services/interviewRecordService';
 import type { SavedResume } from './types';
 import { FileText, Target, Send, Loader2, RefreshCw, ChevronRight, Upload, X, Paperclip, Image as ImageIcon, File, AlertCircle, PenTool, ArrowLeft, Maximize2, Minimize2, ZoomIn, ZoomOut, CheckCircle2, AlertTriangle, AlignJustify, Languages, Globe, ArrowRight, Sparkles, MessageSquare, Mic, Play, Users, Lock, Briefcase, Crown, Save, FolderOpen, MousePointerClick } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 
-type Step = 'INPUT' | 'UPLOAD' | 'ANALYSIS' | 'EDITOR' | 'ENGLISH_VERSION' | 'INTERVIEW' | 'RESUME_LIBRARY';
+type Step = 'INPUT' | 'UPLOAD' | 'ANALYSIS' | 'EDITOR' | 'ENGLISH_VERSION' | 'INTERVIEW' | 'RESUME_LIBRARY' | 'INTERVIEW_LIBRARY';
 
 const App: React.FC = () => {
   const { user, profile, loading: authLoading } = useAuth();
@@ -27,6 +29,7 @@ const App: React.FC = () => {
   const [usageLimitError, setUsageLimitError] = useState<string | null>(null);
   
   const [step, setStep] = useState<Step>('INPUT');
+  const [viewingInterviewRecord, setViewingInterviewRecord] = useState<SavedInterviewRecord | null>(null);
 
   // 检查登录状态，未登录则弹出登录框
   const requireLogin = (callback: () => void) => {
@@ -1307,6 +1310,8 @@ const App: React.FC = () => {
             <UserAvatar 
               onLoginClick={() => setShowLoginModal(true)} 
               onUpgradeClick={() => setShowVIPModal(true)}
+              onResumeLibrary={() => requireLogin(() => setStep('RESUME_LIBRARY'))}
+              onInterviewLibrary={() => requireLogin(() => setStep('INTERVIEW_LIBRARY'))}
             />
           </div>
         </div>
@@ -2373,12 +2378,13 @@ const App: React.FC = () => {
         {/* Step 5: Interview */}
         {step === 'INTERVIEW' && (
           <InterviewChat 
-            onBack={() => setStep('INPUT')} 
+            onBack={() => { setViewingInterviewRecord(null); setStep('INPUT'); }} 
             initialResume={editableResume || resume}
             initialJd={jd}
             initialJdFile={jdFile ? { name: jdFile.name, data: jdFile.data, mime: jdFile.mime } : null}
             initialResumeFile={resumeFile ? { name: resumeFile.name, data: resumeFile.data, mime: resumeFile.mime } : null}
             onShowVIPModal={() => setShowVIPModal(true)}
+            viewingRecord={viewingInterviewRecord}
           />
         )}
 
@@ -2388,6 +2394,18 @@ const App: React.FC = () => {
             onBack={() => setStep('INPUT')}
             onOpenResume={handleOpenSavedResume}
             onNewResume={() => { resetAll(); setStep('UPLOAD'); }}
+          />
+        )}
+
+        {/* Step 7: Interview Library */}
+        {step === 'INTERVIEW_LIBRARY' && (
+          <InterviewLibrary
+            onBack={() => setStep('INPUT')}
+            onOpenRecord={(record: SavedInterviewRecord) => {
+              // 打开记录时跳转到面试页面并恢复消息
+              setViewingInterviewRecord(record);
+              setStep('INTERVIEW');
+            }}
           />
         )}
       </main>
