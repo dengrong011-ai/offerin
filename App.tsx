@@ -2393,8 +2393,10 @@ const App: React.FC = () => {
       </main>
 
       {step === 'INPUT' && (
-         <footer className="py-5 text-center text-zinc-300 text-[11px] tracking-wide bg-white no-print">
-            Offerin
+         <footer className="py-5 text-center text-[11px] tracking-wide bg-white no-print">
+            <span className="text-zinc-300">Offerin</span>
+            <span className="mx-2 text-zinc-200">|</span>
+            <span className="text-zinc-400">反馈与建议：<a href="mailto:offerinplate@gmail.com" className="text-zinc-400 hover:text-zinc-600 transition-colors underline underline-offset-2">offerinplate@gmail.com</a></span>
          </footer>
       )}
     </div>
