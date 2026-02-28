@@ -166,6 +166,24 @@ export const checkUsageLimit = async (
       };
     }
     
+    // Special 白名单用户：所有操作共享每日 10 次限额
+    if (membership === 'special') {
+      const dailyLimit = limits.daily_total || 10;
+      const today = new Date().toISOString().split('T')[0];
+      
+      const { count, error } = await supabase
+        .from('usage_logs')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .gte('created_at', `${today}T00:00:00.000Z`)
+        .lte('created_at', `${today}T23:59:59.999Z`);
+
+      if (error) throw error;
+      const usedCount = count || 0;
+      const remaining = dailyLimit - usedCount;
+      return { allowed: remaining > 0, remaining: Math.max(0, remaining), limit: dailyLimit };
+    }
+
     // VIP 用户：面试按月限制，其他按日限制
     if (membership === 'vip' && actionType === 'interview') {
       const monthlyLimit = limits.monthly_interview;
@@ -242,6 +260,24 @@ export const checkTranslationLimit = async (
     const membership = profile.membership_type;
     const limits = MEMBERSHIP_LIMITS[membership];
     
+    // Special 用户：受每日总限额控制
+    if (membership === 'special') {
+      const dailyLimit = limits.daily_total || 10;
+      const today = new Date().toISOString().split('T')[0];
+      
+      const { count, error } = await supabase
+        .from('usage_logs')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .gte('created_at', `${today}T00:00:00.000Z`)
+        .lte('created_at', `${today}T23:59:59.999Z`);
+
+      if (error) throw error;
+      const usedCount = count || 0;
+      const remaining = dailyLimit - usedCount;
+      return { allowed: remaining > 0, remaining: Math.max(0, remaining), limit: dailyLimit };
+    }
+
     // VIP/Pro 无限制
     if (limits.translation_trial_count === -1) {
       return { allowed: true, remaining: -1, limit: -1 };

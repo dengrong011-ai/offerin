@@ -22,6 +22,11 @@ const VIP_WHITELIST_EMAILS = [
   'dengrong011@gmail.com',
 ];
 
+// Special 白名单：独立日限额组（每日所有操作共 10 次）
+const SPECIAL_WHITELIST_EMAILS = [
+  '814341364@qq.com',
+];
+
 // 会员配额（服务端权威配置）
 const MEMBERSHIP_LIMITS: Record<string, {
   diagnosis_trial_count: number;
@@ -54,6 +59,14 @@ const MEMBERSHIP_LIMITS: Record<string, {
     daily_diagnosis: -1,
     daily_interview: -1,
     monthly_interview: -1,
+  },
+  special: {
+    diagnosis_trial_count: -1,   // 不限体验次数（用日限额控制）
+    interview_trial_count: -1,
+    translation_trial_count: -1,
+    daily_diagnosis: 10,         // 每日所有操作共 10 次
+    daily_interview: 10,
+    monthly_interview: -1,       // 不限月度，用日限额统一控制
   },
 };
 
@@ -161,6 +174,9 @@ async function authenticateUser(authHeader: string | undefined): Promise<AuthRes
     if (user.email && VIP_WHITELIST_EMAILS.includes(user.email.toLowerCase())) {
       membershipType = 'pro'; // 白名单等同 pro
     }
+    if (user.email && SPECIAL_WHITELIST_EMAILS.includes(user.email.toLowerCase())) {
+      membershipType = 'special'; // special 白名单：日限10次
+    }
 
     return {
       userId: user.id,
@@ -188,6 +204,27 @@ async function checkAndLogUsage(
 
   // auto_rewrite: 诊断后自动触发的重构，不单独计配额（诊断时已记录）
   if (actionType === 'auto_rewrite') {
+    return { allowed: true };
+  }
+
+  // Special 白名单用户：所有操作共享每日 10 次限额
+  if (membershipType === 'special') {
+    const today = new Date().toISOString().split('T')[0];
+    const dailyLimit = limits.daily_diagnosis; // 10
+    
+    // 统计今日所有操作的总次数
+    const { count } = await supabaseAdmin
+      .from('usage_logs')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .gte('created_at', `${today}T00:00:00.000Z`)
+      .lte('created_at', `${today}T23:59:59.999Z`);
+
+    if ((count || 0) >= dailyLimit) {
+      return { allowed: false, reason: 'DAILY_LIMIT_EXCEEDED' };
+    }
+
+    await supabaseAdmin.from('usage_logs').insert({ user_id: userId, action_type: actionType });
     return { allowed: true };
   }
 

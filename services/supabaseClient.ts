@@ -90,6 +90,19 @@ export const MEMBERSHIP_LIMITS = {
     can_translate: true,
     features: ['all'],
   },
+  special: {
+    diagnosis_trial_count: -1,     // 不限体验次数
+    interview_trial_count: -1,
+    translation_trial_count: -1,
+    daily_diagnosis: 10,           // 每日所有操作共 10 次
+    daily_interview: 10,
+    daily_total: 10,
+    monthly_interview: -1,
+    can_download: true,
+    can_export_interview: true,
+    can_translate: true,
+    features: ['basic_diagnosis', 'basic_interview', 'advanced_diagnosis', 'resume_export', 'interview_history', 'translation', 'interview_export'],
+  },
 };
 
 // 单次付费产品配置
