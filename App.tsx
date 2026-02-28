@@ -707,8 +707,11 @@ const App: React.FC = () => {
 
   // 从 Markdown 中提取照片 URL
   const getPhotoUrlFromMarkdown = (md: string): string => {
-    const match = md.match(/^(# .*\n+> .*)\n!\[.*?\]\((.*?)\)/m);
-    return match ? match[2] : '';
+    const match = md.match(/!\[(?:photo|avatar|头像|照片)?\]\s*\(\s*([^)\s][^)]*?)\s*\)/);
+    if (match) {
+      return match[1].replace(/\s+/g, '');
+    }
+    return '';
   };
 
   // 在 Markdown 头部插入或替换照片 URL
