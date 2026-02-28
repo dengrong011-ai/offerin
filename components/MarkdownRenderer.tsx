@@ -118,7 +118,7 @@ const MarkdownRenderer: React.FC<Props> = ({
               `<div style="font-size: ${s.baseTextSize}; line-height: ${s.lineHeightPx}; margin-top: 4px; font-family: ${s.fontFamily};" class="text-slate-900 break-words">${processCommonMarkdown(line)}</div>`
             ).join('\n') : ''}
           </div>
-          ${imgUrl ? `<div style="flex-shrink:0;"><img src="${imgUrl}" style="width:80px;height:107px;object-fit:cover;border:1px solid #ddd;border-radius:2px;display:block;" alt="Profile" onerror="this.parentElement.style.display='none'" /></div>` : ''}
+          ${imgUrl ? `<div style="flex-shrink:0;width:80px;height:107px;"><img src="${imgUrl}" style="width:80px;height:107px;object-fit:cover;border:1px solid #ddd;border-radius:2px;display:block;" alt="Profile" onerror="this.style.display='none';this.parentElement.style.background='#f1f5f9';this.parentElement.style.border='1px solid #ddd';this.parentElement.style.borderRadius='2px';" /></div>` : ''}
         </div>
       `;
       html = html.replace(headerMatchStr, headerHtml);
