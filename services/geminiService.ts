@@ -224,6 +224,9 @@ export interface StreamCallbacks {
 
 const handleApiError = (error: any): string => {
   const errMsg = error.message || "";
+  if (errMsg.includes("PAYLOAD_TOO_LARGE") || errMsg.includes("413") || errMsg.includes("FUNCTION_PAYLOAD_TOO_LARGE")) {
+    return "PAYLOAD_TOO_LARGE";
+  }
   if (errMsg.includes("Requested entity was not found") || errMsg.includes("404")) {
     return "ENTITY_NOT_FOUND";
   }
@@ -236,20 +239,50 @@ const handleApiError = (error: any): string => {
   return errMsg || "UNKNOWN_ERROR";
 };
 
+// Vercel Serverless Function 请求体限制约 4.5MB，预留 0.5MB 给 prompt/config
+const MAX_PAYLOAD_BASE64_BYTES = 3 * 1024 * 1024; // 3MB base64 数据上限
+
 // 构建分析请求的共享上下文
 const buildAnalysisContext = (
   jd: string, resume: string, aspiration: string,
   jdFile?: FileData, resumeFile?: FileData
 ) => {
   const simulationDate = getCurrentDateChinese();
+
+  // 估算附件总 base64 大小，超限时降级：优先保留简历附件，丢弃 JD 附件
+  const estimateBase64Size = (file?: FileData) => file ? file.data.length : 0;
+  const totalSize = estimateBase64Size(jdFile) + estimateBase64Size(resumeFile);
+  
+  let effectiveJdFile = jdFile;
+  let effectiveResumeFile = resumeFile;
+
+  if (totalSize > MAX_PAYLOAD_BASE64_BYTES) {
+    console.warn(`[buildAnalysisContext] 附件总大小 ${(totalSize / 1024 / 1024).toFixed(1)}MB 超过限制，进行降级处理`);
+    if (resumeFile && jdFile) {
+      // 先丢弃 JD 附件（JD 通常有文本备份）
+      effectiveJdFile = undefined;
+      console.warn('[buildAnalysisContext] 丢弃 JD 附件，仅保留简历附件');
+      // 如果仅简历仍超限，也丢弃简历附件
+      if (estimateBase64Size(resumeFile) > MAX_PAYLOAD_BASE64_BYTES) {
+        effectiveResumeFile = undefined;
+        console.warn('[buildAnalysisContext] 简历附件仍超限，全部降级为纯文本');
+      }
+    } else if (resumeFile && estimateBase64Size(resumeFile) > MAX_PAYLOAD_BASE64_BYTES) {
+      effectiveResumeFile = undefined;
+      console.warn('[buildAnalysisContext] 简历附件超限，降级为纯文本');
+    } else if (jdFile && estimateBase64Size(jdFile) > MAX_PAYLOAD_BASE64_BYTES) {
+      effectiveJdFile = undefined;
+      console.warn('[buildAnalysisContext] JD 附件超限，降级为纯文本');
+    }
+  }
   
   const buildParts = () => {
     const parts: any[] = [];
-    if (jdFile) {
-      parts.push({ inlineData: { data: jdFile.data, mimeType: jdFile.mimeType } });
+    if (effectiveJdFile) {
+      parts.push({ inlineData: { data: effectiveJdFile.data, mimeType: effectiveJdFile.mimeType } });
     }
-    if (resumeFile) {
-      parts.push({ inlineData: { data: resumeFile.data, mimeType: resumeFile.mimeType } });
+    if (effectiveResumeFile) {
+      parts.push({ inlineData: { data: effectiveResumeFile.data, mimeType: effectiveResumeFile.mimeType } });
     }
     return parts;
   };
@@ -257,10 +290,10 @@ const buildAnalysisContext = (
   const baseContext = `[系统时间上下文]: 当前日期为 ${simulationDate}。请以此日期为基准计算工作年限和状态（如"至今"）。
 【禁止】：在诊断报告和简历中，绝对不要出现"基于XX时间节点"、"截止XX"、"模拟时间"、"模拟日期"、"当前模拟"等时间相关描述。直接分析内容，不需要说明时间基准。
 [JD 岗位描述]:
-${jd || (jdFile ? '(见附件)' : '未提供')}
+${jd || (effectiveJdFile ? '(见附件)' : '未提供')}
 
 [用户简历]:
-${resume || (resumeFile ? '(见附件)' : '未提供')}
+${resume || (effectiveResumeFile ? '(见附件)' : '未提供')}
 
 [用户诉求]:
 ${aspiration || '无特定诉求'}`;

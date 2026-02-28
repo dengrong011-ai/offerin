@@ -319,8 +319,8 @@ const App: React.FC = () => {
     return new Promise((resolve, reject) => {
       // PDF 文件处理
       if (file.type === 'application/pdf') {
-         if (file.size > 10 * 1024 * 1024) { 
-           reject(new Error('PDF文件过大，请上传小于10MB的文件'));
+         if (file.size > 3 * 1024 * 1024) { 
+           reject(new Error('PDF文件过大，请上传小于3MB的文件'));
            return;
          }
          const reader = new FileReader();
@@ -337,8 +337,8 @@ const App: React.FC = () => {
       // Word 文档处理（.doc 和 .docx）
       if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
           file.type === 'application/msword') {
-        if (file.size > 10 * 1024 * 1024) { 
-          reject(new Error('Word文件过大，请上传小于10MB的文件'));
+        if (file.size > 3 * 1024 * 1024) { 
+          reject(new Error('Word文件过大，请上传小于3MB的文件'));
           return;
         }
         const reader = new FileReader();
@@ -577,7 +577,9 @@ const App: React.FC = () => {
       }
       
       const msg = err.message || '';
-      if (msg === 'ENTITY_NOT_FOUND') {
+      if (msg === 'PAYLOAD_TOO_LARGE' || msg.includes('PAYLOAD_TOO_LARGE') || msg.includes('413')) {
+        setError('上传文件过大，请压缩文件后重试（建议 PDF 小于 3MB），或直接粘贴文本内容。');
+      } else if (msg === 'ENTITY_NOT_FOUND') {
         setError('系统配置错误：API Key 无效或未启用计费，请检查服务器环境变量设置。');
       } else if (msg === 'SAFETY_BLOCKED') {
         setError('安全策略限制：内容被系统判定为敏感信息而拦截，请检查输入内容。');

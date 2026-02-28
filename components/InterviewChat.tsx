@@ -578,8 +578,8 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
     return new Promise((resolve, reject) => {
       // PDF 文件处理
       if (file.type === 'application/pdf') {
-        if (file.size > 10 * 1024 * 1024) { 
-          reject(new Error('PDF文件过大，请上传小于10MB的文件'));
+        if (file.size > 3 * 1024 * 1024) { 
+          reject(new Error('PDF文件过大，请上传小于3MB的文件'));
           return;
         }
         const reader = new FileReader();
@@ -596,8 +596,8 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
       // Word 文档处理（.doc 和 .docx）
       if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
           file.type === 'application/msword') {
-        if (file.size > 10 * 1024 * 1024) { 
-          reject(new Error('Word文件过大，请上传小于10MB的文件'));
+        if (file.size > 3 * 1024 * 1024) { 
+          reject(new Error('Word文件过大，请上传小于3MB的文件'));
           return;
         }
         const reader = new FileReader();

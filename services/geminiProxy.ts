@@ -68,6 +68,10 @@ async function proxyStreamRequest(options: {
 
   if (!response.ok) {
     const errorData = await response.text();
+    // 413 Payload Too Large - 文件太大
+    if (response.status === 413) {
+      throw new Error('PAYLOAD_TOO_LARGE');
+    }
     // 解析特定错误码给前端处理
     try {
       const errorJson = JSON.parse(errorData);
@@ -81,7 +85,7 @@ async function proxyStreamRequest(options: {
         throw new Error(errorJson.error);
       }
     } catch (e: any) {
-      if (e.message === 'UNAUTHORIZED' || e.message === 'RATE_LIMIT_EXCEEDED' || e.message?.includes('LIMIT_EXCEEDED')) {
+      if (e.message === 'UNAUTHORIZED' || e.message === 'RATE_LIMIT_EXCEEDED' || e.message === 'PAYLOAD_TOO_LARGE' || e.message?.includes('LIMIT_EXCEEDED')) {
         throw e;
       }
     }
