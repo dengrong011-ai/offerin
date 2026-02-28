@@ -463,6 +463,43 @@ const App: React.FC = () => {
     }
   };
 
+  // 诊断完成后自动触发重构（后台执行）
+  const autoRewriteAfterDiagnosis = async (diagContent: string, abortController: AbortController) => {
+    if (abortController.signal.aborted) return;
+    
+    setIsRewriting(true);
+    setResumeContent('');
+
+    try {
+      const jdFileData: FileData | undefined = jdFile ? { data: jdFile.data, mimeType: jdFile.mime } : undefined;
+      const resumeFileData: FileData | undefined = resumeFile ? { data: resumeFile.data, mimeType: resumeFile.mime } : undefined;
+
+      await rewriteResumeStream(
+        jd, resume, aspiration, diagContent,
+        {
+          onResumeChunk: (chunk) => {
+            if (abortController.signal.aborted) return;
+            setResumeContent(prev => prev + chunk);
+          },
+          onResumeComplete: (content) => {
+            setEditableResume(content);
+            setIsRewriting(false);
+          },
+          onError: (errorMsg) => {
+            console.error('Auto rewrite error:', errorMsg);
+            setIsRewriting(false);
+            // 自动重构失败不阻塞用户，静默处理
+          }
+        },
+        jdFileData,
+        resumeFileData
+      );
+    } catch (err: any) {
+      console.error('Auto rewrite exception:', err);
+      setIsRewriting(false);
+    }
+  };
+
   const handleAnalysis = useCallback(async () => {
     if (!jd.trim() && !jdFile && !resume.trim() && !resumeFile) {
       setError('请提供 JD 或 简历内容。');
@@ -519,6 +556,10 @@ const App: React.FC = () => {
             // 诊断完成，记录使用
             if (user) {
               logUsage(user.id, 'diagnosis');
+            }
+            // 诊断完成后自动触发重构（后台执行，不阻塞用户阅读诊断报告）
+            if (!abortController.signal.aborted) {
+              autoRewriteAfterDiagnosis(content, abortController);
             }
           },
           onError: (errorMsg) => {
@@ -641,60 +682,13 @@ const App: React.FC = () => {
     setStep('UPLOAD');
   };
 
-  const handleProceedToEditor = async () => {
-    // 检查使用限制（resume_edit 共享 diagnosis 体验次数）
-    if (user) {
-      const limitCheck = await checkUsageLimit(user.id, 'diagnosis', user.email || undefined);
-      if (!limitCheck.allowed) {
-        if (limitCheck.isTrialLimit) {
-          setUsageLimitError(`简历诊断+全局重构免费体验次数已用完（共${limitCheck.limit}次）。升级 VIP 享每日50次使用！`);
-        } else {
-          setUsageLimitError(`今日使用次数已达上限（${limitCheck.limit}次/天）。`);
-        }
-        return;
-      }
+  const handleProceedToEditor = () => {
+    // 重构已在诊断完成后自动执行，这里直接跳转编辑器
+    if (editableResume) {
+      // 重构已完成，直接进入编辑器
+      setStep('EDITOR');
     }
-
-    // 点击后触发 AI 全局重构，先显示 loading
-    setIsRewriting(true);
-    setResumeContent('');
-    
-    try {
-      const jdFileData: FileData | undefined = jdFile ? { data: jdFile.data, mimeType: jdFile.mime } : undefined;
-      const resumeFileData: FileData | undefined = resumeFile ? { data: resumeFile.data, mimeType: resumeFile.mime } : undefined;
-      
-      await rewriteResumeStream(
-        jd, resume, aspiration, diagnosisContent,
-        {
-          onResumeChunk: (chunk) => {
-            setResumeContent(prev => prev + chunk);
-          },
-          onResumeComplete: (content) => {
-            setEditableResume(content);
-            setIsRewriting(false);
-            setStep('EDITOR');
-          },
-          onError: (errorMsg) => {
-            console.error('Rewrite error:', errorMsg);
-            if (errorMsg.includes('LIMIT_EXCEEDED') || errorMsg.includes('UNAUTHORIZED')) {
-              setUsageLimitError('使用次数已达上限，升级 VIP 解锁更多使用次数！');
-            } else {
-              setError(`重构失败：${errorMsg}`);
-            }
-            setIsRewriting(false);
-          }
-        },
-        jdFileData,
-        resumeFileData
-      );
-    } catch (err: any) {
-      setIsRewriting(false);
-      if (err.message?.includes('LIMIT_EXCEEDED') || err.message?.includes('UNAUTHORIZED')) {
-        setUsageLimitError('使用次数已达上限，升级 VIP 解锁更多使用次数！');
-      } else {
-        setError(`重构失败：${err.message || '未知错误'}`);
-      }
-    }
+    // 如果还在重构中（isRewriting=true），按钮会显示"优化中..."且 disabled，不会走到这里
   };
 
 
@@ -1970,20 +1964,24 @@ const App: React.FC = () => {
                     <div className="flex justify-center">
                       <button 
                         onClick={handleProceedToEditor}
-                        disabled={isRewriting}
+                        disabled={isRewriting && !editableResume}
                         className={`group px-6 py-4 rounded-lg text-[13px] font-medium flex flex-col items-center gap-2 transition-all min-w-[200px] ${
-                          isRewriting 
+                          isRewriting && !editableResume
                             ? 'bg-zinc-700 cursor-wait' 
-                            : 'bg-zinc-900 hover:bg-zinc-800'
+                            : editableResume
+                              ? 'bg-zinc-900 hover:bg-zinc-800'
+                              : 'bg-zinc-700 cursor-wait'
                         } text-white`}
                       >
-                        {isRewriting ? (
+                        {isRewriting && !editableResume ? (
                           <Loader2 size={18} className="text-zinc-300 animate-spin" />
-                        ) : (
+                        ) : editableResume ? (
                           <Sparkles size={18} className="text-zinc-300" />
+                        ) : (
+                          <Loader2 size={18} className="text-zinc-300 animate-spin" />
                         )}
-                        <span>{isRewriting ? '优化中...' : 'AI 优化简历'}</span>
-                        <span className="text-[11px] text-zinc-400 font-normal">{isRewriting ? '请稍候，AI 正在优化简历' : '基于诊断结果智能优化，支持逐句精调'}</span>
+                        <span>{editableResume ? '查看优化结果' : '优化中...'}</span>
+                        <span className="text-[11px] text-zinc-400 font-normal">{editableResume ? '简历已优化完成，点击查看并精调' : '请稍候，AI 正在后台优化简历'}</span>
                       </button>
                     </div>
                     {isRewriting && resumeContent && (

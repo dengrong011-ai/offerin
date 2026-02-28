@@ -58,7 +58,7 @@ const MEMBERSHIP_LIMITS: Record<string, {
 };
 
 // 允许的 actionType 白名单（防止前端传入非法值绕过配额）
-const ALLOWED_ACTION_TYPES = new Set(['diagnosis', 'interview', 'translation', 'resume_edit']);
+const ALLOWED_ACTION_TYPES = new Set(['diagnosis', 'interview', 'translation', 'resume_edit', 'auto_rewrite']);
 
 // 允许的模型白名单（防止调用非预期的昂贵模型）
 const ALLOWED_MODELS = new Set([
@@ -183,6 +183,11 @@ async function checkAndLogUsage(
   // Pro 用户无限制
   if (membershipType === 'pro') {
     await supabaseAdmin.from('usage_logs').insert({ user_id: userId, action_type: actionType });
+    return { allowed: true };
+  }
+
+  // auto_rewrite: 诊断后自动触发的重构，不单独计配额（诊断时已记录）
+  if (actionType === 'auto_rewrite') {
     return { allowed: true };
   }
 

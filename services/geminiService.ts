@@ -188,11 +188,12 @@ const RESUME_SYSTEM_INSTRUCTION = `你是资深简历专家，专注互联网/AI
 
 **【禁止使用的标题/关键词】**
 禁止在简历中使用以下词汇作为标题或内容：核心加分项、亮点总结、优势总结、关键优势、核心竞争力总结、个人亮点、职业亮点。
-简历标题只能使用：工作经历、项目经历、教育背景、专业技能、个人项目、实习经历 等常规标题。
+简历标题只能使用：工作经历、教育背景、专业技能、个人项目、实习经历 等常规标题。
 
 **【严格禁止】**
 1. 禁止添加任何注释、备注或说明性文字（如"注："、"说明："、"备注："、"*注*"等）
 2. 禁止将工作经历拆分成多个部分（如"工作经历"和"工作经历（早期）"），所有工作经历必须放在同一个"## 工作经历"模块下，按时间倒序排列
+3. 不要把工作经历拆分成“工作经历”和“项目经历”进行重复叙述，保持整个简历的连贯性
 3. 禁止在简历条目下添加任何解释性注释（如"此项目体现..."、"此经历证明..."等）
 4. 简历内容必须是纯粹的简历格式，不包含任何元说明或括号备注
 5. 绝对禁止虚构任何原简历内容不存在的项目、经历、技能和数据
@@ -338,7 +339,8 @@ export const rewriteResumeStream = async (
   jdFile?: FileData,
   resumeFile?: FileData
 ) => {
-  const client = createAIClient('diagnosis');
+  // auto_rewrite: 不单独计配额（诊断时已记录）
+  const client = createAIClient('auto_rewrite');
   const { buildParts, baseContext } = buildAnalysisContext(jd, resume, aspiration, jdFile, resumeFile);
 
   const parts = buildParts();
