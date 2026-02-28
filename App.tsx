@@ -2179,6 +2179,7 @@ const App: React.FC = () => {
                   jd={jd}
                   diagnosis={diagnosisContent}
                   onReplace={handleSelectionReplace}
+                  onShowLimitError={setUsageLimitError}
                 />
               </div>
             </div>

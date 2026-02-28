@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Scissors, BarChart3, Target, RefreshCw, MessageSquare, Loader2, X, Check, Undo2, Send } from 'lucide-react';
+import { Scissors, BarChart3, Target, RefreshCw, MessageSquare, Loader2, X, Check, Undo2, Send, AlertCircle } from 'lucide-react';
 import { rewriteSelectedText, type RewriteAction, type RewriteStreamCallbacks } from '../services/geminiService';
 
 interface SelectionToolbarProps {
@@ -8,6 +8,7 @@ interface SelectionToolbarProps {
   jd?: string;
   diagnosis?: string;
   onReplace: (oldText: string, newText: string) => void;
+  onShowLimitError?: (message: string) => void;
 }
 
 interface ToolbarPosition {
@@ -21,6 +22,7 @@ const SelectionToolbar: React.FC<SelectionToolbarProps> = ({
   jd,
   diagnosis,
   onReplace,
+  onShowLimitError,
 }) => {
   const [visible, setVisible] = useState(false);
   const [position, setPosition] = useState<ToolbarPosition>({ top: 0, left: 0 });
@@ -30,6 +32,7 @@ const SelectionToolbar: React.FC<SelectionToolbarProps> = ({
   const [isRewriting, setIsRewriting] = useState(false);
   const [rewriteResult, setRewriteResult] = useState('');
   const [streamingText, setStreamingText] = useState('');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const customInputRef = useRef<HTMLInputElement>(null);
   const originalTextRef = useRef('');
@@ -117,6 +120,7 @@ const SelectionToolbar: React.FC<SelectionToolbarProps> = ({
           setRewriteResult('');
           setStreamingText('');
           setShowCustomInput(false);
+          setErrorMessage(null);
         } else if (!isRewriting) {
           setVisible(false);
         }
@@ -159,6 +163,7 @@ const SelectionToolbar: React.FC<SelectionToolbarProps> = ({
     setRewriteResult('');
     setStreamingText('');
     setShowCustomInput(false);
+    setErrorMessage(null);
 
     const callbacks: RewriteStreamCallbacks = {
       onChunk: (chunk) => {
@@ -173,6 +178,19 @@ const SelectionToolbar: React.FC<SelectionToolbarProps> = ({
         console.error('Rewrite error:', error);
         setIsRewriting(false);
         setStreamingText('');
+        
+        // 检查是否是使用限制错误
+        if (error.includes('USAGE_LIMIT_EXCEEDED') || error.includes('使用次数') || error.includes('上限') || error.includes('403')) {
+          const limitMessage = '精调功能使用次数已达上限。升级 VIP 享更多使用次数！';
+          setErrorMessage(limitMessage);
+          // 同时触发全局提示弹窗
+          if (onShowLimitError) {
+            onShowLimitError(limitMessage);
+            setVisible(false);
+          }
+        } else {
+          setErrorMessage(error || '重写失败，请稍后重试');
+        }
       },
     };
 
@@ -184,8 +202,19 @@ const SelectionToolbar: React.FC<SelectionToolbarProps> = ({
         { fullResume, jd, diagnosis },
         callbacks
       );
-    } catch {
+    } catch (err: any) {
       setIsRewriting(false);
+      // 检查是否是使用限制错误
+      const errorMsg = err?.message || '重写失败';
+      if (errorMsg.includes('USAGE_LIMIT_EXCEEDED') || errorMsg.includes('使用次数') || errorMsg.includes('上限') || errorMsg.includes('403')) {
+        const limitMessage = '精调功能使用次数已达上限。升级 VIP 享更多使用次数！';
+        if (onShowLimitError) {
+          onShowLimitError(limitMessage);
+          setVisible(false);
+        } else {
+          setErrorMessage(limitMessage);
+        }
+      }
     }
   };
 
@@ -202,6 +231,7 @@ const SelectionToolbar: React.FC<SelectionToolbarProps> = ({
     setRewriteResult('');
     setStreamingText('');
     setIsRewriting(false);
+    setErrorMessage(null);
   };
 
   const handleCustomSubmit = () => {
@@ -221,8 +251,26 @@ const SelectionToolbar: React.FC<SelectionToolbarProps> = ({
       className="absolute z-50 animate-fade-in"
       style={{ top: position.top, left: position.left }}
     >
+      {/* 错误提示区 */}
+      {errorMessage && !onShowLimitError && (
+        <div className="mb-2 bg-white border border-red-200 rounded-lg shadow-lg max-w-[360px] overflow-hidden">
+          <div className="px-3 py-3 flex items-start gap-2">
+            <AlertCircle size={14} className="text-red-500 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="text-[12px] text-red-600">{errorMessage}</p>
+            </div>
+            <button
+              onClick={() => { setErrorMessage(null); setVisible(false); }}
+              className="p-1 text-zinc-400 hover:text-zinc-600 transition-colors"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 结果预览区 */}
-      {(displayText || isRewriting) && (
+      {(displayText || isRewriting) && !errorMessage && (
         <div className="mb-2 bg-white border border-zinc-200 rounded-lg shadow-lg max-w-[360px] overflow-hidden">
           <div className="px-3 py-2 border-b border-zinc-100 flex items-center justify-between">
             <span className="text-[11px] font-medium text-zinc-500 flex items-center gap-1.5">
@@ -279,7 +327,7 @@ const SelectionToolbar: React.FC<SelectionToolbarProps> = ({
       )}
 
       {/* 快捷操作栏 */}
-      {!isRewriting && !rewriteResult && (
+      {!isRewriting && !rewriteResult && !errorMessage && (
         <div className="bg-white border border-zinc-200 rounded-lg shadow-lg overflow-hidden">
           <div className="flex items-center gap-0.5 px-1.5 py-1.5">
             <button
