@@ -433,9 +433,9 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
       const limitCheck = await checkUsageLimit(user.id, 'interview', user.email || undefined);
       if (!limitCheck.allowed) {
         if (limitCheck.isTrialLimit) {
-          setUsageLimitError(`模拟面试免费体验次数已用完（共${limitCheck.limit}次）。升级 VIP 享每月10次面试！`);
+          setUsageLimitError(`模拟面试免费体验次数已用完（共${limitCheck.limit}次）。升级 VIP 享无限次面试！`);
         } else {
-          setUsageLimitError(`本月面试次数已达上限（${limitCheck.limit}次/月）。`);
+          setUsageLimitError(`本月面试次数已达上限。`);
         }
         return;
       }
@@ -520,9 +520,9 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
       const limitCheck = await checkUsageLimit(user.id, 'interview', user.email || undefined);
       if (!limitCheck.allowed) {
         if (limitCheck.isTrialLimit) {
-          setUsageLimitError(`模拟面试免费体验次数已用完（共${limitCheck.limit}次）。升级 VIP 享每月10次面试！`);
+          setUsageLimitError(`模拟面试免费体验次数已用完（共${limitCheck.limit}次）。升级 VIP 享无限次面试！`);
         } else {
-          setUsageLimitError(`本月面试次数已达上限（${limitCheck.limit}次/月）。`);
+          setUsageLimitError(`本月面试次数已达上限。`);
         }
         return;
       }
@@ -906,12 +906,14 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
     setShowExportMenu(false);
     
     // 检查导出权限
+    let isFirstFree = false;
     if (user) {
       const exportCheck = await checkInterviewExportPermission(user.id, user.email || undefined);
       if (!exportCheck.allowed) {
         setUsageLimitError(exportCheck.reason || '面试记录导出为 VIP 专属功能，请升级会员');
         return;
       }
+      isFirstFree = exportCheck.isFirstFree || false;
     } else {
       setUsageLimitError('请先登录后再导出面试记录');
       return;
@@ -954,6 +956,19 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
     link.download = `面试记录_${modeLabel}_${timestamp}.md`;
     link.click();
     URL.revokeObjectURL(link.href);
+
+    // 如果是首次免费导出，更新数据库标记
+    if (isFirstFree && user) {
+      try {
+        const { supabase } = await import('../services/supabaseClient');
+        await supabase
+          .from('profiles')
+          .update({ first_interview_export_used: true, updated_at: new Date().toISOString() })
+          .eq('id', user.id);
+      } catch (e) {
+        console.error('更新首次导出标记失败:', e);
+      }
+    }
   };
 
   // 导出为图片
@@ -961,12 +976,14 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
     if (!chatContainerRef.current) return;
     
     // 检查导出权限
+    let isFirstFree = false;
     if (user) {
       const exportCheck = await checkInterviewExportPermission(user.id, user.email || undefined);
       if (!exportCheck.allowed) {
         setUsageLimitError(exportCheck.reason || '面试记录导出为 VIP 专属功能，请升级会员');
         return;
       }
+      isFirstFree = exportCheck.isFirstFree || false;
     } else {
       setUsageLimitError('请先登录后再导出面试记录');
       return;
@@ -992,6 +1009,19 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
       link.download = `面试记录_${modeLabel}_${new Date().toISOString().split('T')[0]}.png`;
       link.href = imgData;
       link.click();
+
+      // 如果是首次免费导出，更新数据库标记
+      if (isFirstFree && user) {
+        try {
+          const { supabase } = await import('../services/supabaseClient');
+          await supabase
+            .from('profiles')
+            .update({ first_interview_export_used: true, updated_at: new Date().toISOString() })
+            .eq('id', user.id);
+        } catch (e) {
+          console.error('更新首次导出标记失败:', e);
+        }
+      }
     } catch (error) {
       console.error('Image export error:', error);
     } finally {

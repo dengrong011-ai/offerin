@@ -147,7 +147,8 @@ const MEMBERSHIP_LIMITS: Record<string, {
     translation_trial_count: -1,
     daily_diagnosis: 50,
     daily_interview: -1,         // 面试不限每日，改为月限
-    monthly_interview: 10,       // 每月10次面试
+    monthly_interview: 100,      // 每月100次面试（显示为无限）
+    interview_warning_threshold: 80, // 月使用 >80 次发出预警
   },
   pro: {
     diagnosis_trial_count: -1,
@@ -161,8 +162,8 @@ const MEMBERSHIP_LIMITS: Record<string, {
     diagnosis_trial_count: -1,   // 不限体验次数（用日限额控制）
     interview_trial_count: -1,
     translation_trial_count: -1,
-    daily_diagnosis: 10,         // 每日所有操作共 10 次
-    daily_interview: 10,
+    daily_diagnosis: 20,         // 每日所有操作共 20 次
+    daily_interview: 20,
     monthly_interview: -1,       // 不限月度，用日限额统一控制
   },
 };
@@ -358,10 +359,12 @@ async function checkAndLogUsage(
   }
 
   if (membershipType === 'vip') {
-    // VIP 用户：面试按月限制（10次/月），其他按日限制（50次/天）
+    // VIP 用户：面试按月限制（100次/月，显示为无限），其他按日限制（50次/天）
     if (actionType === 'interview') {
       // 月度面试限额
       const monthlyLimit = limits.monthly_interview;
+      const warningThreshold = (limits as any).interview_warning_threshold || 80;
+      
       if (monthlyLimit > 0) {
         const now = new Date();
         const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
@@ -375,7 +378,16 @@ async function checkAndLogUsage(
           .gte('created_at', monthStart)
           .lte('created_at', monthEnd);
 
-        if ((count || 0) >= monthlyLimit) {
+        const currentCount = count || 0;
+
+        // 预警：使用次数超过 80 次时记录日志（可对接通知系统）
+        if (currentCount >= warningThreshold && currentCount < monthlyLimit) {
+          console.warn(`⚠️ VIP 用户高频使用预警: userId=${userId}, 本月面试次数=${currentCount + 1}/${monthlyLimit}`);
+          // TODO: 可对接邮件/Slack 通知
+        }
+
+        if (currentCount >= monthlyLimit) {
+          console.error(`🚫 VIP 用户月度面试超限: userId=${userId}, 本月面试次数=${currentCount}/${monthlyLimit}`);
           return { allowed: false, reason: 'MONTHLY_INTERVIEW_LIMIT_EXCEEDED' };
         }
       }

@@ -307,12 +307,12 @@ export const checkTranslationLimit = async (
 };
 
 // 检查面试记录导出权限
-// 免费用户：需单次付费 ¥4.9
-// VIP用户：支持
+// 免费用户：首次免费，之后需付费 ¥4.9
+// VIP用户：无限
 export const checkInterviewExportPermission = async (
   userId: string,
   _userEmail?: string
-): Promise<{ allowed: boolean; reason?: string; needPurchase?: boolean }> => {
+): Promise<{ allowed: boolean; reason?: string; needPurchase?: boolean; isFirstFree?: boolean }> => {
   try {
     // 获取用户资料
     const profile = await getUserProfile(userId);
@@ -323,8 +323,14 @@ export const checkInterviewExportPermission = async (
     const membership = profile.membership_type;
     const limits = MEMBERSHIP_LIMITS[membership];
     
+    // VIP/Pro/Special 用户直接允许
     if (limits.can_export_interview) {
       return { allowed: true };
+    }
+
+    // 免费用户：检查是否是首次导出
+    if (!profile.first_interview_export_used) {
+      return { allowed: true, isFirstFree: true };
     }
 
     return { allowed: false, reason: '面试记录保存需付费 ¥4.9/次，或升级 VIP 免费保存', needPurchase: true };

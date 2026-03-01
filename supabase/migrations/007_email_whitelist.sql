@@ -37,5 +37,5 @@ ON CONFLICT (email) DO NOTHING;
 
 -- 添加注释
 COMMENT ON TABLE email_whitelist IS '邮箱白名单表：存储 VIP/Special/Pro 特权用户';
-COMMENT ON COLUMN email_whitelist.whitelist_type IS 'vip=VIP会员特权, special=每日10次限额, pro=无限制管理员';
+COMMENT ON COLUMN email_whitelist.whitelist_type IS 'vip=VIP会员特权, special=每日20次限额, pro=无限制管理员';
 COMMENT ON COLUMN email_whitelist.expires_at IS '白名单过期时间，NULL表示永不过期';

@@ -22,7 +22,7 @@ import { jsPDF } from 'jspdf';
 type Step = 'INPUT' | 'UPLOAD' | 'ANALYSIS' | 'EDITOR' | 'ENGLISH_VERSION' | 'INTERVIEW' | 'RESUME_LIBRARY' | 'INTERVIEW_LIBRARY';
 
 const App: React.FC = () => {
-  const { user, profile, loading: authLoading } = useAuth();
+  const { user, profile, loading: authLoading, refreshProfile } = useAuth();
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [showVIPModal, setShowVIPModal] = useState(false);
   const [showDownloadModal, setShowDownloadModal] = useState(false);
@@ -762,8 +762,8 @@ const App: React.FC = () => {
 
   // 每页可用内容高度（A4高度 - 上下padding）
   const CONTENT_HEIGHT_PER_PAGE = A4_HEIGHT_PX - PAGE_PADDING_TOP - PAGE_PADDING_BOTTOM; // 1043px
-  // 与 PDF 导出一致的容差：允许内容侵入底部 padding 最多 30px（保留 10px 底部边距）
-  const PAGE_TOLERANCE = 30;
+  // 与 PDF 导出一致的容差：允许内容侵入底部 padding 最多 50px（更宽松，避免微小溢出导致分页）
+  const PAGE_TOLERANCE = 50;
 
   const handleExportImage = async () => {
     const element = document.getElementById('resume-measure-container');
@@ -994,8 +994,8 @@ const App: React.FC = () => {
       console.log(`实际内容高度: ${Math.round(actualContentHeight / canvasScale)}px, 可绘制高度: ${Math.round(maxDrawableHeight / canvasScale)}px`);
       
       // 使用 actualContentHeight（减去额外padding后的真实内容高度）来判断分页
-      // 容差：允许内容稍微超出可绘制高度，占用部分底部边距（最多占用30px，保留10px底部边距）
-      const toleranceInCanvas = 30 * canvasScale;
+      // 容差：允许内容稍微超出可绘制高度，占用部分底部边距（最多占用50px，更宽松避免微小溢出分页）
+      const toleranceInCanvas = 50 * canvasScale;
       if (actualContentHeight <= maxDrawableHeight + toleranceInCanvas) {
         // 内容可以放在一页内，使用实际内容高度作为绘制范围
         pageBreaksInCanvas.push(actualContentHeight);
@@ -1106,13 +1106,34 @@ const App: React.FC = () => {
       return;
     }
 
-    // 2. VIP/Pro 用户直接下载（白名单在服务端处理，profile 已反映真实状态）
-    if (profile?.membership_type === 'vip' || profile?.membership_type === 'pro') {
+    // 2. VIP/Pro/Special 用户直接下载（白名单在服务端处理，profile 已反映真实状态）
+    if (profile?.membership_type === 'vip' || profile?.membership_type === 'pro' || profile?.membership_type === 'special') {
       await doExportPDF();
       return;
     }
 
-    // 3. 免费用户弹出付费弹窗
+    // 3. 免费用户：检查是否是首次导出（首次免费）
+    if (profile && !profile.first_pdf_export_used) {
+      // 首次免费，直接导出并标记已使用
+      await doExportPDF();
+      // 更新数据库标记首次导出已使用
+      try {
+        const { supabase } = await import('./services/supabaseClient');
+        await supabase
+          .from('profiles')
+          .update({ first_pdf_export_used: true, updated_at: new Date().toISOString() })
+          .eq('id', user.id);
+        // 刷新 profile
+        if (refreshProfile) {
+          await refreshProfile();
+        }
+      } catch (e) {
+        console.error('更新首次导出标记失败:', e);
+      }
+      return;
+    }
+
+    // 4. 非首次免费用户弹出付费弹窗
     setShowDownloadModal(true);
   };
 
@@ -1774,11 +1795,11 @@ const App: React.FC = () => {
                       </div>
                       <div className="flex items-center gap-2.5 text-[13px] text-zinc-600">
                         <span className="w-5 h-5 rounded bg-zinc-100 flex items-center justify-center text-[10px] font-semibold text-zinc-500 shrink-0">¥</span>
-                        <span>PDF 导出 ¥4.9/次</span>
+                        <span>PDF 导出 首次免费 / ¥4.9/次</span>
                       </div>
                       <div className="flex items-center gap-2.5 text-[13px] text-zinc-600">
                         <span className="w-5 h-5 rounded bg-zinc-100 flex items-center justify-center text-[10px] font-semibold text-zinc-500 shrink-0">¥</span>
-                        <span>面试记录保存 ¥4.9/次</span>
+                        <span>面试记录保存 首次免费 / ¥4.9/次</span>
                       </div>
                       <div className="flex items-center gap-2.5 text-[13px] text-zinc-600">
                         <span className="w-5 h-5 rounded bg-zinc-100 flex items-center justify-center shrink-0">
@@ -1822,7 +1843,7 @@ const App: React.FC = () => {
                         <span className="w-5 h-5 rounded bg-zinc-200 flex items-center justify-center shrink-0">
                           <CheckCircle2 size={12} className="text-zinc-600" />
                         </span>
-                        <span>模拟面试 <span className="text-zinc-900 font-semibold">10次/月</span></span>
+                        <span>模拟面试 <span className="text-zinc-900 font-semibold">无限次</span></span>
                       </div>
                       <div className="flex items-center gap-2.5 text-[13px] text-zinc-700">
                         <span className="w-5 h-5 rounded bg-zinc-200 flex items-center justify-center shrink-0">
@@ -1976,25 +1997,25 @@ const App: React.FC = () => {
                           <div className="w-4.5 h-4.5 rounded bg-zinc-200 flex items-center justify-center shrink-0">
                             <CheckCircle2 size={11} className="text-zinc-500" />
                           </div>
-                          <span>上班搭子 · 你的最佳电子宠物</span>
+                          <span>上班搭子 · 随时陪伴你的电子宠物</span>
                         </div>
                         <div className="flex items-center gap-2 text-[12px] text-zinc-500">
                           <div className="w-4.5 h-4.5 rounded bg-zinc-200 flex items-center justify-center shrink-0">
                             <CheckCircle2 size={11} className="text-zinc-500" />
                           </div>
-                          <span>嘴替担当 · 帮你怼天怼地怼需求</span>
+                          <span>定时抖动 · 偶尔蹦跶提醒你它在</span>
                         </div>
                         <div className="flex items-center gap-2 text-[12px] text-zinc-500">
                           <div className="w-4.5 h-4.5 rounded bg-zinc-200 flex items-center justify-center shrink-0">
                             <CheckCircle2 size={11} className="text-zinc-500" />
                           </div>
-                          <span>互联网嘴替 · 懂梗会整活不尬聊</span>
+                          <span>心理咨询师 · 承接你的上班情绪</span>
                         </div>
                         <div className="flex items-center gap-2 text-[12px] text-zinc-500">
                           <div className="w-4.5 h-4.5 rounded bg-zinc-200 flex items-center justify-center shrink-0">
                             <CheckCircle2 size={11} className="text-zinc-500" />
                           </div>
-                          <span>定时抖动 · 每 30 分钟蹦跶提醒你它在</span>
+                          <span>职场嘴替 · 懂梗能怼帮你整活</span>
                         </div>
                       </div>
 

@@ -32,10 +32,12 @@ export interface UserProfile {
   email: string;
   nickname: string;
   avatar_url: string | null;
-  membership_type: 'free' | 'vip' | 'pro';
+  membership_type: 'free' | 'vip' | 'pro' | 'special';
   daily_usage_count: number;
   last_usage_date: string | null;
   vip_expires_at: string | null;
+  first_pdf_export_used: boolean;           // 是否已使用首次免费 PDF 导出
+  first_interview_export_used: boolean;     // 是否已使用首次免费面试记录导出
   created_at: string;
   updated_at: string;
 }
@@ -71,7 +73,8 @@ export const MEMBERSHIP_LIMITS = {
     daily_diagnosis: 50,           // VIP 每日50次诊断上限
     daily_interview: -1,           // VIP 面试不限每日，改为月限
     daily_total: 50,               // VIP 每日总操作上限
-    monthly_interview: 10,         // VIP 每月10次面试
+    monthly_interview: 100,        // VIP 每月100次面试（显示为无限）
+    interview_warning_threshold: 80, // 月使用 >80 次发出预警
     can_download: true,            // VIP 可以无限下载
     can_export_interview: true,    // VIP 支持面试记录导出
     can_translate: true,           // VIP 翻译无限
@@ -94,9 +97,9 @@ export const MEMBERSHIP_LIMITS = {
     diagnosis_trial_count: -1,     // 不限体验次数
     interview_trial_count: -1,
     translation_trial_count: -1,
-    daily_diagnosis: 10,           // 每日所有操作共 10 次
-    daily_interview: 10,
-    daily_total: 10,
+    daily_diagnosis: 20,           // 每日所有操作共 20 次
+    daily_interview: 20,
+    daily_total: 20,
     monthly_interview: -1,
     can_download: true,
     can_export_interview: true,

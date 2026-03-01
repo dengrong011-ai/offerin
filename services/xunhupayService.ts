@@ -226,7 +226,7 @@ export const XUNHU_PRODUCTS: Record<XunhuProductType, XunhuProduct> = {
     name: 'Offerin VIP月度会员',
     price: '29.90',
     priceInCents: 2990,
-    description: '无限简历诊断、模拟面试10次/月、PDF导出',
+    description: '无限简历诊断、模拟面试无限次、PDF导出',
   },
   resume_download: {
     id: 'resume_download',
