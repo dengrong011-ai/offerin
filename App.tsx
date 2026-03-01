@@ -1899,7 +1899,7 @@ const App: React.FC = () => {
                       </div>
                       
                       <h3 className="font-semibold text-[17px] text-zinc-800 mb-2">
-                        👻 摸鱼小精灵
+                        👻 摸鱼搭子
                       </h3>
                       <p className="text-zinc-500 text-[13px] leading-relaxed mb-4">
                         懂梗会整活的桌面小精灵，上班摸鱼解闷、划水聊天、吐槽搭子
