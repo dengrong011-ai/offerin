@@ -27,7 +27,7 @@ export const VIP_PLANS: VIPPlan[] = [
     duration: 30,
     description: '求职黄金期必备',
     features: [
-      '简历诊断 50次/天',
+      '简历诊断 无限次',
       '模拟面试 无限次',
       'PDF 导出无限',
       '英文简历翻译无限',

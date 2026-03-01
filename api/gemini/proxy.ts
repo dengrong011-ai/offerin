@@ -145,10 +145,12 @@ const MEMBERSHIP_LIMITS: Record<string, {
     diagnosis_trial_count: -1,
     interview_trial_count: -1,
     translation_trial_count: -1,
-    daily_diagnosis: 50,
-    daily_interview: -1,         // 面试不限每日，改为月限
-    monthly_interview: 100,      // 每月100次面试（显示为无限）
-    interview_warning_threshold: 80, // 月使用 >80 次发出预警
+    daily_diagnosis: -1,          // 诊断不限每日，改为月限
+    daily_interview: -1,          // 面试不限每日，改为月限
+    monthly_diagnosis: 200,       // 每月200次诊断（显示为无限）
+    monthly_interview: 100,       // 每月100次面试（显示为无限）
+    diagnosis_warning_threshold: 100, // 诊断月使用 >100 次发出预警
+    interview_warning_threshold: 80,  // 面试月使用 >80 次发出预警
   },
   pro: {
     diagnosis_trial_count: -1,
@@ -380,10 +382,9 @@ async function checkAndLogUsage(
 
         const currentCount = count || 0;
 
-        // 预警：使用次数超过 80 次时记录日志（可对接通知系统）
+        // 预警：使用次数超过阈值时记录日志
         if (currentCount >= warningThreshold && currentCount < monthlyLimit) {
           console.warn(`⚠️ VIP 用户高频使用预警: userId=${userId}, 本月面试次数=${currentCount + 1}/${monthlyLimit}`);
-          // TODO: 可对接邮件/Slack 通知
         }
 
         if (currentCount >= monthlyLimit) {
@@ -391,25 +392,39 @@ async function checkAndLogUsage(
           return { allowed: false, reason: 'MONTHLY_INTERVIEW_LIMIT_EXCEEDED' };
         }
       }
-    } else {
-      // 诊断/翻译/编辑 按日限制
-      const today = new Date().toISOString().split('T')[0];
-      const dailyLimit = limits.daily_diagnosis; // 统一用 daily_diagnosis (50)
-
-      if (dailyLimit > 0) {
+    } else if (actionType === 'diagnosis' || actionType === 'resume_edit' || actionType === 'auto_rewrite') {
+      // 诊断/编辑 按月限制（200次/月）
+      const monthlyLimit = (limits as any).monthly_diagnosis || -1;
+      const warningThreshold = (limits as any).diagnosis_warning_threshold || 100;
+      
+      if (monthlyLimit > 0) {
+        const now = new Date();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+        const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999).toISOString();
+        
+        // 统计诊断相关的所有操作
         const { count } = await supabaseAdmin
           .from('usage_logs')
           .select('*', { count: 'exact', head: true })
           .eq('user_id', userId)
-          .eq('action_type', actionType)
-          .gte('created_at', `${today}T00:00:00.000Z`)
-          .lte('created_at', `${today}T23:59:59.999Z`);
+          .in('action_type', ['diagnosis', 'resume_edit', 'auto_rewrite'])
+          .gte('created_at', monthStart)
+          .lte('created_at', monthEnd);
 
-        if ((count || 0) >= dailyLimit) {
-          return { allowed: false, reason: 'DAILY_LIMIT_EXCEEDED' };
+        const currentCount = count || 0;
+
+        // 预警：使用次数超过阈值时记录日志
+        if (currentCount >= warningThreshold && currentCount < monthlyLimit) {
+          console.warn(`⚠️ VIP 用户高频使用预警: userId=${userId}, 本月诊断次数=${currentCount + 1}/${monthlyLimit}`);
+        }
+
+        if (currentCount >= monthlyLimit) {
+          console.error(`🚫 VIP 用户月度诊断超限: userId=${userId}, 本月诊断次数=${currentCount}/${monthlyLimit}`);
+          return { allowed: false, reason: 'MONTHLY_DIAGNOSIS_LIMIT_EXCEEDED' };
         }
       }
     }
+    // 翻译暂不限制
   }
 
   // 记录使用

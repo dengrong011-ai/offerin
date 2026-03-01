@@ -1837,7 +1837,7 @@ const App: React.FC = () => {
                         <span className="w-5 h-5 rounded bg-zinc-200 flex items-center justify-center shrink-0">
                           <CheckCircle2 size={12} className="text-zinc-600" />
                         </span>
-                        <span>简历诊断 <span className="text-zinc-900 font-semibold">50次/天</span></span>
+                        <span>简历诊断 <span className="text-zinc-900 font-semibold">无限次</span></span>
                       </div>
                       <div className="flex items-center gap-2.5 text-[13px] text-zinc-700">
                         <span className="w-5 h-5 rounded bg-zinc-200 flex items-center justify-center shrink-0">

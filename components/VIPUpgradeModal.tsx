@@ -344,7 +344,7 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
                 
                 <div className="space-y-2.5">
                   {[
-                    { icon: FileText, text: '简历诊断 50次/天', desc: '智能分析，精准优化' },
+                    { icon: FileText, text: '简历诊断 无限次', desc: '智能分析，精准优化' },
                     { icon: MessageSquare, text: '模拟面试 无限次', desc: '多轮面试，全真模拟' },
                     { icon: Download, text: 'PDF 导出无限', desc: '一键下载，随时使用' },
                     { icon: Globe, text: '英文简历翻译无限', desc: '专业翻译，助力海外求职' },
