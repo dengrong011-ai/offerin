@@ -11,6 +11,8 @@
   "dependencies": {
     "@google/genai": "^1.40.0",
     "@supabase/supabase-js": "^2.96.0",
+    "@upstash/ratelimit": "^2.0.8",
+    "@upstash/redis": "^1.36.3",
     "html2canvas": "1.4.1",
     "jspdf": "2.5.1",
     "lucide-react": "^0.563.0",

@@ -1,5 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { Ratelimit } from '@upstash/ratelimit';
+import { Redis } from '@upstash/redis';
 
 /**
  * Vercel Serverless 代理 — 安全版
@@ -7,27 +9,120 @@ import { createClient } from '@supabase/supabase-js';
  * 安全特性：
  * 1. JWT 鉴权：验证 Supabase Auth Token，获取用户身份
  * 2. 服务端使用量校验：检查用户配额，防止前端绕过
- * 3. IP 级别 Rate Limiting：防止恶意刷接口
- * 4. VIP 白名单在服务端判断：不暴露给前端
+ * 3. IP 级别 Rate Limiting（Upstash Redis）：分布式限流，跨实例共享状态
+ * 4. VIP 白名单从数据库读取：不硬编码在代码中
  */
 
 export const maxDuration = 60;
 
 const GOOGLE_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
+// ============ Upstash Redis Rate Limiting ============
+
+// 初始化 Redis 客户端（懒加载）
+let redis: Redis | null = null;
+let ratelimit: Ratelimit | null = null;
+
+function getRedisRatelimit(): Ratelimit | null {
+  const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
+  const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+  
+  // 如果未配置 Upstash，返回 null（回退到内存限流）
+  if (!redisUrl || !redisToken) {
+    return null;
+  }
+  
+  if (!ratelimit) {
+    redis = new Redis({
+      url: redisUrl,
+      token: redisToken,
+    });
+    
+    // 滑动窗口限流：每分钟 30 次请求
+    ratelimit = new Ratelimit({
+      redis,
+      limiter: Ratelimit.slidingWindow(30, '1 m'),
+      analytics: true,
+      prefix: 'offerin:ratelimit:',
+    });
+  }
+  
+  return ratelimit;
+}
+
+// ============ 白名单缓存（减少数据库查询） ============
+
+interface WhitelistEntry {
+  email: string;
+  whitelist_type: 'vip' | 'special' | 'pro';
+  expires_at: string | null;
+  is_active: boolean;
+}
+
+// 缓存白名单，5 分钟过期
+let whitelistCache: Map<string, WhitelistEntry> | null = null;
+let whitelistCacheTime = 0;
+const WHITELIST_CACHE_TTL = 5 * 60 * 1000; // 5 分钟
+
+async function getWhitelistEntry(email: string, supabaseAdmin: SupabaseClient): Promise<WhitelistEntry | null> {
+  const now = Date.now();
+  
+  // 缓存过期或不存在，重新加载
+  if (!whitelistCache || now - whitelistCacheTime > WHITELIST_CACHE_TTL) {
+    const { data } = await supabaseAdmin
+      .from('email_whitelist')
+      .select('email, whitelist_type, expires_at, is_active')
+      .eq('is_active', true);
+    
+    whitelistCache = new Map();
+    if (data) {
+      for (const entry of data) {
+        whitelistCache.set(entry.email.toLowerCase(), entry);
+      }
+    }
+    whitelistCacheTime = now;
+  }
+  
+  const entry = whitelistCache.get(email.toLowerCase());
+  if (!entry) return null;
+  
+  // 检查是否过期
+  if (entry.expires_at && new Date(entry.expires_at) < new Date()) {
+    return null;
+  }
+  
+  return entry;
+}
+
+// ============ 内存级 Rate Limiting（Upstash 未配置时的回退方案） ============
+
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX = 30;
+
+function checkRateLimitMemory(key: string): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(key);
+  
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    return true;
+  }
+  
+  entry.count++;
+  return entry.count <= RATE_LIMIT_MAX;
+}
+
+function cleanupRateLimitMemory() {
+  const now = Date.now();
+  for (const [key, entry] of rateLimitMap) {
+    if (now > entry.resetAt) {
+      rateLimitMap.delete(key);
+    }
+  }
+}
+
 // ============ 服务端配置 ============
-
-// VIP 白名单（仅服务端可见）
-const VIP_WHITELIST_EMAILS = [
-  'dengrong011@gmail.com',
-];
-
-// Special 白名单：独立日限额组（每日所有操作共 10 次）
-const SPECIAL_WHITELIST_EMAILS = [
-  '814341364@qq.com',
-  'aliciagu36@hotmail.com',
-  '805786138@qq.com',
-];
 
 // 会员配额（服务端权威配置）
 const MEMBERSHIP_LIMITS: Record<string, {
@@ -83,36 +178,25 @@ const ALLOWED_MODELS = new Set([
   'gemini-2.0-flash-lite',
 ]);
 
-// ============ Rate Limiting（内存级，适合 Serverless 单实例） ============
+// ============ 统一 Rate Limiting 接口 ============
 
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-const RATE_LIMIT_WINDOW_MS = 60_000; // 1 分钟
-const RATE_LIMIT_MAX = 30; // 每分钟最多 30 次请求
-
-function checkRateLimit(key: string): boolean {
-  const now = Date.now();
-  const entry = rateLimitMap.get(key);
+async function checkRateLimit(key: string): Promise<{ success: boolean; remaining?: number }> {
+  const upstashRatelimit = getRedisRatelimit();
   
-  if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
-    return true;
-  }
-  
-  entry.count++;
-  if (entry.count > RATE_LIMIT_MAX) {
-    return false;
-  }
-  return true;
-}
-
-// 定期清理过期条目（防内存泄漏）
-function cleanupRateLimit() {
-  const now = Date.now();
-  for (const [key, entry] of rateLimitMap) {
-    if (now > entry.resetAt) {
-      rateLimitMap.delete(key);
+  if (upstashRatelimit) {
+    // 使用 Upstash Redis（分布式，跨实例共享）
+    try {
+      const result = await upstashRatelimit.limit(key);
+      return { success: result.success, remaining: result.remaining };
+    } catch (e) {
+      console.warn('Upstash rate limit error, falling back to memory:', e);
+      // Upstash 出错时回退到内存限流
     }
   }
+  
+  // 回退：内存级限流（单实例有效）
+  cleanupRateLimitMemory();
+  return { success: checkRateLimitMemory(key) };
 }
 
 // ============ Supabase 服务端客户端 ============
@@ -172,12 +256,13 @@ async function authenticateUser(authHeader: string | undefined): Promise<AuthRes
       }
     }
 
-    // 服务端白名单覆盖
-    if (user.email && VIP_WHITELIST_EMAILS.includes(user.email.toLowerCase())) {
-      membershipType = 'pro'; // 白名单等同 pro
-    }
-    if (user.email && SPECIAL_WHITELIST_EMAILS.includes(user.email.toLowerCase())) {
-      membershipType = 'special'; // special 白名单：日限10次
+    // 从数据库查询白名单（替代硬编码）
+    if (user.email) {
+      const whitelistEntry = await getWhitelistEntry(user.email, supabaseAdmin);
+      if (whitelistEntry) {
+        // 白名单类型映射到会员类型
+        membershipType = whitelistEntry.whitelist_type;
+      }
     }
 
     return {
@@ -327,6 +412,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const allowedOrigins = [
     'https://offerin.co',
     'https://www.offerin.co',
+    'http://localhost:3000',
     'http://localhost:5173',
     'http://localhost:5174',
   ];
@@ -350,12 +436,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: 'GEMINI_API_KEY not configured on server' });
   }
 
-  // ---- Rate Limiting (IP 级别) ----
-  cleanupRateLimit();
+  // ---- Rate Limiting (IP 级别，支持 Upstash Redis 分布式限流) ----
   const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || 
                    req.socket?.remoteAddress || 'unknown';
-  if (!checkRateLimit(clientIp)) {
-    return res.status(429).json({ error: 'RATE_LIMIT_EXCEEDED' });
+  const rateLimitResult = await checkRateLimit(clientIp);
+  if (!rateLimitResult.success) {
+    return res.status(429).json({ 
+      error: 'RATE_LIMIT_EXCEEDED',
+      remaining: rateLimitResult.remaining ?? 0
+    });
   }
 
   // ---- JWT 鉴权 ----

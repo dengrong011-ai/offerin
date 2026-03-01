@@ -23,7 +23,9 @@ const shouldUseProxy = (): boolean => {
 const getProxyUrl = (): string => '/api/gemini/proxy';
 
 const getLocalApiKey = (): string => {
-  return process.env.API_KEY || process.env.GEMINI_API_KEY || '';
+  // 本地开发时从环境变量获取（需要在 .env.local 中设置 VITE_GEMINI_API_KEY）
+  // 生产环境不使用此函数，所有请求都走服务端代理
+  return import.meta.env.VITE_GEMINI_API_KEY || '';
 };
 
 // 获取当前用户的 auth token（用于服务端鉴权）
