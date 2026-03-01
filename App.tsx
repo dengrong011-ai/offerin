@@ -1882,74 +1882,74 @@ const App: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* 功能二：AI 陪伴助手 */}
-                  <div className="bg-gradient-to-br from-purple-50 to-pink-50 border border-purple-100 rounded-2xl p-6 text-left relative overflow-hidden group hover:shadow-lg transition-all duration-300">
+                  {/* 功能二：AI 陪伴小精灵 */}
+                  <div className="bg-gradient-to-br from-emerald-50 to-cyan-50 border border-emerald-100 rounded-2xl p-6 text-left relative overflow-hidden group hover:shadow-lg transition-all duration-300">
                     {/* 装饰背景 */}
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-purple-100/50 rounded-full blur-3xl -mr-16 -mt-16" />
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-100/50 rounded-full blur-3xl -mr-16 -mt-16" />
                     
                     {/* 即将上线标签 */}
-                    <div className="absolute top-4 right-4 px-2.5 py-1 bg-purple-500 text-white text-[10px] font-semibold rounded-full flex items-center gap-1">
+                    <div className="absolute top-4 right-4 px-2.5 py-1 bg-emerald-500 text-white text-[10px] font-semibold rounded-full flex items-center gap-1">
                       <Sparkles size={10} />
                       即将上线
                     </div>
                     
                     <div className="relative">
                       <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center mb-4 shadow-sm">
-                        <MessageSquare size={24} className="text-purple-500" />
+                        <MessageSquare size={24} className="text-emerald-500" />
                       </div>
                       
                       <h3 className="font-semibold text-[18px] text-zinc-800 mb-2">
-                        🧚 AI 职场伙伴
+                        👻 摸鱼小精灵
                       </h3>
                       <p className="text-zinc-600 text-[13px] leading-relaxed mb-4">
-                        你的专属职场陪伴助手，随时在线倾听、解答困惑、提供心理支持
+                        懂梗会整活的桌面小精灵，上班摸鱼解闷、划水聊天、吐槽搭子
                       </p>
                       
                       <div className="space-y-2.5">
                         <div className="flex items-center gap-2 text-[12px] text-zinc-600">
-                          <div className="w-5 h-5 rounded bg-purple-100 flex items-center justify-center shrink-0">
-                            <CheckCircle2 size={12} className="text-purple-500" />
+                          <div className="w-5 h-5 rounded bg-emerald-100 flex items-center justify-center shrink-0">
+                            <CheckCircle2 size={12} className="text-emerald-500" />
                           </div>
-                          <span>职场困惑咨询 · 随时有人懂你</span>
+                          <span>摸鱼搭子 · 上班最佳电子宠物</span>
                         </div>
                         <div className="flex items-center gap-2 text-[12px] text-zinc-600">
-                          <div className="w-5 h-5 rounded bg-purple-100 flex items-center justify-center shrink-0">
-                            <CheckCircle2 size={12} className="text-purple-500" />
+                          <div className="w-5 h-5 rounded bg-emerald-100 flex items-center justify-center shrink-0">
+                            <CheckCircle2 size={12} className="text-emerald-500" />
                           </div>
-                          <span>情绪树洞 · 安全倾诉工作压力</span>
+                          <span>嘴替担当 · 帮你怼天怼地怼需求</span>
                         </div>
                         <div className="flex items-center gap-2 text-[12px] text-zinc-600">
-                          <div className="w-5 h-5 rounded bg-purple-100 flex items-center justify-center shrink-0">
-                            <CheckCircle2 size={12} className="text-purple-500" />
+                          <div className="w-5 h-5 rounded bg-emerald-100 flex items-center justify-center shrink-0">
+                            <CheckCircle2 size={12} className="text-emerald-500" />
                           </div>
-                          <span>温暖陪伴 · 定时问候关心你的状态</span>
+                          <span>互联网嘴替 · 懂梗会整活不尬聊</span>
                         </div>
                         <div className="flex items-center gap-2 text-[12px] text-zinc-600">
-                          <div className="w-5 h-5 rounded bg-purple-100 flex items-center justify-center shrink-0">
-                            <CheckCircle2 size={12} className="text-purple-500" />
+                          <div className="w-5 h-5 rounded bg-emerald-100 flex items-center justify-center shrink-0">
+                            <CheckCircle2 size={12} className="text-emerald-500" />
                           </div>
-                          <span>求职心理支持 · 陪你度过焦虑期</span>
+                          <span>定时抖动 · 每 30 分钟蹦跶提醒你它在</span>
                         </div>
                       </div>
 
                       {/* 对话预览 */}
-                      <div className="mt-5 p-3 bg-white/80 border border-purple-100 rounded-lg space-y-2">
+                      <div className="mt-5 p-3 bg-white/80 border border-emerald-100 rounded-lg space-y-2">
                         <div className="flex items-start gap-2">
-                          <span className="text-[14px]">🧚</span>
-                          <div className="bg-purple-50 rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-600">
-                            在呢～今天工作顺利吗？
+                          <span className="text-[14px]">👻</span>
+                          <div className="bg-emerald-50 rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-600">
+                            bro 醒醒，摸鱼时间到 🐟
                           </div>
                         </div>
                         <div className="flex items-start gap-2 justify-end">
                           <div className="bg-zinc-100 rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-600">
-                            唉，又被改需求了...
+                            我真的会谢，又改需求
                           </div>
-                          <span className="text-[14px]">😮‍💨</span>
+                          <span className="text-[14px]">💀</span>
                         </div>
                         <div className="flex items-start gap-2">
-                          <span className="text-[14px]">🧚</span>
-                          <div className="bg-purple-50 rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-600">
-                            懂！需求反复改真的很崩溃 🫂 要不要吐槽两句？我保密～
+                          <span className="text-[14px]">👻</span>
+                          <div className="bg-emerald-50 rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-600">
+                            绷不住了 😂 你们 PM 是不是每天摇骰子定需求
                           </div>
                         </div>
                       </div>
