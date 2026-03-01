@@ -20,6 +20,7 @@ import { transcribeAudio, extractTextFromFile } from '../services/geminiService'
 import { saveInterviewRecord } from '../services/interviewRecordService';
 import type { SavedInterviewRecord } from '../services/interviewRecordService';
 import { useAuth } from '../contexts/AuthContext';
+import { checkUsageLimit, logUsage, checkInterviewExportPermission } from '../services/authService';
 
 // Markdown 预处理：确保标题、列表等块级元素前后有空行，增强渲染鲁棒性
 const normalizeMarkdown = (text: string): string => {
@@ -1347,59 +1348,59 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
 
       {/* Settings Panel */}
       {showSettings && (
-        <div className="shrink-0 px-6 py-3 border-b border-zinc-200 bg-zinc-50">
-          <div className="max-w-2xl mx-auto space-y-3">
+        <div className="shrink-0 px-6 py-5 border-b border-zinc-200 bg-zinc-50/80">
+          <div className="max-w-2xl mx-auto space-y-5">
             {/* 第一行：面试模式 + 问答轮数 */}
-            <div className="flex items-center gap-6">
+            <div className="flex items-center gap-8">
               {/* 面试模式选择 */}
-              <div className="flex items-center gap-2">
-                <label className="text-[12px] font-medium text-zinc-700 shrink-0">面试模式</label>
-                <div className="flex bg-zinc-200 rounded-md p-0.5">
+              <div className="flex items-center gap-3">
+                <label className="text-[13px] font-medium text-zinc-600">面试模式</label>
+                <div className="flex bg-zinc-200/80 rounded-lg p-0.5">
                   <button
                     onClick={() => setSettings({ ...settings, mode: 'simulation' })}
                     disabled={status === 'running' || status === 'waiting_input'}
-                    className={`py-1.5 px-3 rounded text-[12px] font-medium flex items-center gap-1.5 transition-all ${
+                    className={`py-1.5 px-4 rounded-md text-[13px] font-medium flex items-center gap-1.5 transition-all ${
                       settings.mode === 'simulation'
                         ? 'bg-white text-zinc-900 shadow-sm'
                         : 'text-zinc-500 hover:text-zinc-700'
                     } ${(status === 'running' || status === 'waiting_input') ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
-                    <Play size={12} />
+                    <Play size={13} />
                     纯模拟
                   </button>
                   <button
                     onClick={() => setSettings({ ...settings, mode: 'interactive' })}
                     disabled={status === 'running' || status === 'waiting_input'}
-                    className={`py-1.5 px-3 rounded text-[12px] font-medium flex items-center gap-1.5 transition-all ${
+                    className={`py-1.5 px-4 rounded-md text-[13px] font-medium flex items-center gap-1.5 transition-all ${
                       settings.mode === 'interactive'
                         ? 'bg-white text-zinc-900 shadow-sm'
                         : 'text-zinc-500 hover:text-zinc-700'
                     } ${(status === 'running' || status === 'waiting_input') ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
-                    <Users size={12} />
+                    <Users size={13} />
                     人机交互
                   </button>
                 </div>
               </div>
 
-              {/* 问答轮数 - 上下按钮 */}
-              <div className="flex items-center gap-2">
-                <label className="text-[12px] font-medium text-zinc-700 shrink-0">问答轮数</label>
-                <div className="flex items-center border border-zinc-300 rounded-md bg-white">
+              {/* 问答轮数 */}
+              <div className="flex items-center gap-3">
+                <label className="text-[13px] font-medium text-zinc-600">轮数</label>
+                <div className="flex items-center border border-zinc-300 rounded-lg bg-white">
                   <button
                     onClick={() => setSettings({ ...settings, totalRounds: Math.max(5, settings.totalRounds - 1) })}
                     disabled={status === 'running' || status === 'waiting_input' || settings.totalRounds <= 5}
-                    className="px-2 py-1 text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                    className="px-2.5 py-1.5 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed rounded-l-lg"
                   >
                     <ChevronDown size={14} />
                   </button>
-                  <span className="px-3 py-1 text-[13px] font-medium text-zinc-800 min-w-[40px] text-center border-x border-zinc-200">
+                  <span className="px-4 py-1.5 text-[13px] font-medium text-zinc-800 min-w-[44px] text-center border-x border-zinc-200">
                     {settings.totalRounds}
                   </span>
                   <button
                     onClick={() => setSettings({ ...settings, totalRounds: Math.min(12, settings.totalRounds + 1) })}
                     disabled={status === 'running' || status === 'waiting_input' || settings.totalRounds >= 12}
-                    className="px-2 py-1 text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                    className="px-2.5 py-1.5 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed rounded-r-lg"
                   >
                     <ChevronUp size={14} />
                   </button>
@@ -1407,46 +1408,47 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
               </div>
 
               {/* 模式说明 */}
-              <span className="text-[11px] text-zinc-400 flex-1">
+              <span className="text-[12px] text-zinc-400">
                 {settings.mode === 'simulation' 
                   ? '🎬 AI 同时扮演双方，自动问答' 
                   : '🎤 AI 提问，你来回答'}
               </span>
             </div>
 
-            {/* 第二行：面试官角色选择 */}
-            <div className="flex items-center gap-2">
-              <label className="text-[12px] font-medium text-zinc-700 shrink-0">面试官角色</label>
-              <div className="flex gap-1.5 flex-1">
+            {/* 第二行：面试官角色 - 简洁标签样式 */}
+            <div className="flex items-center gap-3">
+              <label className="text-[13px] font-medium text-zinc-600">面试官</label>
+              <div className="flex items-center gap-2">
                 {[
-                  { value: 'ta', label: 'TA', icon: '😊', focus: '初筛' },
-                  { value: 'peers', label: 'Peers', icon: '⚖️', focus: '专业验证' },
-                  { value: 'leader', label: '+1', icon: '🔥', focus: 'Leader认可' },
-                  { value: 'director', label: '+2', icon: '👔', focus: '高层背书' },
-                  { value: 'hrbp', label: 'HRBP', icon: '💰', focus: 'Offer谈判' }
-                ].map((role, index) => (
+                  { value: 'ta', label: 'TA', icon: '😊', desc: '初筛' },
+                  { value: 'peers', label: 'Peers', icon: '⚖️', desc: '技术' },
+                  { value: 'leader', label: '+1', icon: '🔥', desc: 'Leader' },
+                  { value: 'director', label: '+2', icon: '👔', desc: '总监' },
+                  { value: 'hrbp', label: 'HRBP', icon: '💰', desc: 'Offer' }
+                ].map((role) => (
                   <button
                     key={role.value}
                     onClick={() => setSettings({ ...settings, interviewerRole: role.value as any })}
                     disabled={status === 'running' || status === 'waiting_input'}
-                    className={`relative flex items-center gap-1.5 py-1.5 px-2.5 rounded-md border transition-all ${
+                    className={`flex items-center gap-1.5 py-1.5 px-3 rounded-full border transition-all text-[12px] ${
                       settings.interviewerRole === role.value
-                        ? 'bg-zinc-900 text-white border-zinc-900'
+                        ? 'bg-zinc-800 text-white border-zinc-800'
                         : 'bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400'
                     } ${(status === 'running' || status === 'waiting_input') ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
-                    <span className={`absolute -top-1.5 -left-0.5 text-[8px] px-1 py-0 rounded ${
-                      settings.interviewerRole === role.value 
-                        ? 'bg-white text-zinc-900' 
-                        : 'bg-zinc-100 text-zinc-500'
-                    }`}>
-                      {index + 1}轮
-                    </span>
-                    <span className="text-[12px]">{role.icon}</span>
-                    <span className="text-[11px] font-medium">{role.label}</span>
+                    <span>{role.icon}</span>
+                    <span className="font-medium">{role.label}</span>
                   </button>
                 ))}
               </div>
+              {/* 角色说明 - 简短内联 */}
+              <span className="text-[12px] text-zinc-400 ml-2">
+                {settings.interviewerRole === 'ta' && '→ HR初筛，关注匹配度和基本沟通能力'}
+                {settings.interviewerRole === 'peers' && '→ 同级员工，考察实际项目经验'}
+                {settings.interviewerRole === 'leader' && '→ 直属Leader，评估潜力和团队适配度'}
+                {settings.interviewerRole === 'director' && '→ 部门总监，考察战略思维和长期规划'}
+                {settings.interviewerRole === 'hrbp' && '→ 人事BP，Offer谈判，薪资福利期望确认'}
+              </span>
             </div>
           </div>
         </div>
@@ -1454,7 +1456,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
 
       {/* Chat Area */}
       <div className="flex-1 overflow-y-auto">
-        {messages.length === 0 && !showInputPanel ? (
+        {messages.length === 0 && !showInputPanel && status !== 'running' ? (
           <div className="h-full flex flex-col items-center justify-center text-zinc-400 p-8">
             <Briefcase size={48} strokeWidth={1} className="mb-4 text-zinc-300" />
             <h3 className="text-[16px] font-medium text-zinc-600 mb-2">AI 模拟面试</h3>
@@ -1468,35 +1470,15 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
               开始新面试
             </button>
           </div>
+        ) : messages.length === 0 && status === 'running' ? (
+          // 面试刚开始，消息还在加载中
+          <div className="h-full flex flex-col items-center justify-center text-zinc-400 p-8">
+            <Loader2 size={32} className="animate-spin text-zinc-400 mb-4" />
+            <p className="text-[13px] text-zinc-500">面试官正在准备问题...</p>
+          </div>
         ) : showInputPanel ? (
           <div className="max-w-2xl mx-auto p-6">
             <div className="space-y-5">
-              {/* 模式选择提示 */}
-              <div className={`p-4 rounded-lg border ${
-                settings.mode === 'simulation' 
-                  ? 'bg-zinc-50 border-zinc-200' 
-                  : 'bg-blue-50 border-blue-200'
-              }`}>
-                <div className="flex items-center gap-2 mb-2">
-                  {settings.mode === 'simulation' ? (
-                    <>
-                      <Play size={16} className="text-zinc-600" />
-                      <span className="text-[13px] font-medium text-zinc-800">纯模拟模式</span>
-                    </>
-                  ) : (
-                    <>
-                      <Users size={16} className="text-blue-600" />
-                      <span className="text-[13px] font-medium text-blue-800">人机交互模式</span>
-                    </>
-                  )}
-                </div>
-                <p className="text-[12px] text-zinc-500">
-                  {settings.mode === 'simulation' 
-                    ? 'AI 将同时扮演面试官和面试者，自动进行多轮问答。你可以观看学习，了解标准问题和优秀回答。' 
-                    : 'AI 扮演面试官向你提问，你需要自己组织语言作答。每轮回答后，面试官会给出点评并提出下一个问题。最终你将获得完整的面试评估报告。'}
-                </p>
-              </div>
-
               {/* 错误提示 */}
               {fileError && (
                 <div className="p-3 bg-red-50 border border-red-100 rounded-md flex items-start gap-2">
@@ -1520,12 +1502,10 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
                     <Upload size={11} /> 上传文件
                   </button>
                 </div>
-                {/* JD 完整度提示 */}
-                <div className="px-3 py-2 bg-amber-50 border border-amber-200 rounded-md">
-                  <p className="text-[11px] text-amber-700 leading-relaxed">
-                    <span className="font-semibold">💡 提示：</span>请提供尽可能<span className="font-semibold">详细、完整</span>的 JD 内容（包括岗位职责、任职要求、团队介绍等），这将帮助 AI 更精准地优化简历、模拟更真实的面试问题。
-                  </p>
-                </div>
+                {/* JD 完整度提示 - 低调灰色 */}
+                <p className="text-[11px] text-zinc-400 leading-relaxed px-1">
+                  💡 建议提供完整的 JD（岗位职责、任职要求、团队介绍等），以获得更精准的面试模拟
+                </p>
                 <input 
                   type="file" 
                   ref={jdFileInputRef} 

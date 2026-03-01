@@ -481,6 +481,36 @@ ${roleConfig.closingGuidance.candidateQuestionTopics.map(t => `- ${t}`).join('\n
 4. 保持对话的连贯性和自然性，就像真实面试一样`;
   }
 
+  // 9.5 Peers/+1/+2 简历绑定约束（专业面试官必须围绕简历提问）
+  if (['peers', 'leader', 'director'].includes(interviewerRole)) {
+    prompt += `
+
+# 【重要】简历绑定原则
+作为专业面试官（Peers/+1/+2），你的所有业务和项目相关问题**必须紧密结合候选人简历中的实际经历**：
+
+## 核心要求
+1. **项目必须来自简历**：所有询问的项目、业务、产品必须是候选人简历中明确提到的，不能凭空编造或泛泛而问
+2. **禁止脱离简历的抽象问题**：不要问"你觉得一个好的XX应该怎么做"这类脱离具体经历的问题
+3. **追问要有具体锚点**：追问时明确指向简历中的某个项目、某段经历、某个数据
+4. **结合 JD 考察迁移性**：将简历中的经验与 JD 岗位需求关联，考察能力迁移
+
+## 正确示例
+- ✅ "你简历里提到的XX项目，用户增长30%是怎么做到的？"
+- ✅ "在XX公司负责的YY业务，遇到最大的挑战是什么？"
+- ✅ "简历中写到你主导了XX优化，能详细说说技术方案吗？"
+
+## 错误示例
+- ❌ "你觉得怎么做好用户增长？"（太泛，没有结合简历）
+- ❌ "如果让你从0到1搭建一个推荐系统..."（简历没提到相关经验）
+- ❌ "说说你对AI行业的看法"（脱离候选人实际经历）
+
+## 追问原则
+当候选人回答后，你的追问应该：
+1. 围绕 ta 刚才提到的**具体细节**深挖
+2. 或者关联 ta 简历中的**其他相关经历**
+3. 考察 ta 的经验如何**迁移到目标岗位**`;
+  }
+
   // 10. 用户回答（人机交互后续轮）
   if (isFollowUp && userAnswer) {
     prompt += `\n\n# 候选人刚才的回答\n${codeBlock(userAnswer)}`;
@@ -589,12 +619,14 @@ ${supplementInfo!.otherInfo ? `- 其他：${supplementInfo!.otherInfo}` : ''}
 3. **所在城市**：简历中的工作地点影响薪资水平（北上深 > 杭州广州 > 其他）
 4. **目标岗位 JD**：目标公司的薪资体系、职级和行业
 
-**薪资参考范围**（中国互联网行业，2024-2025）：
-- 大厂（字节/腾讯/阿里/美团/快手等）：应届 25-40w，3-5年 50-80w，5-8年 80-130w，8年+ 120-250w+
-- 中型公司：大厂的 70-85% 左右
-- 传统行业/国企：大厂的 50-70%
-- 薪资结构通常为：Base × 月数 + 年终奖 + 股票/期权（如有）
-- 跳槽合理涨幅：20-40%
+**薪资参考范围**（中国互联网行业，2025，含技术和非技术岗综合）：
+- 大厂（字节/腾讯/阿里/美团/快手等）：应届 20-45w，1-3年 30-60w，3-5年 40-80w，5-8年 70-130w，8年+ 100-200w+
+- 注意：以上为综合范围，技术岗（研发/算法）偏上限，非技术岗（产品/运营/市场）约为技术岗的 65-80%
+- 中型公司（B站/小红书/得物等）：大厂的 75-90% 左右
+- 中小公司/创业公司：大厂的 60-80%
+- 传统行业/国企：大厂的 50-65%
+- 薪资结构通常为：Base × 月数（12-18薪）+ 年终奖 + 股票/期权（如有）
+- 跳槽合理涨幅：15-35%（市场降温后涨幅收窄）
 
 **重要规则**：
 - 在第一次被问到薪资时就**确定一个具体数字**，后续保持一致
@@ -689,13 +721,7 @@ ${supplementInfo.otherInfo ? `- 其他信息：${supplementInfo.otherInfo}` : ''
 `
     : '';
 
-  let prompt = `你是 ${roleConfig.title}，刚刚完成了一场面试。请以第一人称（"我"）的视角撰写面试评价，就像在公司内部面试系统中填写面评。
-
-## 你的角色
-${roleConfig.name}（${roleConfig.title}）
-
-## 你的角色背景与关注点
-${roleConfig.systemInstruction}
+  let prompt = `请以第一人称（"我"）的视角撰写面试评价，就像在公司内部面试系统中填写面评。
 
 ## 岗位要求（核心摘要）
 ${summarizeJD(jobDescription)}
@@ -706,7 +732,33 @@ ${supplementSection}
 ## 面试记录
 `;
 
-  for (const item of conversationHistory) {
+  // 对话历史智能摘要：前面轮次压缩，最近 4 轮保留原文
+  const totalMessages = conversationHistory.length;
+  const recentStartIndex = Math.max(0, totalMessages - 8); // 最近 4 对（8 条消息）保留原文
+
+  if (recentStartIndex > 0) {
+    const earlierMessages = conversationHistory.slice(0, recentStartIndex);
+    prompt += `\n### 早期对话摘要\n`;
+    for (let i = 0; i < earlierMessages.length; i += 2) {
+      const questionMsg = earlierMessages[i];
+      const answerMsg = earlierMessages[i + 1];
+      const roundNum = Math.floor(i / 2) + 1;
+      const questionSummary = questionMsg?.content
+        ? questionMsg.content.substring(0, 80).replace(/\n/g, ' ') + (questionMsg.content.length > 80 ? '...' : '')
+        : '';
+      const answerSummary = answerMsg?.content
+        ? answerMsg.content.substring(0, 120).replace(/\n/g, ' ') + (answerMsg.content.length > 120 ? '...' : '')
+        : '';
+      prompt += `\n**第${roundNum}轮**：`;
+      if (questionSummary) prompt += `问：${questionSummary}`;
+      if (answerSummary) prompt += `\n答：${answerSummary}`;
+      prompt += '\n';
+    }
+    prompt += `\n### 最近对话（原文）\n`;
+  }
+
+  const recentMessages = conversationHistory.slice(recentStartIndex);
+  for (const item of recentMessages) {
     const role = item.role === "interviewer" ? "面试官" : "面试者";
     prompt += `\n**${role}**: ${item.content}\n`;
   }

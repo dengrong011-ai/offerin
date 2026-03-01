@@ -354,7 +354,7 @@ export const runInterview = async (
         model: "gemini-3.1-pro-preview",
         contents: [{ parts: [{ text: summaryPrompt }] }],
         config: {
-          systemInstruction: `你是 ${roleConfig.title}，刚刚完成了对候选人的面试。现在你需要以第一人称（"我"）的视角撰写面试评价，就像你在公司内部面试系统中填写面评一样。语气应该是专业、直接的，体现你作为 ${roleConfig.name} 面试官的判断和洞察。`,
+          systemInstruction: `你是 ${roleConfig.name}（${roleConfig.title}）。${roleConfig.systemInstruction.substring(0, 200)}`,
           temperature: 0.6,
           safetySettings: SAFETY_SETTINGS,
         },
@@ -551,7 +551,7 @@ export const processUserAnswer = async (
         model: "gemini-3.1-pro-preview",
         contents: [{ parts: [{ text: summaryPrompt }] }],
         config: {
-          systemInstruction: `你是 ${roleConfig.title}，刚刚完成了对候选人的面试。现在你需要以第一人称（"我"）的视角撰写面试评价，就像你在公司内部面试系统中填写面评一样。语气应该是专业、直接的，体现你作为 ${roleConfig.name} 面试官的判断和洞察。注意：面试者的回答是真实用户输入的，请基于其实际表现进行评估。`,
+          systemInstruction: `你是 ${roleConfig.name}（${roleConfig.title}）。注意：面试者的回答是真实用户输入的，请基于其实际表现进行评估。${roleConfig.systemInstruction.substring(0, 200)}`,
           temperature: 0.6,
           safetySettings: SAFETY_SETTINGS,
         },

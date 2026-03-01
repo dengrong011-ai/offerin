@@ -59,6 +59,8 @@ const App: React.FC = () => {
   const [currentSavedResumeId, setCurrentSavedResumeId] = useState<string | null>(null);
   const [isSavingResume, setIsSavingResume] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [showSaveNameModal, setShowSaveNameModal] = useState(false);
+  const [saveNameInput, setSaveNameInput] = useState('');
   
   const [diagnosisContent, setDiagnosisContent] = useState<string>('');
   const [resumeContent, setResumeContent] = useState<string>('');
@@ -106,16 +108,9 @@ const App: React.FC = () => {
       setResumeHeight(height);
       
       const contentWidth = A4_WIDTH_PX - PAGE_PADDING_LEFT - PAGE_PADDING_RIGHT;
-      const maxDrawableHeight = A4_HEIGHT_PX - PAGE_PADDING_TOP - PAGE_PADDING_BOTTOM;
-      const tolerancePx = PAGE_TOLERANCE;
       
-      // 单页内容（含容差），不需要像素扫描
-      if (height <= maxDrawableHeight + tolerancePx) {
-        if (!cancelled) setPreviewPageBreaks([0, height]);
-        return;
-      }
-      
-      // 多页内容：使用 html2canvas 渲染并像素扫描找安全分页点
+      // 始终使用 html2canvas 像素扫描来判断分页，与 PDF 导出完全一致
+      // 不再使用 DOM scrollHeight 做快捷单页判定，因为 scrollHeight 可能不够精确
       try {
         const html2canvas = (await import('html2canvas')).default;
         const contentClone = measureContainer.cloneNode(true) as HTMLElement;
@@ -143,21 +138,25 @@ const App: React.FC = () => {
         
         await new Promise(resolve => setTimeout(resolve, 100));
         
+        const wrapperHeight = wrapper.scrollHeight;
         const canvas = await html2canvas(wrapper, {
-          scale: 2, // 预览用较低 scale 提升性能
+          scale: 3, // 与 PDF 导出使用完全相同的 scale，确保分页点一致
           useCORS: true,
           backgroundColor: '#ffffff',
           logging: false,
           width: contentWidth,
-          height: wrapper.scrollHeight,
+          height: wrapperHeight,
+          windowWidth: contentWidth,
+          windowHeight: wrapperHeight,
         });
         
         document.body.removeChild(tempContainer);
         if (cancelled) return;
         
         const canvasScale = canvas.width / contentWidth;
+        const maxDrawableHeight = A4_HEIGHT_PX - PAGE_PADDING_TOP - PAGE_PADDING_BOTTOM;
         const maxDrawableInCanvas = maxDrawableHeight * canvasScale;
-        const toleranceInCanvas = tolerancePx * canvasScale;
+        const toleranceInCanvas = PAGE_TOLERANCE * canvasScale;
         
         // 从 canvas 底部向上扫描找实际内容底部
         const ctx = canvas.getContext('2d');
@@ -271,14 +270,15 @@ const App: React.FC = () => {
       } catch (e) {
         console.warn('预览分页计算失败，回退到固定分页:', e);
         // 回退：简单固定分页
+        const maxDrawable = A4_HEIGHT_PX - PAGE_PADDING_TOP - PAGE_PADDING_BOTTOM;
         const breaks = [0];
         let pos = 0;
         while (pos < height) {
-          if (height - pos <= maxDrawableHeight + tolerancePx) {
+          if (height - pos <= maxDrawable + PAGE_TOLERANCE) {
             breaks.push(height);
             break;
           }
-          pos += maxDrawableHeight;
+          pos += maxDrawable;
           breaks.push(pos);
         }
         if (breaks[breaks.length - 1] < height) breaks.push(height);
@@ -1149,36 +1149,58 @@ const App: React.FC = () => {
   const handleSaveResume = async () => {
     if (!user || !editableResume) return;
 
+    // 首次保存：弹出命名弹窗
+    if (!currentSavedResumeId) {
+      const defaultTitle = extractResumeTitle(editableResume, jd);
+      setSaveNameInput(defaultTitle);
+      setShowSaveNameModal(true);
+      return;
+    }
+
+    // 更新已有简历
+    setIsSavingResume(true);
+    setSaveSuccess(false);
+    try {
+      const { success, error: err } = await updateSavedResume(currentSavedResumeId, {
+        resumeMarkdown: editableResume,
+        englishResumeMarkdown: englishResume || undefined,
+        jobDescription: jd || undefined,
+        aspiration: aspiration || undefined,
+        densityMultiplier,
+      });
+      if (!success) throw new Error(err);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2000);
+    } catch (err: any) {
+      console.error('保存简历失败:', err);
+      alert(`保存失败：${err.message || '未知错误，请重试'}`);
+    } finally {
+      setIsSavingResume(false);
+    }
+  };
+
+  // 确认命名并保存新简历
+  const handleConfirmSaveName = async () => {
+    if (!user || !editableResume) return;
+    const title = saveNameInput.trim() || extractResumeTitle(editableResume, jd);
+
+    setShowSaveNameModal(false);
     setIsSavingResume(true);
     setSaveSuccess(false);
 
     try {
-      if (currentSavedResumeId) {
-        // 更新已有简历
-        const { success, error: err } = await updateSavedResume(currentSavedResumeId, {
-          resumeMarkdown: editableResume,
-          englishResumeMarkdown: englishResume || undefined,
-          jobDescription: jd || undefined,
-          aspiration: aspiration || undefined,
-          densityMultiplier,
-        });
-        if (!success) throw new Error(err);
-      } else {
-        // 新建保存
-        const title = extractResumeTitle(editableResume, jd);
-        const { data, error: err } = await createSavedResume({
-          userId: user.id,
-          title,
-          resumeMarkdown: editableResume,
-          englishResumeMarkdown: englishResume || undefined,
-          jobDescription: jd || undefined,
-          aspiration: aspiration || undefined,
-          densityMultiplier,
-          source: 'reconstruction',
-        });
-        if (err || !data) throw new Error(err || '保存失败');
-        setCurrentSavedResumeId(data.id);
-      }
+      const { data, error: err } = await createSavedResume({
+        userId: user.id,
+        title,
+        resumeMarkdown: editableResume,
+        englishResumeMarkdown: englishResume || undefined,
+        jobDescription: jd || undefined,
+        aspiration: aspiration || undefined,
+        densityMultiplier,
+        source: 'reconstruction',
+      });
+      if (err || !data) throw new Error(err || '保存失败');
+      setCurrentSavedResumeId(data.id);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2000);
     } catch (err: any) {
@@ -1342,6 +1364,45 @@ const App: React.FC = () => {
         }}
         onUpgradeVIP={() => setShowVIPModal(true)}
       />
+
+      {/* 简历命名弹窗（首次保存时） */}
+      {showSaveNameModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShowSaveNameModal(false)} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm mx-4 p-5">
+            <button onClick={() => setShowSaveNameModal(false)} className="absolute top-3 right-3 text-zinc-400 hover:text-zinc-600 transition-colors">
+              <X size={16} />
+            </button>
+            <div className="mb-4">
+              <h3 className="font-semibold text-zinc-900 text-[15px]">保存简历</h3>
+              <p className="text-xs text-zinc-400 mt-1">为简历命名，方便后续查找</p>
+            </div>
+            <input
+              type="text"
+              value={saveNameInput}
+              onChange={e => setSaveNameInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleConfirmSaveName(); if (e.key === 'Escape') setShowSaveNameModal(false); }}
+              placeholder="例：张三 - 产品经理"
+              autoFocus
+              className="w-full px-3 py-2.5 border border-zinc-200 rounded-lg text-sm text-zinc-900 placeholder-zinc-300 focus:outline-none focus:ring-2 focus:ring-zinc-900/10 focus:border-zinc-400 transition-colors"
+            />
+            <div className="flex gap-2.5 mt-4">
+              <button
+                onClick={() => setShowSaveNameModal(false)}
+                className="flex-1 px-3 py-2 border border-zinc-200 rounded-lg text-sm text-zinc-500 hover:bg-zinc-50 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleConfirmSaveName}
+                className="flex-1 px-3 py-2 bg-zinc-900 text-white rounded-lg text-sm font-medium hover:bg-zinc-800 transition-colors"
+              >
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 使用限制提示弹窗 */}
       {usageLimitError && (
@@ -1904,7 +1965,7 @@ const App: React.FC = () => {
                       </div>
                       
                       <h3 className="font-semibold text-[17px] text-zinc-800 mb-2">
-                        👻 摸鱼搭子
+                        👻 上班搭子
                       </h3>
                       <p className="text-zinc-500 text-[13px] leading-relaxed mb-4">
                         懂梗会整活的桌面小精灵，上班摸鱼解闷、划水聊天、吐槽搭子
@@ -1915,7 +1976,7 @@ const App: React.FC = () => {
                           <div className="w-4.5 h-4.5 rounded bg-zinc-200 flex items-center justify-center shrink-0">
                             <CheckCircle2 size={11} className="text-zinc-500" />
                           </div>
-                          <span>摸鱼搭子 · 上班最佳电子宠物</span>
+                          <span>上班搭子 · 你的最佳电子宠物</span>
                         </div>
                         <div className="flex items-center gap-2 text-[12px] text-zinc-500">
                           <div className="w-4.5 h-4.5 rounded bg-zinc-200 flex items-center justify-center shrink-0">
