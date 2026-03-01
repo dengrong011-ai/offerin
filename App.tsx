@@ -1818,19 +1818,19 @@ const App: React.FC = () => {
                 </p>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl mx-auto">
-                  {/* 功能一：智能 JD 推荐 - 浅灰底 + 深色强调 */}
-                  <div className="bg-gradient-to-br from-zinc-50 to-stone-50 border border-zinc-200 rounded-2xl p-6 text-left relative overflow-hidden group hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300">
+                  {/* 功能一：智能 JD 推荐 */}
+                  <div className="bg-gradient-to-br from-amber-50/80 to-orange-50/60 border border-amber-200/80 rounded-2xl p-6 text-left relative overflow-hidden group hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300">
                     {/* 装饰背景 */}
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-zinc-200/30 rounded-full blur-3xl -mr-16 -mt-16" />
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-amber-200/30 rounded-full blur-3xl -mr-16 -mt-16" />
                     
                     {/* 即将上线标签 */}
-                    <div className="absolute top-4 right-4 px-2.5 py-1 bg-zinc-900 text-white text-[10px] font-semibold rounded-full flex items-center gap-1">
+                    <div className="absolute top-4 right-4 px-2.5 py-1 bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[10px] font-semibold rounded-full flex items-center gap-1 shadow-sm">
                       <Sparkles size={10} />
                       即将上线
                     </div>
                     
                     <div className="relative">
-                      <div className="w-12 h-12 bg-zinc-900 rounded-xl flex items-center justify-center mb-4 shadow-sm">
+                      <div className="w-12 h-12 bg-gradient-to-br from-amber-500 to-orange-500 rounded-xl flex items-center justify-center mb-4 shadow-sm">
                         <Target size={24} className="text-white" />
                       </div>
                       
@@ -1843,35 +1843,35 @@ const App: React.FC = () => {
                       
                       <div className="space-y-2.5">
                         <div className="flex items-center gap-2 text-[12px] text-zinc-600">
-                          <div className="w-5 h-5 rounded bg-zinc-200 flex items-center justify-center shrink-0">
-                            <CheckCircle2 size={12} className="text-zinc-600" />
+                          <div className="w-5 h-5 rounded bg-amber-100 flex items-center justify-center shrink-0">
+                            <CheckCircle2 size={12} className="text-amber-600" />
                           </div>
                           <span>覆盖 Boss直聘、猎聘、脉脉等主流平台</span>
                         </div>
                         <div className="flex items-center gap-2 text-[12px] text-zinc-600">
-                          <div className="w-5 h-5 rounded bg-zinc-200 flex items-center justify-center shrink-0">
-                            <CheckCircle2 size={12} className="text-zinc-600" />
+                          <div className="w-5 h-5 rounded bg-amber-100 flex items-center justify-center shrink-0">
+                            <CheckCircle2 size={12} className="text-amber-600" />
                           </div>
                           <span>字节、腾讯、阿里等大厂官网岗位直达</span>
                         </div>
                         <div className="flex items-center gap-2 text-[12px] text-zinc-600">
-                          <div className="w-5 h-5 rounded bg-zinc-200 flex items-center justify-center shrink-0">
-                            <CheckCircle2 size={12} className="text-zinc-600" />
+                          <div className="w-5 h-5 rounded bg-amber-100 flex items-center justify-center shrink-0">
+                            <CheckCircle2 size={12} className="text-amber-600" />
                           </div>
                           <span>AI 匹配度评分，精准推荐 20+ 优质岗位</span>
                         </div>
                         <div className="flex items-center gap-2 text-[12px] text-zinc-600">
-                          <div className="w-5 h-5 rounded bg-zinc-200 flex items-center justify-center shrink-0">
-                            <CheckCircle2 size={12} className="text-zinc-600" />
+                          <div className="w-5 h-5 rounded bg-amber-100 flex items-center justify-center shrink-0">
+                            <CheckCircle2 size={12} className="text-amber-600" />
                           </div>
                           <span>选中心仪岗位，一键生成定制简历</span>
                         </div>
                       </div>
 
                       {/* 预览卡片 */}
-                      <div className="mt-5 p-3 bg-white border border-zinc-200 rounded-lg">
+                      <div className="mt-5 p-3 bg-white/90 border border-amber-200 rounded-lg">
                         <div className="flex items-center gap-2 mb-2">
-                          <div className="w-6 h-6 bg-zinc-900 rounded flex items-center justify-center">
+                          <div className="w-6 h-6 bg-gradient-to-br from-amber-500 to-orange-500 rounded flex items-center justify-center">
                             <Briefcase size={12} className="text-white" />
                           </div>
                           <span className="text-[12px] font-medium text-zinc-700">字节跳动 · 产品经理</span>
@@ -1882,12 +1882,12 @@ const App: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* 功能二：摸鱼小精灵 - 琥珀渐变高亮 */}
-                  <div className="bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200 rounded-2xl p-6 text-left relative overflow-hidden group hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300">
+                  {/* 功能二：摸鱼小精灵 */}
+                  <div className="bg-gradient-to-br from-amber-50/80 to-orange-50/60 border border-amber-200/80 rounded-2xl p-6 text-left relative overflow-hidden group hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300">
                     {/* 装饰背景 */}
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-amber-200/40 rounded-full blur-3xl -mr-16 -mt-16" />
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-amber-200/30 rounded-full blur-3xl -mr-16 -mt-16" />
                     
-                    {/* 即将上线标签 - 使用渐变更突出 */}
+                    {/* 即将上线标签 */}
                     <div className="absolute top-4 right-4 px-2.5 py-1 bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[10px] font-semibold rounded-full flex items-center gap-1 shadow-sm">
                       <Sparkles size={10} />
                       即将上线
