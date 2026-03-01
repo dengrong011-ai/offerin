@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   Briefcase, User, Hash, Info, AlertCircle, Award, 
   Send, Square, Plus, X, FileText, Upload, Settings,
-  Download, RefreshCw, Loader2, ArrowLeft, ChevronDown, Image as ImageIcon,
+  Download, RefreshCw, Loader2, ArrowLeft, ChevronDown, ChevronUp, Image as ImageIcon,
   Play, MessageSquare, Users, Mic, MicOff, StopCircle, CheckCircle2, File, Paperclip, Lock, Crown, Save
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -96,7 +96,13 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
     availableTime: '',
     otherInfo: ''
   });
-  const [showSupplementInfo, setShowSupplementInfo] = useState(true);
+  // 人机交互模式下默认折叠，纯模拟模式下默认展开
+  const [showSupplementInfo, setShowSupplementInfo] = useState(settings.mode === 'simulation');
+  
+  // 模式切换时自动调整补充信息展开状态
+  useEffect(() => {
+    setShowSupplementInfo(settings.mode === 'simulation');
+  }, [settings.mode]);
   
   // 人机交互模式状态
   const [interactiveState, setInteractiveState] = useState<InteractiveInterviewState | null>(null);
@@ -1341,111 +1347,106 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
 
       {/* Settings Panel */}
       {showSettings && (
-        <div className="shrink-0 px-6 py-4 border-b border-zinc-200 bg-zinc-50">
-          <div className="max-w-2xl mx-auto space-y-4">
-            {/* 1. 面试模式选择 - 标签页样式 */}
-            <div>
-              <label className="text-[12px] font-medium text-zinc-700 mb-2 block">面试模式</label>
-              <div className="flex bg-zinc-200 rounded-lg p-1">
-                <button
-                  onClick={() => setSettings({ ...settings, mode: 'simulation' })}
-                  disabled={status === 'running' || status === 'waiting_input'}
-                  className={`flex-1 py-2 px-3 rounded-md text-[13px] font-medium flex items-center justify-center gap-2 transition-all ${
-                    settings.mode === 'simulation'
-                      ? 'bg-white text-zinc-900 shadow-sm'
-                      : 'text-zinc-500 hover:text-zinc-700'
-                  } ${(status === 'running' || status === 'waiting_input') ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                  <Play size={14} />
-                  纯模拟
-                </button>
-                <button
-                  onClick={() => setSettings({ ...settings, mode: 'interactive' })}
-                  disabled={status === 'running' || status === 'waiting_input'}
-                  className={`flex-1 py-2 px-3 rounded-md text-[13px] font-medium flex items-center justify-center gap-2 transition-all ${
-                    settings.mode === 'interactive'
-                      ? 'bg-white text-zinc-900 shadow-sm'
-                      : 'text-zinc-500 hover:text-zinc-700'
-                  } ${(status === 'running' || status === 'waiting_input') ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                  <Users size={14} />
-                  人机交互
-                </button>
+        <div className="shrink-0 px-6 py-3 border-b border-zinc-200 bg-zinc-50">
+          <div className="max-w-2xl mx-auto space-y-3">
+            {/* 第一行：面试模式 + 问答轮数 */}
+            <div className="flex items-center gap-6">
+              {/* 面试模式选择 */}
+              <div className="flex items-center gap-2">
+                <label className="text-[12px] font-medium text-zinc-700 shrink-0">面试模式</label>
+                <div className="flex bg-zinc-200 rounded-md p-0.5">
+                  <button
+                    onClick={() => setSettings({ ...settings, mode: 'simulation' })}
+                    disabled={status === 'running' || status === 'waiting_input'}
+                    className={`py-1.5 px-3 rounded text-[12px] font-medium flex items-center gap-1.5 transition-all ${
+                      settings.mode === 'simulation'
+                        ? 'bg-white text-zinc-900 shadow-sm'
+                        : 'text-zinc-500 hover:text-zinc-700'
+                    } ${(status === 'running' || status === 'waiting_input') ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    <Play size={12} />
+                    纯模拟
+                  </button>
+                  <button
+                    onClick={() => setSettings({ ...settings, mode: 'interactive' })}
+                    disabled={status === 'running' || status === 'waiting_input'}
+                    className={`py-1.5 px-3 rounded text-[12px] font-medium flex items-center gap-1.5 transition-all ${
+                      settings.mode === 'interactive'
+                        ? 'bg-white text-zinc-900 shadow-sm'
+                        : 'text-zinc-500 hover:text-zinc-700'
+                    } ${(status === 'running' || status === 'waiting_input') ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    <Users size={12} />
+                    人机交互
+                  </button>
+                </div>
               </div>
-              <p className="text-[11px] text-zinc-400 mt-2">
+
+              {/* 问答轮数 - 上下按钮 */}
+              <div className="flex items-center gap-2">
+                <label className="text-[12px] font-medium text-zinc-700 shrink-0">问答轮数</label>
+                <div className="flex items-center border border-zinc-300 rounded-md bg-white">
+                  <button
+                    onClick={() => setSettings({ ...settings, totalRounds: Math.max(5, settings.totalRounds - 1) })}
+                    disabled={status === 'running' || status === 'waiting_input' || settings.totalRounds <= 5}
+                    className="px-2 py-1 text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <ChevronDown size={14} />
+                  </button>
+                  <span className="px-3 py-1 text-[13px] font-medium text-zinc-800 min-w-[40px] text-center border-x border-zinc-200">
+                    {settings.totalRounds}
+                  </span>
+                  <button
+                    onClick={() => setSettings({ ...settings, totalRounds: Math.min(12, settings.totalRounds + 1) })}
+                    disabled={status === 'running' || status === 'waiting_input' || settings.totalRounds >= 12}
+                    className="px-2 py-1 text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <ChevronUp size={14} />
+                  </button>
+                </div>
+              </div>
+
+              {/* 模式说明 */}
+              <span className="text-[11px] text-zinc-400 flex-1">
                 {settings.mode === 'simulation' 
-                  ? '🎬 AI 同时扮演面试官和面试者，自动进行多轮问答，适合学习参考' 
-                  : '🎤 AI 扮演面试官提问，你来回答，体验真实面试场景'}
-              </p>
+                  ? '🎬 AI 同时扮演双方，自动问答' 
+                  : '🎤 AI 提问，你来回答'}
+              </span>
             </div>
 
-            {/* 2. 面试官角色选择 */}
-            <div>
-              <label className="text-[12px] font-medium text-zinc-700 mb-2 block">面试官角色</label>
-              <div className="grid grid-cols-5 gap-2">
+            {/* 第二行：面试官角色选择 */}
+            <div className="flex items-center gap-2">
+              <label className="text-[12px] font-medium text-zinc-700 shrink-0">面试官角色</label>
+              <div className="flex gap-1.5 flex-1">
                 {[
-                  { value: 'ta', label: 'TA', icon: '😊', focus: '初筛', desc: '动机·稳定性·薪资初探' },
-                  { value: 'peers', label: 'Peers', icon: '⚖️', focus: '专业验证', desc: '技术能力·项目深挖' },
-                  { value: 'leader', label: '+1', icon: '🔥', focus: 'Leader认可', desc: '潜力·方法论·适配' },
-                  { value: 'director', label: '+2', icon: '👔', focus: '高层背书', desc: '视野·战略·价值观' },
-                  { value: 'hrbp', label: 'HRBP', icon: '💰', focus: 'Offer谈判', desc: '薪资·压价·到岗' }
+                  { value: 'ta', label: 'TA', icon: '😊', focus: '初筛' },
+                  { value: 'peers', label: 'Peers', icon: '⚖️', focus: '专业验证' },
+                  { value: 'leader', label: '+1', icon: '🔥', focus: 'Leader认可' },
+                  { value: 'director', label: '+2', icon: '👔', focus: '高层背书' },
+                  { value: 'hrbp', label: 'HRBP', icon: '💰', focus: 'Offer谈判' }
                 ].map((role, index) => (
                   <button
                     key={role.value}
                     onClick={() => setSettings({ ...settings, interviewerRole: role.value as any })}
                     disabled={status === 'running' || status === 'waiting_input'}
-                    className={`relative flex flex-col items-center py-2 px-2 rounded-lg border-2 transition-all ${
+                    className={`relative flex items-center gap-1.5 py-1.5 px-2.5 rounded-md border transition-all ${
                       settings.interviewerRole === role.value
-                        ? 'bg-zinc-900 text-white border-zinc-900 shadow-md'
-                        : 'bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400 hover:bg-zinc-50'
+                        ? 'bg-zinc-900 text-white border-zinc-900'
+                        : 'bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400'
                     } ${(status === 'running' || status === 'waiting_input') ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
-                    {/* 轮次标记 */}
-                    <span className={`absolute -top-2 -left-1 text-[9px] px-1.5 py-0.5 rounded-full ${
+                    <span className={`absolute -top-1.5 -left-0.5 text-[8px] px-1 py-0 rounded ${
                       settings.interviewerRole === role.value 
                         ? 'bg-white text-zinc-900' 
                         : 'bg-zinc-100 text-zinc-500'
                     }`}>
-                      第{index + 1}轮
+                      {index + 1}轮
                     </span>
-                    {/* 图标和名称 */}
-                    <span className="text-[14px] mb-0.5">{role.icon}</span>
-                    <span className="text-[12px] font-medium">{role.label}</span>
-                    {/* 核心关注点 */}
-                    <span className={`text-[10px] ${
-                      settings.interviewerRole === role.value ? 'text-zinc-300' : 'text-zinc-400'
-                    }`}>
-                      {role.focus}
-                    </span>
-                    {/* 详细描述 - 仅选中时显示 */}
-                    {settings.interviewerRole === role.value && (
-                      <span className="text-[9px] mt-0.5 text-zinc-400 text-center leading-tight">
-                        {role.desc}
-                      </span>
-                    )}
+                    <span className="text-[12px]">{role.icon}</span>
+                    <span className="text-[11px] font-medium">{role.label}</span>
                   </button>
                 ))}
               </div>
-            </div>
-
-            {/* 3. 问答轮数 - 最后 */}
-            <div>
-              <label className="text-[12px] font-medium text-zinc-700 mb-2 block">问答轮数</label>
-              <div className="flex items-center gap-3">
-                <input
-                  type="range"
-                  min="5"
-                  max="12"
-                  value={settings.totalRounds}
-                  onChange={(e) => setSettings({ ...settings, totalRounds: parseInt(e.target.value) })}
-                  className="flex-1 h-1 bg-zinc-200 rounded appearance-none cursor-pointer accent-zinc-900"
-                  disabled={status === 'running' || status === 'waiting_input'}
-                />
-                <span className="text-[13px] text-zinc-600 w-12">{settings.totalRounds} 轮</span>
-              </div>
-              <p className="text-[11px] text-zinc-400 mt-2">
-                💡 TA/+2/HRBP 面试通常为 5-8 个问题，Peers/+1 轮可能为 8-12 个问题。默认 8 轮，可按实际情况调整
-              </p>
             </div>
           </div>
         </div>

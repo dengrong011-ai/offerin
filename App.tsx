@@ -1276,28 +1276,28 @@ const App: React.FC = () => {
           </button>
 
           {step !== 'INPUT' && (
-            <div className="hidden md:flex items-center gap-1 text-[13px] text-zinc-400">
-              <button onClick={() => setStep('INPUT')} className={`px-2 py-1 rounded transition-colors hover:text-zinc-600`}>首页</button>
-              <span className="text-zinc-300 mx-1">|</span>
-              <button onClick={() => setStep('UPLOAD')} className={`px-2 py-1 rounded transition-colors ${step === 'UPLOAD' ? 'text-zinc-900 font-medium' : 'hover:text-zinc-600'}`}>简历输入</button>
-              <span className="text-zinc-300 mx-0.5">-</span>
-              <button onClick={() => diagnosisContent && setStep('ANALYSIS')} className={`px-2 py-1 rounded transition-colors ${step === 'ANALYSIS' ? 'text-zinc-900 font-medium' : diagnosisContent ? 'hover:text-zinc-600' : 'text-zinc-300 cursor-not-allowed'}`}>诊断</button>
-              <span className="text-zinc-300 mx-0.5">-</span>
-              <button onClick={() => editableResume && setStep('EDITOR')} className={`px-2 py-1 rounded transition-colors ${step === 'EDITOR' ? 'text-zinc-900 font-medium' : editableResume ? 'hover:text-zinc-600' : 'text-zinc-300 cursor-not-allowed'}`}>编辑</button>
-              <span className="text-zinc-300 mx-0.5">-</span>
-              <button onClick={() => englishResume && setStep('ENGLISH_VERSION')} className={`px-2 py-1 rounded transition-colors ${step === 'ENGLISH_VERSION' ? 'text-zinc-900 font-medium' : englishResume ? 'hover:text-zinc-600' : 'text-zinc-300 cursor-not-allowed'}`}>英文版</button>
-              <span className="text-zinc-300 mx-1">|</span>
-              <button onClick={() => setStep('INTERVIEW')} className={`px-2 py-1 rounded transition-colors flex items-center gap-1 ${step === 'INTERVIEW' ? 'text-zinc-900 font-medium' : 'hover:text-zinc-600'}`}>
+            <div className="hidden md:flex items-center gap-0.5 text-[13px] text-zinc-400">
+              <button onClick={() => setStep('INPUT')} className={`px-1.5 py-1 rounded transition-colors hover:text-zinc-600`}>首页</button>
+              <span className="text-zinc-300">|</span>
+              <button onClick={() => setStep('UPLOAD')} className={`px-1.5 py-1 rounded transition-colors ${step === 'UPLOAD' ? 'text-zinc-900 font-medium' : 'hover:text-zinc-600'}`}>简历输入</button>
+              <span className="text-zinc-300">-</span>
+              <button onClick={() => diagnosisContent && setStep('ANALYSIS')} className={`px-1.5 py-1 rounded transition-colors ${step === 'ANALYSIS' ? 'text-zinc-900 font-medium' : diagnosisContent ? 'hover:text-zinc-600' : 'text-zinc-300 cursor-not-allowed'}`}>诊断</button>
+              <span className="text-zinc-300">-</span>
+              <button onClick={() => editableResume && setStep('EDITOR')} className={`px-1.5 py-1 rounded transition-colors ${step === 'EDITOR' ? 'text-zinc-900 font-medium' : editableResume ? 'hover:text-zinc-600' : 'text-zinc-300 cursor-not-allowed'}`}>编辑</button>
+              <span className="text-zinc-300">-</span>
+              <button onClick={() => englishResume && setStep('ENGLISH_VERSION')} className={`px-1.5 py-1 rounded transition-colors ${step === 'ENGLISH_VERSION' ? 'text-zinc-900 font-medium' : englishResume ? 'hover:text-zinc-600' : 'text-zinc-300 cursor-not-allowed'}`}>英文版</button>
+              <span className="text-zinc-300 mx-0.5">|</span>
+              <button onClick={() => setStep('INTERVIEW')} className={`px-1.5 py-1 rounded transition-colors flex items-center gap-1 ${step === 'INTERVIEW' ? 'text-zinc-900 font-medium' : 'hover:text-zinc-600'}`}>
                 <Mic size={11} />
                 模拟面试
               </button>
-              <span className="text-zinc-300 mx-1">|</span>
-              <button onClick={() => requireLogin(() => setStep('RESUME_LIBRARY'))} className={`px-2 py-1 rounded transition-colors flex items-center gap-1 ${step === 'RESUME_LIBRARY' ? 'text-zinc-900 font-medium' : 'hover:text-zinc-600'}`}>
+              <span className="text-zinc-300 mx-0.5">|</span>
+              <button onClick={() => requireLogin(() => setStep('RESUME_LIBRARY'))} className={`px-1.5 py-1 rounded transition-colors flex items-center gap-1 ${step === 'RESUME_LIBRARY' ? 'text-zinc-900 font-medium' : 'hover:text-zinc-600'}`}>
                 <FolderOpen size={11} />
                 简历库
               </button>
-              <span className="text-zinc-300 mx-1">|</span>
-              <button onClick={() => requireLogin(() => setStep('INTERVIEW_LIBRARY'))} className={`px-2 py-1 rounded transition-colors flex items-center gap-1 ${step === 'INTERVIEW_LIBRARY' ? 'text-zinc-900 font-medium' : 'hover:text-zinc-600'}`}>
+              <span className="text-zinc-300 mx-0.5">|</span>
+              <button onClick={() => requireLogin(() => setStep('INTERVIEW_LIBRARY'))} className={`px-1.5 py-1 rounded transition-colors flex items-center gap-1 ${step === 'INTERVIEW_LIBRARY' ? 'text-zinc-900 font-medium' : 'hover:text-zinc-600'}`}>
                 <FolderOpen size={11} />
                 面试记录库
               </button>
@@ -2228,10 +2228,6 @@ const App: React.FC = () => {
                            />
                          )}
                        </div>
-                       <span className="text-zinc-200">|</span>
-                       <button onClick={() => setStep('ANALYSIS')} className="text-[12px] text-zinc-400 hover:text-zinc-900 flex items-center gap-1 transition-colors">
-                         <ArrowLeft size={11} /> 诊断
-                       </button>
                        <span className="text-zinc-200">|</span>
                        <button 
                          onClick={() => englishResume ? setStep('ENGLISH_VERSION') : generateTranslation()}
