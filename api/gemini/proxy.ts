@@ -239,35 +239,36 @@ async function authenticateUser(authHeader: string | undefined): Promise<AuthRes
     const { data: { user }, error } = await supabaseAuth.auth.getUser();
     if (error || !user) return null;
 
-    // 用 service role 获取 profile（绕过 RLS 读用户会员状态）
+    // 并行查询 profile 和 whitelist（减少串行等待时间）
     const supabaseAdmin = getSupabaseAdmin();
-    const { data: profile } = await supabaseAdmin
-      .from('profiles')
-      .select('membership_type, vip_expires_at')
-      .eq('id', user.id)
-      .single();
+    const [profileResult, whitelistEntry] = await Promise.all([
+      supabaseAdmin
+        .from('profiles')
+        .select('membership_type, vip_expires_at')
+        .eq('id', user.id)
+        .single(),
+      user.email ? getWhitelistEntry(user.email, supabaseAdmin) : Promise.resolve(null),
+    ]);
 
-    let membershipType = profile?.membership_type || 'free';
+    let membershipType = profileResult.data?.membership_type || 'free';
 
-    // 检查 VIP 是否过期
-    if (membershipType === 'vip' && profile?.vip_expires_at) {
-      if (new Date(profile.vip_expires_at) < new Date()) {
-        // VIP 过期，降级为 free
-        await supabaseAdmin
-          .from('profiles')
-          .update({ membership_type: 'free', updated_at: new Date().toISOString() })
-          .eq('id', user.id);
+    // 检查 VIP 是否过期（不阻塞主流程，异步降级）
+    if (membershipType === 'vip' && profileResult.data?.vip_expires_at) {
+      if (new Date(profileResult.data.vip_expires_at) < new Date()) {
         membershipType = 'free';
+        // 异步更新，不等待
+        Promise.resolve(
+          supabaseAdmin
+            .from('profiles')
+            .update({ membership_type: 'free', updated_at: new Date().toISOString() })
+            .eq('id', user.id)
+        ).catch(() => {});
       }
     }
 
-    // 从数据库查询白名单（替代硬编码）
-    if (user.email) {
-      const whitelistEntry = await getWhitelistEntry(user.email, supabaseAdmin);
-      if (whitelistEntry) {
-        // 白名单类型映射到会员类型
-        membershipType = whitelistEntry.whitelist_type;
-      }
+    // 白名单优先级最高
+    if (whitelistEntry) {
+      membershipType = whitelistEntry.whitelist_type;
     }
 
     return {
@@ -288,9 +289,9 @@ async function checkAndLogUsage(
   const supabaseAdmin = getSupabaseAdmin();
   const limits = MEMBERSHIP_LIMITS[membershipType] || MEMBERSHIP_LIMITS.free;
 
-  // Pro 用户无限制
+  // Pro 用户无限制（异步记录，不阻塞）
   if (membershipType === 'pro') {
-    await supabaseAdmin.from('usage_logs').insert({ user_id: userId, action_type: actionType });
+    Promise.resolve(supabaseAdmin.from('usage_logs').insert({ user_id: userId, action_type: actionType })).catch(() => {});
     return { allowed: true };
   }
 
@@ -429,8 +430,8 @@ async function checkAndLogUsage(
     // 翻译暂不限制
   }
 
-  // 记录使用
-  await supabaseAdmin.from('usage_logs').insert({ user_id: userId, action_type: actionType });
+  // 记录使用（异步，不阻塞响应）
+  Promise.resolve(supabaseAdmin.from('usage_logs').insert({ user_id: userId, action_type: actionType })).catch(() => {});
   return { allowed: true };
 }
 

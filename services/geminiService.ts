@@ -1,11 +1,11 @@
 
 import { createAIClient, type AIClient } from "./geminiProxy";
 
-// 重试配置 - 增强版，应对 Google API 高负载
+// 重试配置 - 优化版：减少无效等待，更快得到结果
 const RETRY_CONFIG = {
-  maxRetries: 5,        // 增加到 5 次重试
-  baseDelay: 3000,      // 初始等待 3 秒
-  maxDelay: 15000,      // 最大等待 15 秒
+  maxRetries: 3,        // 主模型最多重试 3 次（降低无效等待）
+  baseDelay: 1500,      // 初始等待 1.5 秒（从 3s 降低）
+  maxDelay: 5000,       // 最大等待 5 秒（从 15s 降低）
 };
 
 // 备用模型列表（按优先级排序）
@@ -73,7 +73,7 @@ async function generateContentStreamWithRetry(
       
       console.log(`主模型持续失败，尝试备用模型: ${fallbackModel}`);
       try {
-        await delay(2000); // 切换模型前等待
+        await delay(500); // 快速切换，减少等待
         const stream = await client.generateContentStream({
           ...options,
           model: fallbackModel,
@@ -131,7 +131,7 @@ async function generateContentWithRetry(
       
       console.log(`主模型持续失败，尝试备用模型: ${fallbackModel}`);
       try {
-        await delay(2000);
+        await delay(500); // 快速切换
         const response = await client.generateContent({
           ...options,
           model: fallbackModel,
@@ -383,6 +383,7 @@ export const analyzeResumeStream = async (
       config: {
         systemInstruction: DIAGNOSIS_SYSTEM_INSTRUCTION,
         temperature: 0.3, // 低温度确保评分稳定一致
+        maxOutputTokens: 4096, // 控制输出长度，避免生成过长内容拖慢速度
         safetySettings: [
           { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
           { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
