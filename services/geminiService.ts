@@ -9,10 +9,12 @@ const RETRY_CONFIG = {
 };
 
 // 备用模型列表（按优先级排序）
+// 注意：模型名称必须是 Google API 支持的有效名称
 const FALLBACK_MODELS = [
   "gemini-3.1-pro-preview",         // 主模型
-  "gemini-2.5-pro-preview-06-05",   // 备用模型1
-  "gemini-2.0-flash",               // 备用模型2（更稳定）
+  "gemini-2.5-pro-preview-05-06",   // 备用模型1（正确的日期格式）
+  "gemini-2.5-flash-preview-05-20", // 备用模型2（Flash 版本）
+  "gemini-2.0-flash",               // 备用模型3（更稳定的旧版）
 ];
 
 // 带重试的延迟函数
