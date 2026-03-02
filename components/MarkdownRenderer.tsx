@@ -63,7 +63,9 @@ const MarkdownRenderer: React.FC<Props> = ({
       const rawUrl = photoMatch[1].replace(/\s+/g, '');
       // 只有有效的 http/https URL 才使用，否则丢弃
       if (/^https?:\/\/.+/i.test(rawUrl)) {
-        imgUrl = rawUrl;
+        // 加时间戳 bust 缓存（照片固定路径 upsert 覆盖，需避免浏览器缓存旧图）
+        const separator = rawUrl.includes('?') ? '&' : '?';
+        imgUrl = `${rawUrl}${separator}t=${Math.floor(Date.now() / 60000)}`;
       }
       // 不管URL是否有效，都从原文移除照片markdown（包括前后空行）
       html = html.replace(/\n*!\[(?:photo|avatar|头像|照片)?\]\s*\(\s*[^)]*?\s*\)\n*/g, '\n');

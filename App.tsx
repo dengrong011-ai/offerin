@@ -1248,6 +1248,21 @@ const App: React.FC = () => {
     setIsFullscreen(false);
     setPreviewScale(0.65);
     setStep('EDITOR');
+
+    // 异步校验照片 URL，如果已失效则清理
+    const photoUrl = getPhotoUrlFromMarkdown(resume.resume_markdown);
+    if (photoUrl) {
+      const img = new Image();
+      img.onload = () => {}; // 照片可用，无需处理
+      img.onerror = () => {
+        // 照片 URL 已失效，从 markdown 中移除
+        setEditableResume(prev => {
+          let updated = prev.replace(/\n?!\[(?:photo|avatar|头像|照片)?\]\s*\(\s*[\s\S]*?\s*\)\s*/g, '\n');
+          return updated.replace(/\n{3,}/g, '\n\n');
+        });
+      };
+      img.src = photoUrl;
+    }
   };
 
   const zoomIn = () => setPreviewScale(prev => Math.min(prev + 0.1, 1.5));
@@ -1284,22 +1299,20 @@ const App: React.FC = () => {
   const getCapacityStatus = () => {
     // 使用预览分页点计算页数（与预览和PDF一致）
     const pageCount = Math.max(1, previewPageBreaks.length - 1);
-    // 单页实际可用高度 = 内容区高度 + 容差（与分页判定逻辑一致）
-    const effectivePageHeight = CONTENT_HEIGHT_PER_PAGE + PAGE_TOLERANCE;
     
     if (pageCount === 1) {
-      // 单页：百分比 = 内容高度 / 可用高度
-      const percentage = Math.round((resumeHeight / effectivePageHeight) * 100);
-      if (percentage <= 100) return { status: 'optimal', label: '1 页', percentage };
-      return { status: 'overflow', label: '溢出', percentage };
+      // 单页：用含容差的基准，确保没分页时百分比一定 ≤ 100%
+      const withTolerance = CONTENT_HEIGHT_PER_PAGE + PAGE_TOLERANCE;
+      const percentage = Math.min(100, Math.round((resumeHeight / withTolerance) * 100));
+      return { status: 'optimal', label: '1 页', percentage };
     } else {
-      // 多页：百分比 = 内容高度 / (页数 * 可用高度)，表示当前内容占总可用空间的比例
-      // 同时也显示超出单页的百分比
-      const overflowPercentage = Math.round((resumeHeight / effectivePageHeight) * 100);
+      // 多页：用不含容差的基准，确保分页时百分比一定 > 100%
+      // 用户看到 "102% · 2 页" 就知道精简 2% 即可回到 1 页
+      const percentage = Math.max(101, Math.round((resumeHeight / CONTENT_HEIGHT_PER_PAGE) * 100));
       return { 
         status: 'danger', 
         label: `${pageCount} 页`, 
-        percentage: overflowPercentage,
+        percentage,
         pageCount 
       };
     }
@@ -1731,7 +1744,7 @@ const App: React.FC = () => {
                   </div>
                   
                   <p className="text-zinc-500 text-[13px] md:text-[14px] leading-relaxed mb-5">
-                    跳过简历优化，直接输入 JD 和简历开始模拟面试
+                    推荐路径：先观摩 AI 模拟面试了解高质量回答 → 再人机交互练习锻炼表达
                   </p>
                   
                   <div className="grid grid-cols-2 gap-3">
@@ -1744,11 +1757,11 @@ const App: React.FC = () => {
                       <span>人机交互练习</span>
                     </div>
                     <div className="flex items-center gap-2 px-3 py-2.5 bg-zinc-50 border border-zinc-200 rounded-lg text-[12px] text-zinc-600">
-                      <Target size={14} className="text-zinc-400 shrink-0" />
+                      <Briefcase size={14} className="text-zinc-400 shrink-0" />
                       <span>五轮全流程</span>
                     </div>
                     <div className="flex items-center gap-2 px-3 py-2.5 bg-zinc-50 border border-zinc-200 rounded-lg text-[12px] text-zinc-600">
-                      <Briefcase size={14} className="text-zinc-400 shrink-0" />
+                      <Target size={14} className="text-zinc-400 shrink-0" />
                       <span>谈薪博弈指导</span>
                     </div>
                   </div>
@@ -2291,11 +2304,11 @@ const App: React.FC = () => {
                        <div className="relative">
                          <button 
                            onClick={() => setShowPhotoPanel(!showPhotoPanel)}
-                           className={`flex items-center gap-1 text-[12px] px-2 py-1 rounded transition-colors ${
-                             getPhotoUrlFromMarkdown(editableResume)
-                               ? 'text-green-600 bg-green-50 hover:bg-green-100'
-                               : 'text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100'
-                           }`}
+                          className={`flex items-center gap-1 text-[12px] transition-colors ${
+                            getPhotoUrlFromMarkdown(editableResume)
+                              ? 'text-green-600 hover:text-green-700'
+                              : 'text-zinc-500 hover:text-zinc-900'
+                          }`}
                            title="添加简历照片"
                          >
                            <ImageIcon size={11} />
@@ -2311,14 +2324,14 @@ const App: React.FC = () => {
                          )}
                        </div>
                        <span className="text-zinc-200">|</span>
-                       <button 
-                         onClick={() => englishResume ? setStep('ENGLISH_VERSION') : generateTranslation()}
-                         disabled={isTranslating}
-                         className={`flex items-center gap-1.5 text-[12px] font-medium px-2.5 py-1 rounded transition-colors ${englishResume ? 'text-zinc-600 hover:text-zinc-900' : 'bg-zinc-900 text-white hover:bg-zinc-800'}`}
-                       >
-                         {isTranslating ? <Loader2 size={11} className="animate-spin" /> : (englishResume ? <Globe size={12} /> : <Languages size={12} />)}
-                         {englishResume ? "查看英文版" : "生成英文版"}
-                       </button>
+                      <button 
+                        onClick={() => englishResume ? setStep('ENGLISH_VERSION') : generateTranslation()}
+                        disabled={isTranslating}
+                        className="flex items-center gap-1.5 text-[12px] text-zinc-500 hover:text-zinc-900 transition-colors"
+                      >
+                        {isTranslating ? <Loader2 size={11} className="animate-spin" /> : (englishResume ? <Globe size={12} /> : <Languages size={12} />)}
+                        {englishResume ? "查看英文版" : "生成英文版"}
+                      </button>
                        <span className="text-zinc-200">|</span>
                        <button 
                          onClick={() => setStep('INTERVIEW')}
@@ -2328,15 +2341,15 @@ const App: React.FC = () => {
                          模拟面试
                        </button>
                        <span className="text-zinc-200">|</span>
-                       <button 
-                         onClick={handleSaveResume}
-                         disabled={isSavingResume}
-                         className={`flex items-center gap-1.5 text-[12px] font-medium px-2.5 py-1 rounded transition-colors ${
-                           saveSuccess 
-                             ? 'bg-green-50 text-green-600 border border-green-200' 
-                             : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
-                         }`}
-                       >
+                      <button 
+                        onClick={handleSaveResume}
+                        disabled={isSavingResume}
+                        className={`flex items-center gap-1.5 text-[12px] transition-colors ${
+                          saveSuccess 
+                            ? 'text-green-600' 
+                            : 'text-zinc-500 hover:text-zinc-900'
+                        }`}
+                      >
                          {isSavingResume ? <Loader2 size={11} className="animate-spin" /> : 
                           saveSuccess ? <CheckCircle2 size={11} /> : <Save size={11} />}
                          {isSavingResume ? '保存中...' : saveSuccess ? '已保存' : currentSavedResumeId ? '更新保存' : '保存简历'}
@@ -2347,10 +2360,10 @@ const App: React.FC = () => {
                         <div className="relative">
                           <button 
                             onClick={() => setShowPhotoPanel(!showPhotoPanel)}
-                            className={`flex items-center gap-1 text-[12px] px-2 py-1 rounded transition-colors ${
+                            className={`flex items-center gap-1 text-[12px] transition-colors ${
                               getPhotoUrlFromMarkdown(englishResume)
-                                ? 'text-green-600 bg-green-50 hover:bg-green-100'
-                                : 'text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100'
+                                ? 'text-green-600 hover:text-green-700'
+                                : 'text-zinc-500 hover:text-zinc-900'
                             }`}
                             title="添加简历照片"
                           >
@@ -2383,10 +2396,10 @@ const App: React.FC = () => {
                         <button 
                            onClick={handleSaveResume}
                            disabled={isSavingResume}
-                           className={`flex items-center gap-1.5 text-[12px] font-medium px-2.5 py-1 rounded transition-colors ${
+                           className={`flex items-center gap-1.5 text-[12px] transition-colors ${
                              saveSuccess 
-                               ? 'bg-green-50 text-green-600 border border-green-200' 
-                               : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
+                               ? 'text-green-600' 
+                               : 'text-zinc-500 hover:text-zinc-900'
                            }`}
                         >
                            {isSavingResume ? <Loader2 size={11} className="animate-spin" /> : 

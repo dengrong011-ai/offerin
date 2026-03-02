@@ -81,19 +81,11 @@ export const uploadResumePhoto = async (
     // 压缩图片
     const compressed = await compressImage(file);
 
-    const fileName = `${userId}/photo_${Date.now()}.jpg`;
+    // 使用固定文件名，upsert 覆盖旧文件，URL 永远不变
+    // 这样所有简历共享同一个照片 URL，不会因重新上传导致旧简历照片失效
+    const fileName = `${userId}/photo.jpg`;
 
-    // 先删除旧照片（同目录下的）
-    const { data: existingFiles } = await supabase.storage
-      .from(BUCKET)
-      .list(userId);
-
-    if (existingFiles && existingFiles.length > 0) {
-      const toDelete = existingFiles.map((f) => `${userId}/${f.name}`);
-      await supabase.storage.from(BUCKET).remove(toDelete);
-    }
-
-    // 上传新照片
+    // 上传照片（覆盖已有文件）
     const { error: uploadError } = await supabase.storage
       .from(BUCKET)
       .upload(fileName, compressed, {
@@ -105,7 +97,7 @@ export const uploadResumePhoto = async (
       return { url: '', error: '上传失败：' + uploadError.message };
     }
 
-    // 获取公开 URL
+    // 获取公开 URL（加时间戳避免浏览器缓存旧图片）
     const { data: urlData } = supabase.storage
       .from(BUCKET)
       .getPublicUrl(fileName);
@@ -120,6 +112,8 @@ export const uploadResumePhoto = async (
  * 删除用户的简历照片
  */
 export const deleteResumePhoto = async (userId: string): Promise<void> => {
+  await supabase.storage.from(BUCKET).remove([`${userId}/photo.jpg`]);
+  // 兼容清理旧格式文件（photo_xxx.jpg）
   const { data: files } = await supabase.storage.from(BUCKET).list(userId);
   if (files && files.length > 0) {
     const toDelete = files.map((f) => `${userId}/${f.name}`);
