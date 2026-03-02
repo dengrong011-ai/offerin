@@ -92,10 +92,11 @@ export const saveInterviewHistoryAsync = async (
 
 // ==================== API 调用基础设施 ====================
 
+// 重试配置 - 增强版，应对 Google API 高负载
 const RETRY_CONFIG = {
-  maxRetries: 3,
-  baseDelay: 2000,
-  maxDelay: 10000,
+  maxRetries: 5,        // 增加到 5 次重试
+  baseDelay: 3000,      // 初始等待 3 秒
+  maxDelay: 15000,      // 最大等待 15 秒
 };
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));

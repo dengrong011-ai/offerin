@@ -1,12 +1,19 @@
 
 import { createAIClient, type AIClient } from "./geminiProxy";
 
-// 重试配置
+// 重试配置 - 增强版，应对 Google API 高负载
 const RETRY_CONFIG = {
-  maxRetries: 3,
-  baseDelay: 2000,  // 初始等待 2 秒
-  maxDelay: 10000,  // 最大等待 10 秒
+  maxRetries: 5,        // 增加到 5 次重试
+  baseDelay: 3000,      // 初始等待 3 秒
+  maxDelay: 15000,      // 最大等待 15 秒
 };
+
+// 备用模型列表（按优先级排序）
+const FALLBACK_MODELS = [
+  "gemini-3.1-pro-preview",         // 主模型
+  "gemini-2.5-pro-preview-06-05",   // 备用模型1
+  "gemini-2.0-flash",               // 备用模型2（更稳定）
+];
 
 // 带重试的延迟函数
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -22,7 +29,7 @@ const isRetryableError = (error: any): boolean => {
          message.includes('overloaded');
 };
 
-// 带重试的流式 API 调用
+// 带重试的流式 API 调用（支持模型回退）
 async function generateContentStreamWithRetry(
   client: AIClient,
   options: {
@@ -33,6 +40,7 @@ async function generateContentStreamWithRetry(
 ): Promise<AsyncIterable<any>> {
   let lastError: Error | null = null;
   
+  // 首先尝试指定的模型
   for (let attempt = 0; attempt < RETRY_CONFIG.maxRetries; attempt++) {
     try {
       const stream = await client.generateContentStream(options);
@@ -56,10 +64,31 @@ async function generateContentStreamWithRetry(
     }
   }
   
-  throw lastError || new Error('API 调用失败');
+  // 主模型失败后，尝试备用模型
+  if (isRetryableError(lastError)) {
+    for (const fallbackModel of FALLBACK_MODELS) {
+      if (fallbackModel === options.model) continue; // 跳过已尝试的主模型
+      
+      console.log(`主模型持续失败，尝试备用模型: ${fallbackModel}`);
+      try {
+        await delay(2000); // 切换模型前等待
+        const stream = await client.generateContentStream({
+          ...options,
+          model: fallbackModel,
+        });
+        console.log(`备用模型 ${fallbackModel} 成功`);
+        return stream;
+      } catch (fallbackError: any) {
+        console.warn(`备用模型 ${fallbackModel} 也失败:`, fallbackError.message);
+        lastError = fallbackError;
+      }
+    }
+  }
+  
+  throw lastError || new Error('API 调用失败，所有模型均不可用');
 }
 
-// 带重试的普通 API 调用
+// 带重试的普通 API 调用（支持模型回退）
 async function generateContentWithRetry(
   client: AIClient,
   options: {
@@ -93,7 +122,28 @@ async function generateContentWithRetry(
     }
   }
   
-  throw lastError || new Error('API 调用失败');
+  // 主模型失败后，尝试备用模型
+  if (isRetryableError(lastError)) {
+    for (const fallbackModel of FALLBACK_MODELS) {
+      if (fallbackModel === options.model) continue;
+      
+      console.log(`主模型持续失败，尝试备用模型: ${fallbackModel}`);
+      try {
+        await delay(2000);
+        const response = await client.generateContent({
+          ...options,
+          model: fallbackModel,
+        });
+        console.log(`备用模型 ${fallbackModel} 成功`);
+        return response;
+      } catch (fallbackError: any) {
+        console.warn(`备用模型 ${fallbackModel} 也失败:`, fallbackError.message);
+        lastError = fallbackError;
+      }
+    }
+  }
+  
+  throw lastError || new Error('API 调用失败，所有模型均不可用');
 }
 
 // 动态获取当前日期（中文格式：XXXX年X月）
