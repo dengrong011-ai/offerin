@@ -13,7 +13,7 @@ import { Redis } from '@upstash/redis';
  * 4. VIP 白名单从数据库读取：不硬编码在代码中
  */
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const GOOGLE_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
@@ -466,10 +466,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: 'GEMINI_API_KEY not configured on server' });
   }
 
-  // ---- Rate Limiting (IP 级别，支持 Upstash Redis 分布式限流) ----
+  // ---- 并行执行 Rate Limiting + JWT 鉴权（减少串行等待） ----
   const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || 
                    req.socket?.remoteAddress || 'unknown';
-  const rateLimitResult = await checkRateLimit(clientIp);
+  
+  const [rateLimitResult, authUser] = await Promise.all([
+    checkRateLimit(clientIp),
+    authenticateUser(req.headers.authorization),
+  ]);
+
   if (!rateLimitResult.success) {
     return res.status(429).json({ 
       error: 'RATE_LIMIT_EXCEEDED',
@@ -477,8 +482,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
-  // ---- JWT 鉴权 ----
-  const authUser = await authenticateUser(req.headers.authorization);
   if (!authUser) {
     return res.status(401).json({ error: 'UNAUTHORIZED' });
   }

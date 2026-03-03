@@ -261,7 +261,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // 1. 创建本地订单
-    const productType = productId === 'vip_monthly' ? 'vip' : 'single';
+    const productType = (productId === 'vip_monthly' || productId === 'vip_sprint') ? 'vip' : 'single';
     const { data: orderData, error: orderError } = await supabase
       .from('payment_orders')
       .insert({

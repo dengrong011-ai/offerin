@@ -108,7 +108,15 @@ const isRetryableError = (error: any): boolean => {
          message.includes('503') || 
          message.includes('UNAVAILABLE') ||
          message.includes('high demand') ||
-         message.includes('overloaded');
+         message.includes('overloaded') ||
+         message.includes('Failed to fetch') ||
+         message.includes('TypeError') ||
+         message.includes('network') ||
+         message.includes('ECONNRESET') ||
+         message.includes('timeout') ||
+         message.includes('aborted') ||
+         message.includes('504') ||
+         message.includes('TIMEOUT');
 };
 
 async function generateContentStreamWithRetry(

@@ -224,6 +224,13 @@ export interface XorPayProduct {
 }
 
 export const XORPAY_PRODUCTS: Record<XorPayProductType, XorPayProduct> = {
+  vip_sprint: {
+    id: 'vip_sprint',
+    name: '冲刺计划',
+    price: '19.90',
+    priceInCents: 1990,
+    description: '10天无限简历诊断、模拟面试、PDF导出',
+  },
   vip_monthly: {
     id: 'vip_monthly',
     name: 'VIP月度会员',
@@ -281,7 +288,7 @@ const createLocalOrder = async (
   }
 
   try {
-    const productType = productId === 'vip_monthly' ? 'vip' : 'single';
+    const productType = (productId === 'vip_monthly' || productId === 'vip_sprint') ? 'vip' : 'single';
     const { data, error } = await supabase
       .from('payment_orders')
       .insert({
@@ -456,10 +463,11 @@ export const handlePaymentSuccess = async (
     if (orderError) throw orderError;
 
     // 2. 根据产品类型处理
-    if (productId === 'vip_monthly') {
+    if (productId === 'vip_monthly' || productId === 'vip_sprint') {
       // VIP 会员：更新会员状态
+      const duration = productId === 'vip_sprint' ? 10 : 30;
       const currentDate = new Date();
-      const expiresAt = new Date(currentDate.getTime() + 30 * 24 * 60 * 60 * 1000); // 30天
+      const expiresAt = new Date(currentDate.getTime() + duration * 24 * 60 * 60 * 1000);
 
       const { error: profileError } = await supabase
         .from('profiles')

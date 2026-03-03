@@ -55,6 +55,7 @@ export interface SavedResume {
   job_description: string | null;
   aspiration: string | null;
   density_multiplier: number;
+  template: string | null;
   source: 'reconstruction' | 'manual' | 'import';
   is_favorited: boolean;
   created_at: string;

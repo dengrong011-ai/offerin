@@ -755,14 +755,20 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
             }
             
             // 自动提取文本内容
-            const extractedText = await extractTextFromFile({ data, mimeType: mime });
-            
-            if (extractedText && extractedText.trim()) {
-              if (type === 'jd') {
-                setJdText(extractedText.trim());
+            try {
+              const extractedText = await extractTextFromFile({ data, mimeType: mime });
+              if (extractedText && extractedText.trim()) {
+                if (type === 'jd') {
+                  setJdText(extractedText.trim());
+                } else {
+                  setResumeText(extractedText.trim());
+                }
               } else {
-                setResumeText(extractedText.trim());
+                setFileError('图片文字提取为空，请手动粘贴文本内容。');
               }
+            } catch (ocrErr: any) {
+              console.warn('图片 OCR 提取失败：', ocrErr.message);
+              setFileError('图片文字提取失败，请手动粘贴文本内容。');
             }
           } catch (err: any) {
             setFileError('粘贴图片处理失败：' + err.message);

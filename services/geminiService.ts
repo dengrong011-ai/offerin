@@ -28,7 +28,13 @@ const isRetryableError = (error: any): boolean => {
          message.includes('503') || 
          message.includes('UNAVAILABLE') ||
          message.includes('high demand') ||
-         message.includes('overloaded');
+         message.includes('overloaded') ||
+         message.includes('Failed to fetch') ||
+         message.includes('TypeError') ||
+         message.includes('network') ||
+         message.includes('ECONNRESET') ||
+         message.includes('timeout') ||
+         message.includes('aborted');
 };
 
 // 带重试的流式 API 调用（支持模型回退）

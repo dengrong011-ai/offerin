@@ -221,10 +221,11 @@ const handlePaymentSuccess = async (orderId: string): Promise<boolean> => {
     }
 
     // 4. 根据产品类型处理
-    if (order.product_id === 'vip_monthly') {
+    if (order.product_id === 'vip_monthly' || order.product_id === 'vip_sprint') {
       // VIP 会员：更新会员状态
+      const duration = order.product_id === 'vip_sprint' ? 10 : 30;
       const currentDate = new Date();
-      const expiresAt = new Date(currentDate.getTime() + 30 * 24 * 60 * 60 * 1000); // 30天
+      const expiresAt = new Date(currentDate.getTime() + duration * 24 * 60 * 60 * 1000);
 
       const { error: profileError } = await supabase
         .from('profiles')

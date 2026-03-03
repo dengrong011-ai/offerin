@@ -368,10 +368,10 @@ export const DownloadPayModal: React.FC<DownloadPayModalProps> = ({
                     <Crown size={16} className="text-zinc-700" />
                     <span className="font-medium text-zinc-900">升级 VIP 更划算</span>
                   </div>
-                  <span className="text-zinc-900 font-bold">¥29.9/月</span>
+                  <span className="text-zinc-900 font-bold">¥19.9起</span>
                 </div>
                 <p className="text-xs text-zinc-500 mb-3">
-                  无限下载 + 无限诊断 + 无限模拟面试
+                  无限下载 + 无限诊断 + 无限模拟面试，冲刺计划仅¥19.9/10天
                 </p>
                 <button
                   onClick={() => {

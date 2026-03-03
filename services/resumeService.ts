@@ -51,6 +51,7 @@ export const createSavedResume = async (params: {
   jobDescription?: string;
   aspiration?: string;
   densityMultiplier?: number;
+  template?: string;
   source?: 'reconstruction' | 'manual' | 'import';
 }): Promise<{ data: SavedResume | null; error?: string }> => {
   try {
@@ -64,6 +65,7 @@ export const createSavedResume = async (params: {
         job_description: params.jobDescription || null,
         aspiration: params.aspiration || null,
         density_multiplier: params.densityMultiplier || 1.0,
+        template: params.template || 'classic',
         source: params.source || 'reconstruction',
       })
       .select()
@@ -87,6 +89,7 @@ export const updateSavedResume = async (
     jobDescription?: string;
     aspiration?: string;
     densityMultiplier?: number;
+    template?: string;
     isFavorited?: boolean;
   }
 ): Promise<{ success: boolean; error?: string }> => {
@@ -98,6 +101,7 @@ export const updateSavedResume = async (
     if (updates.jobDescription !== undefined) updateData.job_description = updates.jobDescription;
     if (updates.aspiration !== undefined) updateData.aspiration = updates.aspiration;
     if (updates.densityMultiplier !== undefined) updateData.density_multiplier = updates.densityMultiplier;
+    if (updates.template !== undefined) updateData.template = updates.template;
     if (updates.isFavorited !== undefined) updateData.is_favorited = updates.isFavorited;
 
     const { error } = await supabase
@@ -152,6 +156,7 @@ export const duplicateSavedResume = async (
       jobDescription: original.job_description || undefined,
       aspiration: original.aspiration || undefined,
       densityMultiplier: original.density_multiplier,
+      template: original.template || 'classic',
       source: original.source,
     });
   } catch (error: any) {

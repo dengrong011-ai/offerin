@@ -209,17 +209,22 @@ export function createAIClient(actionType?: string) {
   const useProxy = shouldUseProxy();
 
   if (!useProxy) {
-    // 本地开发：直连 Google API
+    // 本地开发：直连 Google API（需要在 .env.local 中设置 VITE_GEMINI_API_KEY）
     const apiKey = getLocalApiKey();
-    const ai = new GoogleGenAI({ apiKey });
-    return {
-      generateContentStream: async (options: { model: string; contents: any[]; config: any }) => {
-        return ai.models.generateContentStream(options);
-      },
-      generateContent: async (options: { model: string; contents: any[]; config: any }) => {
-        return ai.models.generateContent(options);
-      },
-    };
+    if (!apiKey) {
+      // 本地开发未配置 API Key 时，回退到代理模式（避免 "API key must be set" 错误）
+      console.warn('[GeminiProxy] 本地开发未设置 VITE_GEMINI_API_KEY，回退到代理模式');
+    } else {
+      const ai = new GoogleGenAI({ apiKey });
+      return {
+        generateContentStream: async (options: { model: string; contents: any[]; config: any }) => {
+          return ai.models.generateContentStream(options);
+        },
+        generateContent: async (options: { model: string; contents: any[]; config: any }) => {
+          return ai.models.generateContent(options);
+        },
+      };
+    }
   }
 
   // 生产环境：通过代理（携带 JWT + actionType）

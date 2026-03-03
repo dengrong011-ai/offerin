@@ -17,15 +17,14 @@ export interface VIPPlan {
   badge?: string;          // 角标
 }
 
-// 目前只有包月会员
 export const VIP_PLANS: VIPPlan[] = [
   {
-    id: 'vip_monthly',
-    name: '月度会员',
-    price: 2990,           // ¥29.9
-    originalPrice: 3990,   // 原价 ¥39.9
-    duration: 30,
-    description: '求职黄金期必备',
+    id: 'vip_sprint',
+    name: '冲刺计划',
+    price: 1990,           // ¥19.9
+    originalPrice: 2990,   // 原价 ¥29.9
+    duration: 10,
+    description: '10天集中备战，高效求职',
     features: [
       '简历诊断 无限次',
       '模拟面试 无限次',
@@ -33,7 +32,23 @@ export const VIP_PLANS: VIPPlan[] = [
       '英文简历翻译无限',
       '面试记录导出',
     ],
-    badge: '限时优惠',
+    badge: '热门',
+  },
+  {
+    id: 'vip_monthly',
+    name: '月度会员',
+    price: 2990,           // ¥29.9
+    originalPrice: 3990,   // 原价 ¥39.9
+    duration: 30,
+    description: '长线求职，从容准备',
+    features: [
+      '简历诊断 无限次',
+      '模拟面试 无限次',
+      'PDF 导出无限',
+      '英文简历翻译无限',
+      '面试记录导出',
+    ],
+    badge: '更划算',
   },
 ];
 
