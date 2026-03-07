@@ -45,8 +45,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
   };
 
   const handleVerifyOTP = async () => {
-    if (!otp || otp.length < 6) {
-      setError('请输入6位验证码');
+    if (!otp || otp.length < 8) {
+      setError('请输入8位验证码');
       return;
     }
 
@@ -167,7 +167,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
 
               <button
                 onClick={handleVerifyOTP}
-                disabled={loading || otp.length < 6}
+                disabled={loading || otp.length < 8}
                 className="w-full py-2.5 bg-zinc-900 text-white rounded-lg text-[14px] font-medium hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
               >
                 {loading ? (

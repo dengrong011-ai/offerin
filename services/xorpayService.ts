@@ -347,13 +347,16 @@ export const createXorPayOrder = async (
     return { success: false, error: '无效的产品' };
   }
 
-  // 始终调用服务端 API 创建订单（服务端会处理 XorPay 调用）
+  // 始终调用服务端 API 创建订单（服务端会处理 XorPay 调用，需携带 JWT 鉴权）
   try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (session?.access_token) {
+      headers['Authorization'] = `Bearer ${session.access_token}`;
+    }
     const response = await fetch('/api/xorpay/create', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({
         userId,
         productId,

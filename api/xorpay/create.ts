@@ -1,15 +1,36 @@
 /**
  * XorPay 创建支付订单接口（服务端）
  * 解决浏览器端直接调用 XorPay API 的 CORS 问题
+ * 安全：必须携带有效 JWT，且 body.userId 必须等于当前登录用户
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
-// 初始化 Supabase 客户端
 const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+function getSupabaseAuth(jwt: string) {
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    global: { headers: { Authorization: `Bearer ${jwt}` } },
+  });
+}
+
+/** 从请求中解析当前用户 ID，未登录或无效 token 返回 null */
+async function getAuthenticatedUserId(req: VercelRequest): Promise<string | null> {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+  const jwt = authHeader.slice(7).trim();
+  if (!jwt) return null;
+  try {
+    const { data: { user }, error } = await getSupabaseAuth(jwt).auth.getUser();
+    return error || !user ? null : user.id;
+  } catch {
+    return null;
+  }
+}
 
 // XorPay 配置
 const XORPAY_APP_ID = (process.env.XORPAY_APP_ID || process.env.VITE_XORPAY_APP_ID || '').trim();
@@ -246,12 +267,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ success: false, error: 'Method Not Allowed' });
   }
 
+  // 鉴权：仅允许为当前登录用户创建订单
+  const authenticatedUserId = await getAuthenticatedUserId(req);
+  if (!authenticatedUserId) {
+    return res.status(401).json({ success: false, error: '请先登录' });
+  }
+
   try {
     const { userId, productId, notifyUrl } = req.body;
 
     // 验证参数
     if (!userId || !productId) {
       return res.status(400).json({ success: false, error: '缺少必要参数' });
+    }
+
+    if (userId !== authenticatedUserId) {
+      return res.status(403).json({ success: false, error: '只能为自己创建订单' });
     }
 
     const product = PRODUCTS[productId];
