@@ -607,18 +607,23 @@ const App: React.FC = () => {
       } else if (msg.includes('400')) {
         setError('无法处理上传的文件。提示：若使用PDF，请尝试转为图片上传，或者使用更小的文件。');
       } else if (msg.includes('DIAGNOSIS_TRIAL_LIMIT_EXCEEDED')) {
+        setError(null);
         setStep('INPUT');
         setUsageLimitError('简历诊断免费体验次数已用完（共3次）。升级 VIP 享无限次使用！');
       } else if (msg.includes('INTERVIEW_TRIAL_LIMIT_EXCEEDED')) {
+        setError(null);
         setStep('INPUT');
         setUsageLimitError('模拟面试免费体验次数已用完（共1次）。升级 VIP 享无限次面试！');
       } else if (msg.includes('TRANSLATION_LIMIT_EXCEEDED')) {
+        setError(null);
         setStep('INPUT');
         setUsageLimitError('英文翻译免费体验次数已用完（共3次）。升级 VIP 享无限次翻译！');
       } else if (msg.includes('MONTHLY_DIAGNOSIS_LIMIT_EXCEEDED') || msg.includes('MONTHLY_INTERVIEW_LIMIT_EXCEEDED')) {
+        setError(null);
         setStep('INPUT');
         setUsageLimitError('本月使用次数已达上限，请下月再试。');
       } else if (msg.includes('DAILY_LIMIT_EXCEEDED')) {
+        setError(null);
         setStep('INPUT');
         setUsageLimitError('今日使用次数已达上限，请明天再试。');
       } else {
