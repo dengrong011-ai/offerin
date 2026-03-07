@@ -78,7 +78,7 @@ const App: React.FC = () => {
   
   const [densityMultiplier, setDensityMultiplier] = useState<number>(1.0); 
   const [selectedTemplate, setSelectedTemplate] = useState<ResumeTemplate>('classic');
-  const [editorWidthPercent, setEditorWidthPercent] = useState<number>(50);
+  const [editorWidthPercent, setEditorWidthPercent] = useState<number>(42);
   const isDraggingRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const [resumeHeight, setResumeHeight] = useState<number>(0);
@@ -703,7 +703,7 @@ const App: React.FC = () => {
     setIsFullscreen(false);
     setDensityMultiplier(1.0);
     setSelectedTemplate('classic');
-    setEditorWidthPercent(50);
+    setEditorWidthPercent(42);
     setCurrentSavedResumeId(null);
     setIsSavingResume(false);
     setSaveSuccess(false);
@@ -1141,43 +1141,13 @@ const App: React.FC = () => {
     }
   };
 
-  // 处理 PDF 导出（带付费检查）
+  // 处理 PDF 导出（仅需登录，导出不产生服务端成本，免费）
   const handleExportPDF = async () => {
-    // 1. 检查登录状态
     if (!user) {
       setShowLoginModal(true);
       return;
     }
-
-    // 2. VIP/Pro/Special 用户直接下载（白名单在服务端处理，profile 已反映真实状态）
-    if (profile?.membership_type === 'vip' || profile?.membership_type === 'pro' || profile?.membership_type === 'special') {
-      await doExportPDF();
-      return;
-    }
-
-    // 3. 免费用户：检查是否是首次导出（首次免费）
-    if (profile && !profile.first_pdf_export_used) {
-      // 首次免费，直接导出并标记已使用
-      await doExportPDF();
-      // 更新数据库标记首次导出已使用
-      try {
-        const { supabase } = await import('./services/supabaseClient');
-        await supabase
-          .from('profiles')
-          .update({ first_pdf_export_used: true, updated_at: new Date().toISOString() })
-          .eq('id', user.id);
-        // 刷新 profile
-        if (refreshProfile) {
-          await refreshProfile();
-        }
-      } catch (e) {
-        console.error('更新首次导出标记失败:', e);
-      }
-      return;
-    }
-
-    // 4. 非首次免费用户弹出付费弹窗
-    setShowDownloadModal(true);
+    await doExportPDF();
   };
 
   // 智能精简简历（当超出一页时）
@@ -1853,12 +1823,16 @@ const App: React.FC = () => {
                         <span>英文简历翻译 共3次体验</span>
                       </div>
                       <div className="flex items-center gap-2.5 text-[13px] text-zinc-600">
-                        <span className="w-5 h-5 rounded bg-zinc-100 flex items-center justify-center text-[10px] font-semibold text-zinc-500 shrink-0">¥</span>
-                        <span>PDF 导出 首次免费 / ¥4.9/次</span>
+                        <span className="w-5 h-5 rounded bg-zinc-100 flex items-center justify-center shrink-0">
+                          <CheckCircle2 size={10} className="text-zinc-500" />
+                        </span>
+                        <span>PDF 导出 <span className="font-medium text-zinc-800">免费</span></span>
                       </div>
                       <div className="flex items-center gap-2.5 text-[13px] text-zinc-600">
-                        <span className="w-5 h-5 rounded bg-zinc-100 flex items-center justify-center text-[10px] font-semibold text-zinc-500 shrink-0">¥</span>
-                        <span>面试记录保存 首次免费 / ¥4.9/次</span>
+                        <span className="w-5 h-5 rounded bg-zinc-100 flex items-center justify-center shrink-0">
+                          <CheckCircle2 size={10} className="text-zinc-500" />
+                        </span>
+                        <span>面试记录保存 <span className="font-medium text-zinc-800">免费</span></span>
                       </div>
                       <div className="flex items-center gap-2.5 text-[13px] text-zinc-600">
                         <span className="w-5 h-5 rounded bg-zinc-100 flex items-center justify-center shrink-0">
@@ -2350,11 +2324,12 @@ const App: React.FC = () => {
                          </button>
                          {showPhotoPanel && (
                            <PhotoUploadPanel
-                             userId={user?.id}
-                             currentPhotoUrl={getPhotoUrlFromMarkdown(editableResume)}
-                             onPhotoChange={handlePhotoChange}
-                             onClose={() => setShowPhotoPanel(false)}
-                           />
+                              userId={user?.id}
+                              resumeId={currentSavedResumeId || undefined}
+                              currentPhotoUrl={getPhotoUrlFromMarkdown(editableResume)}
+                              onPhotoChange={handlePhotoChange}
+                              onClose={() => setShowPhotoPanel(false)}
+                            />
                          )}
                        </div>
                        <span className="text-zinc-200">|</span>
@@ -2407,6 +2382,7 @@ const App: React.FC = () => {
                           {showPhotoPanel && (
                             <PhotoUploadPanel
                               userId={user?.id}
+                              resumeId={currentSavedResumeId || undefined}
                               currentPhotoUrl={getPhotoUrlFromMarkdown(englishResume)}
                               onPhotoChange={handlePhotoChange}
                               onClose={() => setShowPhotoPanel(false)}
@@ -2483,38 +2459,38 @@ const App: React.FC = () => {
             <div className={`flex flex-col transition-all duration-300 ${isFullscreen ? 'w-full h-full pt-14' : 'w-full lg:flex-1 lg:min-w-0'}`}>
                
                {/* Toolbar */}
-               <div className="bg-white px-4 py-2.5 rounded-t-lg flex flex-wrap gap-y-2 justify-between items-center no-print border border-zinc-200 border-b-0">
-                 <div className="flex items-center gap-3 flex-1">
-                    <span className="text-[13px] font-medium text-zinc-900 flex items-center gap-1.5 whitespace-nowrap mr-2">
-                      <FileText size={13} className="text-zinc-400" /> 预览
-                    </span>
-                    
-                    {/* Capacity */}
-                    <span className={`text-[11px] px-2 py-0.5 rounded-sm font-medium ${
-                      capacity.status === 'optimal' ? 'bg-green-50 text-green-600' : 
-                      capacity.status === 'overflow' ? 'bg-orange-50 text-orange-600' :
-                      'bg-red-50 text-red-600'
-                    }`}>
-                       {capacity.percentage}% · {capacity.label}
-                    </span>
+               <div className="bg-white px-3 py-2.5 rounded-t-lg flex flex-wrap gap-y-2 justify-between items-center no-print border border-zinc-200 border-b-0">
+                <div className="flex items-center gap-2 flex-1 min-w-0">
+                   <span className="text-[13px] font-medium text-zinc-900 flex items-center gap-1 whitespace-nowrap">
+                     <FileText size={13} className="text-zinc-400" /> 预览
+                   </span>
+                   
+                   {/* Capacity */}
+                   <span className={`text-[11px] px-1.5 py-0.5 rounded-sm font-medium whitespace-nowrap ${
+                     capacity.status === 'optimal' ? 'bg-green-50 text-green-600' : 
+                     capacity.status === 'overflow' ? 'bg-orange-50 text-orange-600' :
+                     'bg-red-50 text-red-600'
+                   }`}>
+                      {capacity.percentage}% · {capacity.label}
+                   </span>
 
-                    {/* Density */}
-                    <div className="flex items-center gap-1.5 ml-3 flex-1 max-w-[120px]">
-                      <AlignJustify size={12} className="text-zinc-300" />
-                      <input 
-                        type="range" 
-                        min="0.5" 
-                        max="1.5" 
-                        step="0.05" 
-                        value={densityMultiplier}
-                        onChange={(e) => setDensityMultiplier(parseFloat(e.target.value))}
-                        className="w-full h-0.5 bg-zinc-200 rounded appearance-none cursor-pointer accent-zinc-900"
-                      />
-                    </div>
+                   {/* Density */}
+                   <div className="flex items-center gap-1 flex-1 max-w-[100px] min-w-[60px]">
+                     <AlignJustify size={11} className="text-zinc-300" />
+                     <input 
+                       type="range" 
+                       min="0.5" 
+                       max="1.5" 
+                       step="0.05" 
+                       value={densityMultiplier}
+                       onChange={(e) => setDensityMultiplier(parseFloat(e.target.value))}
+                       className="w-full h-0.5 bg-zinc-200 rounded appearance-none cursor-pointer accent-zinc-900"
+                     />
+                   </div>
 
-                    {/* Template Switcher */}
-                    <div className="flex items-center gap-1 ml-3">
-                      <Layout size={12} className="text-zinc-300 mr-0.5" />
+                   {/* Template Switcher */}
+                   <div className="flex items-center gap-0.5">
+                     <Layout size={11} className="text-zinc-300 mr-0.5" />
                       <button 
                         onClick={() => setSelectedTemplate('classic')}
                         className={`text-[11px] px-1.5 py-0.5 rounded transition-colors ${selectedTemplate === 'classic' ? 'bg-zinc-900 text-white' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}
@@ -2528,6 +2504,13 @@ const App: React.FC = () => {
                         title="清晰版：适合国内大中小厂、技术岗位"
                       >
                         清晰版
+                      </button>
+                      <button 
+                        onClick={() => setSelectedTemplate('academic')}
+                        className={`text-[11px] px-1.5 py-0.5 rounded transition-colors ${selectedTemplate === 'academic' ? 'bg-zinc-900 text-white' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}
+                        title="学术版：适合高校、研究机构、学术型简历"
+                      >
+                        学术版
                       </button>
                     </div>
                  </div>

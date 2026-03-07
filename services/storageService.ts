@@ -61,11 +61,12 @@ const compressImage = (file: File): Promise<Blob> => {
 
 /**
  * 上传照片到 Supabase Storage
- * 路径格式: {userId}/photo_{timestamp}.jpg
+ * 路径格式: {userId}/{resumeId}/photo.jpg — 每份简历独立存储
  */
 export const uploadResumePhoto = async (
   file: File,
-  userId: string
+  userId: string,
+  resumeId?: string
 ): Promise<{ url: string; error: string | null }> => {
   // 校验文件类型
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
@@ -81,9 +82,10 @@ export const uploadResumePhoto = async (
     // 压缩图片
     const compressed = await compressImage(file);
 
-    // 使用固定文件名，upsert 覆盖旧文件，URL 永远不变
-    // 这样所有简历共享同一个照片 URL，不会因重新上传导致旧简历照片失效
-    const fileName = `${userId}/photo.jpg`;
+    // 按简历 ID 独立存储，每份简历有自己的照片
+    // 如果没有 resumeId（新简历未保存），生成一个临时 ID
+    const rid = resumeId || crypto.randomUUID();
+    const fileName = `${userId}/${rid}/photo.jpg`;
 
     // 上传照片（覆盖已有文件）
     const { error: uploadError } = await supabase.storage
@@ -97,7 +99,7 @@ export const uploadResumePhoto = async (
       return { url: '', error: '上传失败：' + uploadError.message };
     }
 
-    // 获取公开 URL（加时间戳避免浏览器缓存旧图片）
+    // 获取公开 URL
     const { data: urlData } = supabase.storage
       .from(BUCKET)
       .getPublicUrl(fileName);

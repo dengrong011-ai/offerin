@@ -18,6 +18,11 @@ const XORPAY_API_BASE = 'https://xorpay.com/api';
 
 // 产品配置
 const PRODUCTS: Record<string, { name: string; price: string; priceInCents: number }> = {
+  vip_sprint: {
+    name: '冲刺计划',
+    price: '19.90',
+    priceInCents: 1990,
+  },
   vip_monthly: {
     name: 'VIP月度会员',
     price: '29.90',

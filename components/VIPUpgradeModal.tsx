@@ -368,7 +368,7 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
               <div className="bg-zinc-100 rounded-lg p-3 mb-5">
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-zinc-500">免费版</span>
-                  <span className="text-zinc-400">诊断3次 · 面试1次 · 导出首次免费</span>
+                  <span className="text-zinc-400">诊断3次 · 面试1次 · 导出免费</span>
                 </div>
               </div>
 

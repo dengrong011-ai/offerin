@@ -4,6 +4,7 @@ import { uploadResumePhoto, validateImageUrl } from '../services/storageService'
 
 interface PhotoUploadPanelProps {
   userId: string | undefined;
+  resumeId: string | undefined;
   currentPhotoUrl: string;
   onPhotoChange: (url: string) => void;
   onClose: () => void;
@@ -11,6 +12,7 @@ interface PhotoUploadPanelProps {
 
 const PhotoUploadPanel: React.FC<PhotoUploadPanelProps> = ({
   userId,
+  resumeId,
   currentPhotoUrl,
   onPhotoChange,
   onClose,
@@ -30,7 +32,7 @@ const PhotoUploadPanel: React.FC<PhotoUploadPanelProps> = ({
     setError('');
     setIsUploading(true);
 
-    const { url, error: uploadError } = await uploadResumePhoto(file, userId);
+    const { url, error: uploadError } = await uploadResumePhoto(file, userId, resumeId);
 
     if (uploadError) {
       setError(uploadError);
@@ -41,7 +43,7 @@ const PhotoUploadPanel: React.FC<PhotoUploadPanelProps> = ({
     setPreviewUrl(url);
     onPhotoChange(url);
     setIsUploading(false);
-  }, [userId, onPhotoChange]);
+  }, [userId, resumeId, onPhotoChange]);
 
   const handleUrlSubmit = useCallback(async () => {
     const trimmed = urlInput.trim();

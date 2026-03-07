@@ -1,7 +1,7 @@
 
 import React from 'react';
 
-export type ResumeTemplate = 'classic' | 'tech';
+export type ResumeTemplate = 'classic' | 'tech' | 'academic';
 
 interface Props {
   content: string;
@@ -26,8 +26,14 @@ const MarkdownRenderer: React.FC<Props> = ({
     fontFamily: mode === 'resume' 
       ? (template === 'tech' 
           ? '"PingFang SC", "Microsoft YaHei", "微软雅黑", "SimHei", "黑体", system-ui, sans-serif'
-          : '"Times New Roman", Times, "SimSun", "宋体", serif')
+          : template === 'academic'
+            ? '"Songti SC", "STSong", "SimSun", "宋体", serif'
+            : '"Times New Roman", Times, "SimSun", "宋体", serif')
       : '"Inter", system-ui, sans-serif',
+    // 学术版标题字体（苹方粗体，字重区分度最好）
+    academicHeadingFont: '"PingFang SC", "Microsoft YaHei", "SimHei", "黑体", sans-serif',
+    // 学术版主题色（深蓝）
+    academicAccent: '#1a3764',
     
     baseTextSize: isResumePreview ? '10.5pt' : '15px',
     lineHeight: lineHeightValue,
@@ -321,6 +327,138 @@ const MarkdownRenderer: React.FC<Props> = ({
     return html;
   };
 
+  // ==================== 模板3：学术简历 (Academic) ====================
+  const formatResumeAcademic = (text: string) => {
+    let html = text.replace(/^\s+/, '');
+    const ac = s.academicAccent;
+    const hf = s.academicHeadingFont;
+    const bf = s.fontFamily;
+
+    // === 第一步：全局提取照片 URL ===
+    let imgUrl = '';
+    const photoRegex = /!\[(?:photo|avatar|头像|照片)?\]\s*\(\s*([^)]*?)\s*\)/;
+    const photoMatch = html.match(photoRegex);
+    if (photoMatch) {
+      const rawUrl = photoMatch[1].replace(/\s+/g, '');
+      if (/^https?:\/\/.+/i.test(rawUrl)) {
+        const separator = rawUrl.includes('?') ? '&' : '?';
+        imgUrl = `${rawUrl}${separator}t=${Math.floor(Date.now() / 60000)}`;
+      }
+      html = html.replace(/\n*!\[(?:photo|avatar|头像|照片)?\]\s*\(\s*[^)]*?\s*\)\n*/g, '\n');
+      html = html.replace(/\n{3,}/g, '\n\n');
+    }
+
+    // === 第二步：收集头部区域 ===
+    const nameMatch = html.match(/^# (.*?)$/m);
+    let headerName = '';
+    let contactLines: string[] = [];
+    let headerMatchStr = '';
+    let summaryLines: string[] = [];
+
+    if (nameMatch) {
+      headerName = nameMatch[1];
+      const nameIdx = nameMatch.index ?? 0;
+      const afterName = html.slice(nameIdx + nameMatch[0].length);
+      const nextSectionMatch = afterName.match(/\n(?=##\s)/);
+      const headerArea = nextSectionMatch ? afterName.slice(0, nextSectionMatch.index) : afterName;
+      
+      const areaLines = headerArea.split('\n');
+      for (const line of areaLines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        if (trimmed.startsWith('> ')) {
+          contactLines.push(trimmed.replace(/^> /, ''));
+        } else if (!trimmed.startsWith('#')) {
+          summaryLines.push(trimmed);
+        }
+      }
+      
+      headerMatchStr = html.slice(nameIdx, nameIdx + nameMatch[0].length + (nextSectionMatch ? (nextSectionMatch.index ?? 0) : headerArea.length));
+    }
+
+    if (nameMatch && headerMatchStr) {
+      const contactHtml = contactLines.length 
+        ? `<div style="font-size: 10pt; line-height: 1.6; margin-top: 4px; color: #374151; font-family: ${bf}; text-align: center;">${contactLines.join(' &nbsp;|&nbsp; ')}</div>` 
+        : '';
+      const summaryHtml = summaryLines.length 
+        ? summaryLines.map((line: string) => 
+            `<div style="font-size: ${s.baseTextSize}; line-height: ${s.lineHeightPx}; margin-top: 4px; font-family: ${bf}; color: #374151; text-align: center;">${processCommonMarkdown(line)}</div>`
+          ).join('\n') 
+        : '';
+      
+      const headerHtml = `
+        <div style="position:relative;margin-top:0;margin-bottom:10px;width:100%;padding-top:2px;">
+          ${imgUrl ? `<div style="position:absolute;right:0;top:0;width:80px;height:107px;"><img src="${imgUrl}" style="width:80px;height:107px;object-fit:cover;border:1px solid #d1d5db;display:block;" alt="Profile" onerror="this.style.display='none';this.parentElement.style.display='none';" /></div>` : ''}
+          <div style="text-align:center;${imgUrl ? 'padding-right:90px;' : ''}">
+            <h1 style="font-size: 22pt; margin: 0 0 2px 0; padding: 0; font-family: ${hf}; font-weight: 900; color: #111827; letter-spacing: 1px; line-height: 1.2; -webkit-text-stroke: 0.5px #111827;">${headerName}</h1>
+            ${contactHtml}
+            ${summaryHtml}
+          </div>
+        </div>
+      `;
+      html = html.replace(headerMatchStr, headerHtml);
+    } else {
+      html = html
+        .replace(/^# (.*$)/gm, `<h1 style="font-size: 22pt; margin-top: 0; margin-bottom: 8px; font-family: ${hf}; font-weight: 900; color: #111827; text-align: center; line-height: 1.2; -webkit-text-stroke: 0.5px #111827;">$1</h1>`)
+        .replace(/^> (.*$)/gm, `<div style="font-size: 10pt; margin-bottom: 10px; line-height: 1.5; color: #374151; font-family: ${bf}; text-align: center;">$1</div>`);
+    }
+
+    // === 第三步：## 标题 — 深蓝色加粗 + 蓝色下划线 ===
+    html = html
+      .replace(/^## (.*$)/gm, `
+        <div style="margin-top: ${s.h2Top}; margin-bottom: ${s.h2Bottom}; border-bottom: 2px solid ${ac}; width: 100%;">
+          <h2 style="font-size: 12pt; font-family: ${hf}; font-weight: 900; letter-spacing: 1px; line-height: 1.4; margin: 0; color: ${ac}; -webkit-text-stroke: 0.3px ${ac};">$1</h2>
+          <div style="height: 5px; background: transparent;"></div>
+        </div>
+      `)
+      
+      // ### 三栏：机构 | 角色 | 日期
+      .replace(/^###\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*$/gm, `
+        <div style="display:flex;justify-content:space-between;align-items:baseline;width:100%;gap:8px;margin-top: ${s.h3Top}; margin-bottom: ${s.h3Bottom};">
+          <div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:0 6px;flex:1;min-width:0;">
+            <strong style="font-size: 11pt; font-family: ${hf}; font-weight: 800; color: #111827;">$1</strong>
+            <span style="font-size: 10.5pt; color: #4b5563; font-family: ${bf};">$2</span>
+          </div>
+          <div style="font-size: 10pt; font-family: ${bf}; font-weight: 500; color: #374151; flex-shrink:0; white-space:nowrap;">$3</div>
+        </div>
+      `)
+      // ### 两栏：标题 | 日期
+      .replace(/^###\s*(.*?)\s*\|\s*(.*?)\s*$/gm, `
+        <div style="display:flex;justify-content:space-between;align-items:baseline;width:100%;gap:8px;margin-top: ${s.h3Top}; margin-bottom: ${s.h3Bottom};">
+          <strong style="font-size: 11pt; font-family: ${hf}; font-weight: 800; color: #111827; flex:1;min-width:0;">$1</strong>
+          <div style="font-size: 10pt; font-family: ${bf}; font-weight: 500; color: #374151; flex-shrink:0; white-space:nowrap;">$2</div>
+        </div>
+      `)
+      // ### 单标题
+      .replace(/^### (.*$)/gm, `<h3 style="font-size: 11pt; margin-top: ${s.h3Top}; margin-bottom: ${s.h3Bottom}; font-family: ${hf}; font-weight: 800; color: #111827;">$1</h3>`)
+
+      // **加粗** | 文本 | 日期（教育经历格式）
+      .replace(/^\s*\*\*(.*?)\*\*\s*\|\s*(.*?)\s*\|\s*(.*?)\s*$/gm, `
+        <div style="display:flex;justify-content:space-between;align-items:baseline;width:100%;gap:8px;margin-top: ${s.eduMargin}; margin-bottom: ${s.eduMargin};">
+           <div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:0 6px;flex:1;min-width:0;">
+             <strong style="font-size: 11pt; font-family: ${hf}; font-weight: 800; color: #111827;">$1</strong>
+             <span style="font-size: 10.5pt; color: #4b5563; font-family: ${bf};">$2</span>
+           </div>
+           <div style="font-size: 10pt; font-family: ${bf}; font-weight: 500; color: #374151; flex-shrink:0; white-space:nowrap;">$3</div>
+        </div>
+      `);
+
+    html = processCommonMarkdown(html);
+
+    // 列表项 — 圆点标记
+    html = html.replace(/^\s*[\-\*] (.*$)/gm, `
+      <div style="display:flex;align-items:flex-start;position:relative;padding-left:16px;margin-bottom: ${s.listMb}; line-height: ${s.lineHeightPx};">
+         <span style="position:absolute;left:3px;top:0;font-size:10px;line-height:${s.lineHeightPx};color:#374151;">•</span>
+         <span style="flex:1;text-align:justify;color:#1f2937;line-height:${s.lineHeightPx};">$1</span>
+      </div>
+    `);
+      
+    html = html.replace(/\n\n+/g, `<div style="height: ${s.pSpacing};"></div>`)
+               .replace(/\n/g, ' ');
+
+    return html;
+  };
+
   const formatDiagnosisText = (text: string) => {
     let html = text;
     
@@ -506,6 +644,7 @@ const MarkdownRenderer: React.FC<Props> = ({
     if (mode !== 'resume') return formatDiagnosisText(content);
     switch (template) {
       case 'tech': return formatResumeTech(content);
+      case 'academic': return formatResumeAcademic(content);
       case 'classic':
       default: return formatResumeText(content);
     }
