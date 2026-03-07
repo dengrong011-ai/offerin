@@ -10,17 +10,19 @@ import type { SavedInterviewRecord } from '../services/interviewRecordService';
 import {
   MessageSquare, Star, Trash2, 
   Loader2, ArrowLeft, Search, MoreHorizontal,
-  Clock, X, Type, Users, Play
+  Clock, X, Type, Users, Play, Plus
 } from 'lucide-react';
 
 interface InterviewLibraryProps {
   onBack: () => void;
   onOpenRecord: (record: SavedInterviewRecord) => void;
+  onNewInterview?: () => void;
 }
 
 const InterviewLibrary: React.FC<InterviewLibraryProps> = ({
   onBack,
   onOpenRecord,
+  onNewInterview,
 }) => {
   const { user } = useAuth();
   const [records, setRecords] = useState<SavedInterviewRecord[]>([]);
@@ -133,6 +135,15 @@ const InterviewLibrary: React.FC<InterviewLibraryProps> = ({
             {records.length} 条
           </span>
         </div>
+        {onNewInterview && (
+          <button 
+            onClick={onNewInterview}
+            className="px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-white rounded-lg text-[13px] font-medium transition-colors flex items-center gap-1.5"
+          >
+            <Plus size={14} />
+            新建面试
+          </button>
+        )}
       </div>
 
       {/* 搜索 */}
@@ -172,9 +183,18 @@ const InterviewLibrary: React.FC<InterviewLibraryProps> = ({
             <MessageSquare size={24} className="text-zinc-400" />
           </div>
           <h3 className="text-[15px] font-medium text-zinc-700 mb-2">还没有保存的面试记录</h3>
-          <p className="text-[13px] text-zinc-500">
+          <p className="text-[13px] text-zinc-500 mb-6">
             完成模拟面试后，点击"保存记录"即可保存到这里
           </p>
+          {onNewInterview && (
+            <button 
+              onClick={onNewInterview}
+              className="px-5 py-2 bg-zinc-900 hover:bg-zinc-800 text-white rounded-lg text-[13px] font-medium transition-colors inline-flex items-center gap-1.5"
+            >
+              <Plus size={14} />
+              开始模拟面试
+            </button>
+          )}
         </div>
       )}
 

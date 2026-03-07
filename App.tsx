@@ -2721,6 +2721,7 @@ const App: React.FC = () => {
         {step === 'INTERVIEW_LIBRARY' && (
           <InterviewLibrary
             onBack={() => setStep('INPUT')}
+            onNewInterview={() => setStep('INTERVIEW')}
             onOpenRecord={(record: SavedInterviewRecord) => {
               // 打开记录时跳转到面试页面并恢复消息
               setViewingInterviewRecord(record);
