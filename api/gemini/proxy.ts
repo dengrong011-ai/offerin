@@ -300,10 +300,10 @@ async function checkAndLogUsage(
     return { allowed: true };
   }
 
-  // Special 白名单用户：所有操作共享每日 10 次限额
+  // Special 白名单用户：所有操作共享每日限额
   if (membershipType === 'special') {
     const today = new Date().toISOString().split('T')[0];
-    const dailyLimit = limits.daily_diagnosis; // 10
+    const dailyLimit = limits.daily_diagnosis; // 20
     
     // 统计今日所有操作的总次数
     const { count } = await supabaseAdmin
@@ -549,8 +549,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const errorText = await googleResponse.text();
       console.error('Google API error:', googleResponse.status, errorText);
       return res.status(googleResponse.status).json({
-        error: `Google API error: ${googleResponse.status}`,
-        details: errorText,
+        error: 'AI_SERVICE_ERROR',
       });
     }
 

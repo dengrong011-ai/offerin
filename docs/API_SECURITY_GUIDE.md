@@ -1,166 +1,36 @@
 # API 安全配置指南
 
-## 🔴 当前问题
+## ✅ 当前实现（已采用）
 
-目前 AI 服务（Gemini API）的 API Key 通过环境变量在客户端代码中使用，这存在安全风险：
-- API Key 会暴露在浏览器的 JavaScript 中
-- 恶意用户可以窃取并滥用 API Key
+本项目 **已使用 Vercel Serverless 代理** 调用 Gemini API，API Key 仅存储在服务端，不会暴露给前端。
 
-## ✅ 推荐解决方案
+- **代理入口**: `api/gemini/proxy.ts`
+- **鉴权**: 校验 `Authorization: Bearer <Supabase JWT>`，未登录返回 401
+- **配额**: 服务端根据 `profiles.membership_type` 与 `usage_logs` 校验免费/VIP/白名单额度
+- **限流**: IP 维度（Upstash Redis 或内存回退），防止单 IP 滥用
+- **模型与操作类型**: 白名单校验，防止前端传入非法 model/actionType
 
-### 方案一：使用 Supabase Edge Functions（推荐）
+前端通过 `services/geminiProxy.ts` 请求 `/api/gemini/proxy` 并携带当前用户 JWT，不再直接持有 `GEMINI_API_KEY`。本地开发可选 `VITE_GEMINI_API_KEY` 直连，生产应仅使用代理。
 
-将 AI 调用迁移到 Supabase Edge Functions，API Key 只存储在服务器端。
+## 环境变量
 
-#### 1. 创建 Edge Function
+| 变量 | 使用位置 | 说明 |
+|------|----------|------|
+| `GEMINI_API_KEY` | 仅服务端 (proxy) | 必填，勿以 VITE_ 开头 |
+| `VITE_GEMINI_API_KEY` | 仅本地开发（可选） | 直连 Google API 时使用，会暴露到客户端，生产勿配置 |
+| `UPSTASH_REDIS_REST_URL` / `TOKEN` | 仅服务端 | 可选，用于分布式限流；未配置时使用内存限流 |
 
-```bash
-# 在项目根目录执行
-supabase functions new gemini-proxy
-```
+## 支付相关（XorPay）
 
-#### 2. 编写代理函数
+- 创建订单: `api/xorpay/create.ts` 需 JWT，且 `body.userId` 必须为当前用户
+- 回调验签: 使用 **服务端变量** `XORPAY_APP_SECRET`，勿在回调中使用 `VITE_XORPAY_APP_SECRET`
 
-在 `supabase/functions/gemini-proxy/index.ts` 中：
+## 可选扩展
 
-```typescript
-import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
-import { GoogleGenAI } from 'npm:@google/genai'
+若后续希望将 AI 代理迁至 Supabase Edge Functions，可参考 Supabase 官方文档创建 Edge Function，并将 `GEMINI_API_KEY` 配置在 Edge Function Secrets 中。当前 Vercel 方案已满足安全要求。
 
-const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY')!
+## 注意事项
 
-serve(async (req) => {
-  // CORS 处理
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', {
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'POST',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-      },
-    })
-  }
-
-  try {
-    const { action, params } = await req.json()
-    const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY })
-
-    // 根据 action 调用不同的 AI 功能
-    switch (action) {
-      case 'analyzeResume':
-        // 简历分析逻辑
-        break
-      case 'interview':
-        // 面试模拟逻辑
-        break
-      case 'translate':
-        // 翻译逻辑
-        break
-      default:
-        return new Response(JSON.stringify({ error: 'Unknown action' }), {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' },
-        })
-    }
-
-    // 返回结果...
-  } catch (error) {
-    console.error('Proxy error:', error)
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    })
-  }
-})
-```
-
-#### 3. 配置环境变量
-
-在 Supabase Dashboard -> Edge Functions -> Secrets 中添加：
-- `GEMINI_API_KEY`: 你的 Gemini API Key
-
-#### 4. 部署函数
-
-```bash
-supabase functions deploy gemini-proxy
-```
-
-#### 5. 修改前端代码
-
-将直接调用 Gemini API 改为调用 Edge Function：
-
-```typescript
-// 原来的调用方式
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-const response = await ai.models.generateContent(options);
-
-// 改为调用 Edge Function
-const response = await fetch(
-  `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/gemini-proxy`,
-  {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${session?.access_token}`,
-    },
-    body: JSON.stringify({
-      action: 'analyzeResume',
-      params: { jd, resume, aspiration },
-    }),
-  }
-);
-```
-
-### 方案二：使用 Vercel/Netlify Serverless Functions
-
-如果你使用 Vercel 或 Netlify 部署，可以创建 API Routes：
-
-#### Vercel (Next.js)
-
-```typescript
-// pages/api/ai/analyze.ts
-import { GoogleGenAI } from '@google/genai';
-
-export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  // ... 处理请求
-}
-```
-
-#### Netlify Functions
-
-```typescript
-// netlify/functions/ai-proxy.ts
-import { GoogleGenAI } from '@google/genai';
-
-export const handler = async (event) => {
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  // ... 处理请求
-};
-```
-
-### 方案三：添加请求限制和验证
-
-如果暂时无法迁移到后端，至少应该：
-
-1. **使用 API Key 限制**：在 Google AI Studio 设置 API Key 的使用限制
-2. **添加域名白名单**：限制 API Key 只能从特定域名调用
-3. **添加速率限制**：在前端添加请求频率限制
-
-## 🔧 快速实施步骤
-
-1. 在 Supabase 创建 Edge Function
-2. 将 GEMINI_API_KEY 添加到 Edge Function 的环境变量
-3. 修改 `geminiService.ts` 和 `interviewService.ts` 调用 Edge Function
-4. 移除客户端代码中的 API Key 引用
-5. 部署并测试
-
-## 📝 注意事项
-
-- 流式响应需要使用 Server-Sent Events (SSE) 或 WebSocket
-- Edge Function 有执行时间限制（通常 10-30 秒），长时间任务需要特殊处理
-- 添加适当的身份验证，防止未授权访问
+- 流式响应通过 Server-Sent Events 在代理中转发
+- 代理错误时仅向客户端返回通用错误码，不返回上游 API 详情，避免信息泄露
+- 生产环境建议配置 Upstash Redis，使多实例限流状态一致
