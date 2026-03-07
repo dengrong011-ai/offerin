@@ -1520,7 +1520,7 @@ const App: React.FC = () => {
                 <span className="inline-block animate-slide-up animation-delay-100">你的 AI 求职专家</span>
               </h1>
               <p className="text-zinc-500 text-[15px] font-normal max-w-xl mx-auto mb-10 leading-relaxed animate-fade-in animation-delay-200">
-                从简历诊断到模拟面试，全方位助力你的求职之旅
+                求职全链路，每一步都更简单。
               </p>
               <a 
                 href="https://xhslink.com/m/AhWS7UwBPGZ" 
