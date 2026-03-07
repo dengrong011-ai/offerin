@@ -498,8 +498,16 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
           : undefined
       );
     } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        setStatus('stopped');
+      if (error instanceof Error) {
+        if (error.name === 'AbortError') {
+          setStatus('stopped');
+        } else if (error.message.includes('INTERVIEW_TRIAL_LIMIT_EXCEEDED')) {
+          setUsageLimitError('模拟面试免费体验次数已用完（共1次）。升级 VIP 享无限次面试！');
+        } else if (error.message.includes('DAILY_LIMIT_EXCEEDED')) {
+          setUsageLimitError('今日使用次数已达上限，请明天再试。');
+        } else if (error.message.includes('MONTHLY_INTERVIEW_LIMIT_EXCEEDED')) {
+          setUsageLimitError('本月面试次数已达上限，请下月再试。');
+        }
       }
     }
   }, [resumeText, jdText, settings, supplementInfo, user]);
@@ -594,8 +602,16 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
         setInteractiveState(state);
       }
     } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        setStatus('stopped');
+      if (error instanceof Error) {
+        if (error.name === 'AbortError') {
+          setStatus('stopped');
+        } else if (error.message.includes('INTERVIEW_TRIAL_LIMIT_EXCEEDED')) {
+          setUsageLimitError('模拟面试免费体验次数已用完（共1次）。升级 VIP 享无限次面试！');
+        } else if (error.message.includes('DAILY_LIMIT_EXCEEDED')) {
+          setUsageLimitError('今日使用次数已达上限，请明天再试。');
+        } else if (error.message.includes('MONTHLY_INTERVIEW_LIMIT_EXCEEDED')) {
+          setUsageLimitError('本月面试次数已达上限，请下月再试。');
+        }
       }
     }
   }, [resumeText, jdText, settings, supplementInfo]);
@@ -879,7 +895,17 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
         setInteractiveState(newState);
       }
     } catch (error) {
-      console.error('Submit answer error:', error);
+      if (error instanceof Error) {
+        if (error.message.includes('INTERVIEW_TRIAL_LIMIT_EXCEEDED')) {
+          setUsageLimitError('模拟面试免费体验次数已用完（共1次）。升级 VIP 享无限次面试！');
+        } else if (error.message.includes('DAILY_LIMIT_EXCEEDED')) {
+          setUsageLimitError('今日使用次数已达上限，请明天再试。');
+        } else if (error.message.includes('MONTHLY_INTERVIEW_LIMIT_EXCEEDED')) {
+          setUsageLimitError('本月面试次数已达上限，请下月再试。');
+        } else {
+          console.error('Submit answer error:', error);
+        }
+      }
     } finally {
       setIsSubmitting(false);
     }

@@ -213,7 +213,7 @@ export const generateSign = (...params: string[]): string => {
 
 // ============ 产品配置 ============
 
-export type XorPayProductType = 'vip_monthly' | 'resume_download' | 'interview_export';
+export type XorPayProductType = 'vip_sprint' | 'vip_monthly' | 'resume_download' | 'interview_export';
 
 export interface XorPayProduct {
   id: XorPayProductType;
@@ -466,8 +466,21 @@ export const handlePaymentSuccess = async (
     if (productId === 'vip_monthly' || productId === 'vip_sprint') {
       // VIP 会员：更新会员状态
       const duration = productId === 'vip_sprint' ? 10 : 30;
-      const currentDate = new Date();
-      const expiresAt = new Date(currentDate.getTime() + duration * 24 * 60 * 60 * 1000);
+      // 如果当前仍在 VIP 有效期内，从现有到期时间叠加；否则从当前时间开始
+      const now = new Date();
+      let baseDate = now;
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('vip_expires_at, membership_type')
+        .eq('id', userId)
+        .single();
+      if (profileData?.membership_type === 'vip' && profileData?.vip_expires_at) {
+        const existingExpiry = new Date(profileData.vip_expires_at);
+        if (existingExpiry > now) {
+          baseDate = existingExpiry;
+        }
+      }
+      const expiresAt = new Date(baseDate.getTime() + duration * 24 * 60 * 60 * 1000);
 
       const { error: profileError } = await supabase
         .from('profiles')

@@ -270,9 +270,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // 根据产品类型处理业务逻辑
-    if (order.product_id === 'vip_monthly') {
+    if (order.product_id === 'vip_monthly' || order.product_id === 'vip_sprint') {
       // VIP 会员：更新用户会员状态
-      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30天后
+      const duration = order.product_id === 'vip_sprint' ? 10 : 30;
+      // 如果当前仍在 VIP 有效期内，从现有到期时间叠加；否则从当前时间开始
+      const now = new Date();
+      let baseDate = now;
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('vip_expires_at, membership_type')
+        .eq('id', order.user_id)
+        .single();
+      if (profileData?.membership_type === 'vip' && profileData?.vip_expires_at) {
+        const existingExpiry = new Date(profileData.vip_expires_at);
+        if (existingExpiry > now) {
+          baseDate = existingExpiry;
+        }
+      }
+      const expiresAt = new Date(baseDate.getTime() + duration * 24 * 60 * 60 * 1000);
       
       const { error: profileError } = await supabase
         .from('profiles')
