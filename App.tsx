@@ -2736,6 +2736,8 @@ const App: React.FC = () => {
             <span className="text-zinc-300">Offerin</span>
             <span className="mx-2 text-zinc-200">|</span>
             <span className="text-zinc-400">反馈与建议：<a href="mailto:offerinplate@gmail.com" className="text-zinc-400 hover:text-zinc-600 transition-colors underline underline-offset-2">offerinplate@gmail.com</a></span>
+            <span className="mx-2 text-zinc-200">|</span>
+            <span className="text-zinc-400">小红书：<a href="https://xhslink.com/m/2DTebq4fiED" target="_blank" rel="noopener noreferrer" className="text-zinc-400 hover:text-zinc-600 transition-colors underline underline-offset-2">Rachels here</a></span>
          </footer>
       )}
     </div>
