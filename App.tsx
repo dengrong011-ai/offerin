@@ -738,7 +738,28 @@ const App: React.FC = () => {
     setResumeHeight(0);
     setPreviewPageBreaks([0]);
     setProcessingState({jd: false, resume: false});
+    setViewingInterviewRecord(null);
   };
+
+  // 切换账号或登出时清空面试/诊断相关状态与本地缓存，避免看到上一账号数据
+  const prevUserIdRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const currentId = user?.id;
+    const prevId = prevUserIdRef.current;
+    prevUserIdRef.current = currentId;
+    if (prevId === currentId) return;
+    if (prevId !== undefined) {
+      setJd('');
+      setResume('');
+      setJdFile(null);
+      setResumeFile(null);
+      setEditableResume('');
+      setViewingInterviewRecord(null);
+      try {
+        localStorage.removeItem('offer_ing_interview_history');
+      } catch (_) {}
+    }
+  }, [user?.id]);
 
   // 用于取消分析并返回上传页面（清空本次未完成的重构结果，避免与下次任务混淆）
   const cancelAnalysisAndGoBack = () => {

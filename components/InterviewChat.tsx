@@ -55,6 +55,7 @@ interface InterviewChatProps {
 function getUsageLimitMessage(error: string): string | null {
   if (error.includes('INTERVIEW_TRIAL_LIMIT_EXCEEDED')) return '模拟面试免费体验次数已用完（共1次）。升级 VIP 享无限次面试！';
   if (error.includes('MONTHLY_INTERVIEW_LIMIT_EXCEEDED')) return '本月面试次数已达上限，请下月再试。升级 VIP 享更多次数。';
+  if (error.includes('DIAGNOSIS_TRIAL_LIMIT_EXCEEDED') || error.includes('USAGE_LIMIT_EXCEEDED')) return '使用次数已用完。升级 VIP 享更多次数！';
   if (error.includes('DAILY_LIMIT_EXCEEDED')) return '今日使用次数已达上限，请明天再试。';
   return null;
 }
@@ -112,6 +113,11 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
   useEffect(() => {
     setShowSupplementInfo(settings.mode === 'simulation');
   }, [settings.mode]);
+
+  // 进入面试页时清除之前的次数错误提示，避免显示诊断等其它页的遗留错误
+  useEffect(() => {
+    setUsageLimitError(null);
+  }, []);
   
   // 人机交互模式状态
   const [interactiveState, setInteractiveState] = useState<InteractiveInterviewState | null>(null);
@@ -492,6 +498,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
             if (limitMsg) {
               setUsageLimitError(limitMsg);
               setStatus('idle');
+              onShowVIPModal?.();
               return;
             }
             setMessages(prev => [...prev, {
@@ -517,11 +524,12 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
           if (limitMsg) {
             setUsageLimitError(limitMsg);
             setStatus('idle');
+            onShowVIPModal?.();
           }
         }
       }
     }
-  }, [resumeText, jdText, settings, supplementInfo, user]);
+  }, [resumeText, jdText, settings, supplementInfo, user, onShowVIPModal]);
 
   // 人机交互模式开始面试
   const handleStartInteractiveInterview = useCallback(async () => {
@@ -590,6 +598,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
             if (limitMsg) {
               setUsageLimitError(limitMsg);
               setStatus('idle');
+              onShowVIPModal?.();
               return;
             }
             setMessages(prev => [...prev, {
@@ -624,11 +633,12 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
           if (limitMsg) {
             setUsageLimitError(limitMsg);
             setStatus('idle');
+            onShowVIPModal?.();
           }
         }
       }
     }
-  }, [resumeText, jdText, settings, supplementInfo]);
+  }, [resumeText, jdText, settings, supplementInfo, onShowVIPModal]);
 
   // 文件压缩和处理函数
   const compressImage = (file: File): Promise<{data: string, mime: string}> => {
@@ -894,6 +904,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
             if (limitMsg) {
               setUsageLimitError(limitMsg);
               setStatus('waiting_input');
+              onShowVIPModal?.();
               return;
             }
             setMessages(prev => [...prev, {
@@ -920,6 +931,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
         if (limitMsg) {
           setUsageLimitError(limitMsg);
           setStatus('waiting_input');
+          onShowVIPModal?.();
         } else {
           console.error('Submit answer error:', error);
         }
@@ -927,7 +939,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
     } finally {
       setIsSubmitting(false);
     }
-  }, [userInput, interactiveState, isSubmitting]);
+  }, [userInput, interactiveState, isSubmitting, onShowVIPModal]);
 
   // 键盘事件处理
   const handleKeyDown = (e: React.KeyboardEvent) => {
