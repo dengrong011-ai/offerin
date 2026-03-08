@@ -429,7 +429,6 @@ const App: React.FC = () => {
 
     try {
       const { data, mime } = await compressImage(file);
-      
       // 保存文件信息（不回填文本，提交时再提取，加快速度）
       if (type === 'jd') {
         setJdFile({ name: file.name, data, mime });
@@ -533,6 +532,9 @@ const App: React.FC = () => {
     setError(null);
     setDiagnosisContent('');
     setResumeContent('');
+    // 新任务开始：清空上一轮的重构/英文版结果，避免显示成「上一次的简历 B」而非本次「简历 A」的结果
+    setEditableResume('');
+    setEnglishResume('');
     setStep('ANALYSIS'); // 立即切换到分析页面，显示流式内容
 
     // 配额预检查与 API 调用并行启动（服务端有权威校验兜底，前端预检查仅用于提前提示）
@@ -738,7 +740,7 @@ const App: React.FC = () => {
     setProcessingState({jd: false, resume: false});
   };
 
-  // 用于取消分析并返回上传页面
+  // 用于取消分析并返回上传页面（清空本次未完成的重构结果，避免与下次任务混淆）
   const cancelAnalysisAndGoBack = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -747,16 +749,16 @@ const App: React.FC = () => {
     setIsAnalyzing(false);
     setDiagnosisContent('');
     setResumeContent('');
+    setEditableResume('');
+    setEnglishResume('');
     setStep('UPLOAD');
   };
 
   const handleProceedToEditor = () => {
-    // 重构已在诊断完成后自动执行，这里直接跳转编辑器
-    if (editableResume) {
-      // 重构已完成，直接进入编辑器
-      setStep('EDITOR');
-    }
-    // 如果还在重构中（isRewriting=true），按钮会显示"优化中..."且 disabled，不会走到这里
+    // 仅当本次重构已完成且有结果时才跳转，避免极短时间窗口内点到旧结果
+    if (isRewriting) return;
+    if (!editableResume) return;
+    setStep('EDITOR');
   };
 
 
@@ -1193,7 +1195,13 @@ const App: React.FC = () => {
         setEditableResume(condensedResume);
       }
     } catch (err: any) {
-      setError(err.message || '精简失败，请重试');
+      const msg = err?.message || '精简失败，请重试';
+      const isLimitError = /(USAGE_LIMIT_EXCEEDED|DIAGNOSIS_TRIAL_LIMIT_EXCEEDED|TRIAL_LIMIT_EXCEEDED|使用次数|上限|403)/i.test(msg);
+      if (isLimitError) {
+        setUsageLimitError('精调/精简功能使用次数已达上限。升级 VIP 享更多使用次数！');
+      } else {
+        setError(msg);
+      }
     } finally {
       setIsCondensing(false);
     }
@@ -1375,7 +1383,7 @@ const App: React.FC = () => {
               <span className="text-zinc-300">-</span>
               <button onClick={() => diagnosisContent && setStep('ANALYSIS')} className={`px-1.5 py-1 rounded transition-colors ${step === 'ANALYSIS' ? 'text-zinc-900 font-medium' : diagnosisContent ? 'hover:text-zinc-600' : 'text-zinc-300 cursor-not-allowed'}`}>诊断</button>
               <span className="text-zinc-300">-</span>
-              <button onClick={() => editableResume && setStep('EDITOR')} className={`px-1.5 py-1 rounded transition-colors ${step === 'EDITOR' ? 'text-zinc-900 font-medium' : editableResume ? 'hover:text-zinc-600' : 'text-zinc-300 cursor-not-allowed'}`}>编辑</button>
+              <button onClick={() => !isRewriting && editableResume && setStep('EDITOR')} className={`px-1.5 py-1 rounded transition-colors ${step === 'EDITOR' ? 'text-zinc-900 font-medium' : !isRewriting && editableResume ? 'hover:text-zinc-600' : 'text-zinc-300 cursor-not-allowed'}`}>编辑</button>
               <span className="text-zinc-300">-</span>
               <button onClick={() => englishResume && setStep('ENGLISH_VERSION')} className={`px-1.5 py-1 rounded transition-colors ${step === 'ENGLISH_VERSION' ? 'text-zinc-900 font-medium' : englishResume ? 'hover:text-zinc-600' : 'text-zinc-300 cursor-not-allowed'}`}>英文版</button>
               <span className="text-zinc-300 mx-0.5">|</span>
@@ -2137,6 +2145,7 @@ const App: React.FC = () => {
                       <span className="font-semibold">💡 提示：</span>请提供尽可能<span className="font-semibold">详细、完整</span>的 JD 内容（包括岗位职责、任职要求、团队介绍等），这将帮助 AI 更精准地优化你的简历。
                     </p>
                   </div>
+                  <p className="text-[11px] text-zinc-400">支持 PDF、Word（.doc/.docx）、图片，单文件 ≤3MB；建议优先使用 PDF 或 .docx 以获得更好解析。</p>
                   <input type="file" ref={jdFileInputRef} className="hidden" accept=".pdf,.doc,.docx,image/*" onChange={(e) => handleFileChange(e, 'jd')} />
                   <textarea
                     value={jd}
@@ -2160,6 +2169,7 @@ const App: React.FC = () => {
                       <Upload size={11} /> 上传文件
                     </button>
                   </div>
+                  <p className="text-[11px] text-zinc-400">支持 PDF、Word（.doc/.docx）、图片，单文件 ≤3MB；建议优先使用 PDF 或 .docx。</p>
                   <input type="file" ref={resumeFileInputRef} className="hidden" accept=".pdf,.doc,.docx,image/*" onChange={(e) => handleFileChange(e, 'resume')} />
                   <textarea
                     value={resume}
@@ -2218,8 +2228,8 @@ const App: React.FC = () => {
         {step === 'ANALYSIS' && (
           <div className="h-full no-print">
             <div className="bg-white rounded-lg border border-zinc-200 h-full flex flex-col max-w-4xl mx-auto overflow-hidden">
-              <div className="px-6 py-4 flex items-center justify-between border-b border-zinc-100">
-                <div className="flex items-center gap-3">
+              <div className="px-6 py-4 flex items-center justify-between border-b border-zinc-100 flex-wrap gap-2">
+                <div className="flex items-center gap-3 flex-wrap">
                   <h2 className="font-display font-semibold text-[15px] text-zinc-900">诊断报告</h2>
                   {isAnalyzing && (
                     <span className="flex items-center gap-1.5 text-[12px] text-zinc-400">
@@ -2227,8 +2237,11 @@ const App: React.FC = () => {
                       生成中...
                     </span>
                   )}
+                  <span className="text-[11px] text-zinc-400 truncate max-w-[280px]" title={`简历：${resumeFile?.name || (resume?.slice(0, 30) ? '文本' : '—')}；JD：${jdFile?.name || (jd?.slice(0, 30) ? '文本' : '—')}`}>
+                    本次：简历 {resumeFile?.name || (resume?.trim() ? '文本' : '—')}，JD {jdFile?.name || (jd?.trim() ? '文本' : '—')}
+                  </span>
                 </div>
-                <button onClick={cancelAnalysisAndGoBack} className="text-[12px] text-zinc-400 hover:text-zinc-900 transition-colors">
+                <button onClick={cancelAnalysisAndGoBack} className="text-[12px] text-zinc-400 hover:text-zinc-900 transition-colors shrink-0">
                   修改输入
                 </button>
               </div>
@@ -2256,24 +2269,22 @@ const App: React.FC = () => {
                     <div className="flex justify-center">
                       <button 
                         onClick={handleProceedToEditor}
-                        disabled={isRewriting && !editableResume}
+                        disabled={isRewriting || !editableResume}
                         className={`group px-6 py-4 rounded-lg text-[13px] font-medium flex flex-col items-center gap-2 transition-all min-w-[200px] ${
-                          isRewriting && !editableResume
+                          isRewriting || !editableResume
                             ? 'bg-zinc-700 cursor-wait' 
-                            : editableResume
-                              ? 'bg-zinc-900 hover:bg-zinc-800'
-                              : 'bg-zinc-700 cursor-wait'
+                            : 'bg-zinc-900 hover:bg-zinc-800'
                         } text-white`}
                       >
-                        {isRewriting && !editableResume ? (
+                        {isRewriting || !editableResume ? (
                           <Loader2 size={18} className="text-zinc-300 animate-spin" />
-                        ) : editableResume ? (
-                          <Sparkles size={18} className="text-zinc-300" />
                         ) : (
-                          <Loader2 size={18} className="text-zinc-300 animate-spin" />
+                          <Sparkles size={18} className="text-zinc-300" />
                         )}
-                        <span>{editableResume ? '查看优化结果' : '优化中...'}</span>
-                        <span className="text-[11px] text-zinc-400 font-normal">{editableResume ? '简历已优化完成，点击查看并精调' : '请稍候，AI 正在后台优化简历'}</span>
+                        <span>{!isRewriting && editableResume ? '查看优化结果' : '优化中，请稍候'}</span>
+                        <span className="text-[11px] text-zinc-400 font-normal">
+                          {!isRewriting && editableResume ? '简历已优化完成，点击查看并精调' : '请稍候，AI 正在后台优化简历'}
+                        </span>
                       </button>
                     </div>
                     {isRewriting && resumeContent && (
@@ -2320,10 +2331,13 @@ const App: React.FC = () => {
             
             {/* Editor */}
             <div className={`flex flex-col bg-white rounded-lg border border-zinc-200 overflow-hidden no-print transition-all duration-300 ${isFullscreen ? 'hidden' : 'w-full'}`} style={!isFullscreen ? { flex: `0 0 ${editorWidthPercent}%` } : undefined}>
-              <div className="bg-zinc-50 px-5 py-2.5 border-b border-zinc-200 flex justify-between items-center">
+              <div className="bg-zinc-50 px-5 py-2.5 border-b border-zinc-200 flex justify-between items-center gap-2 flex-wrap">
                  <span className="text-[13px] font-medium text-zinc-900 flex items-center gap-1.5">
                    <PenTool size={13} className="text-zinc-400" /> 
                    {step === 'ENGLISH_VERSION' ? '英文编辑器' : '编辑器'}
+                   <span className="text-[11px] font-normal text-zinc-400 truncate max-w-[200px]" title={`简历：${resumeFile?.name || '文本'}；JD：${jdFile?.name || '文本'}`}>
+                     （本次：{resumeFile?.name || '文本'}）
+                   </span>
                  </span>
                  
                  <div className="flex items-center gap-2">

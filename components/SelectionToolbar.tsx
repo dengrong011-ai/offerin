@@ -178,19 +178,18 @@ const SelectionToolbar: React.FC<SelectionToolbarProps> = ({
         console.error('Rewrite error:', error);
         setIsRewriting(false);
         setStreamingText('');
-        
-        // 检查是否是使用限制错误
-        if (error.includes('USAGE_LIMIT_EXCEEDED') || error.includes('使用次数') || error.includes('上限') || error.includes('403')) {
-          const limitMessage = '精调功能使用次数已达上限。升级 VIP 享更多使用次数！';
-          setErrorMessage(limitMessage);
-          // 同时触发全局提示弹窗
-          if (onShowLimitError) {
-            onShowLimitError(limitMessage);
-            setVisible(false);
-          }
-        } else {
-          setErrorMessage(error || '重写失败，请稍后重试');
+        const limitMessage = '精调功能使用次数已达上限。升级 VIP 享更多使用次数！';
+        const isLimitError = /(USAGE_LIMIT_EXCEEDED|DIAGNOSIS_TRIAL_LIMIT_EXCEEDED|TRIAL_LIMIT_EXCEEDED|使用次数|上限|403)/i.test(error);
+        if (isLimitError && onShowLimitError) {
+          onShowLimitError(limitMessage);
+          setVisible(false);
+          return;
         }
+        if (isLimitError) {
+          setErrorMessage(limitMessage);
+          return;
+        }
+        setErrorMessage(error || '重写失败，请稍后重试');
       },
     };
 
@@ -204,10 +203,10 @@ const SelectionToolbar: React.FC<SelectionToolbarProps> = ({
       );
     } catch (err: any) {
       setIsRewriting(false);
-      // 检查是否是使用限制错误
       const errorMsg = err?.message || '重写失败';
-      if (errorMsg.includes('USAGE_LIMIT_EXCEEDED') || errorMsg.includes('使用次数') || errorMsg.includes('上限') || errorMsg.includes('403')) {
-        const limitMessage = '精调功能使用次数已达上限。升级 VIP 享更多使用次数！';
+      const limitMessage = '精调功能使用次数已达上限。升级 VIP 享更多使用次数！';
+      const isLimitError = /(USAGE_LIMIT_EXCEEDED|DIAGNOSIS_TRIAL_LIMIT_EXCEEDED|TRIAL_LIMIT_EXCEEDED|使用次数|上限|403)/i.test(errorMsg);
+      if (isLimitError) {
         if (onShowLimitError) {
           onShowLimitError(limitMessage);
           setVisible(false);

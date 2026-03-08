@@ -20,7 +20,7 @@ import { transcribeAudio, extractTextFromFile } from '../services/geminiService'
 import { saveInterviewRecord } from '../services/interviewRecordService';
 import type { SavedInterviewRecord } from '../services/interviewRecordService';
 import { useAuth } from '../contexts/AuthContext';
-import { checkUsageLimit, logUsage } from '../services/authService';
+import { checkUsageLimit } from '../services/authService';
 
 // Markdown 预处理：确保标题、列表等块级元素前后有空行，增强渲染鲁棒性
 const normalizeMarkdown = (text: string): string => {
@@ -49,6 +49,14 @@ interface InterviewChatProps {
   initialResumeFile?: FileData | null;
   onShowVIPModal?: () => void;
   viewingRecord?: SavedInterviewRecord | null;
+}
+
+// 是否为「使用次数/配额」类错误，若是则返回友好文案用于 VIP 弹窗；否则返回 null
+function getUsageLimitMessage(error: string): string | null {
+  if (error.includes('INTERVIEW_TRIAL_LIMIT_EXCEEDED')) return '模拟面试免费体验次数已用完（共1次）。升级 VIP 享无限次面试！';
+  if (error.includes('MONTHLY_INTERVIEW_LIMIT_EXCEEDED')) return '本月面试次数已达上限，请下月再试。升级 VIP 享更多次数。';
+  if (error.includes('DAILY_LIMIT_EXCEEDED')) return '今日使用次数已达上限，请明天再试。';
+  return null;
 }
 
 const InterviewChat: React.FC<InterviewChatProps> = ({ 
@@ -448,10 +456,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
     abortControllerRef.current = new AbortController();
 
     try {
-      // 记录使用
-      if (user) {
-        logUsage(user.id, 'interview');
-      }
+      // 使用次数由服务端 proxy 在首次请求时校验并记录，此处不再重复 logUsage，避免重复计次导致「未开始就超限」
 
       await runInterview(
         resumeText,
@@ -483,6 +488,12 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
             setStatus('completed');
           },
           onError: (error) => {
+            const limitMsg = getUsageLimitMessage(error);
+            if (limitMsg) {
+              setUsageLimitError(limitMsg);
+              setStatus('idle');
+              return;
+            }
             setMessages(prev => [...prev, {
               type: 'error',
               content: `面试出错: ${error}`,
@@ -501,12 +512,12 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
       if (error instanceof Error) {
         if (error.name === 'AbortError') {
           setStatus('stopped');
-        } else if (error.message.includes('INTERVIEW_TRIAL_LIMIT_EXCEEDED')) {
-          setUsageLimitError('模拟面试免费体验次数已用完（共1次）。升级 VIP 享无限次面试！');
-        } else if (error.message.includes('DAILY_LIMIT_EXCEEDED')) {
-          setUsageLimitError('今日使用次数已达上限，请明天再试。');
-        } else if (error.message.includes('MONTHLY_INTERVIEW_LIMIT_EXCEEDED')) {
-          setUsageLimitError('本月面试次数已达上限，请下月再试。');
+        } else {
+          const limitMsg = getUsageLimitMessage(error.message);
+          if (limitMsg) {
+            setUsageLimitError(limitMsg);
+            setStatus('idle');
+          }
         }
       }
     }
@@ -543,10 +554,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
     abortControllerRef.current = new AbortController();
 
     try {
-      // 记录使用
-      if (user) {
-        logUsage(user.id, 'interview');
-      }
+      // 使用次数由服务端 proxy 在首次请求时校验并记录，此处不再重复 logUsage
 
       const state = await generateFirstQuestion(
         resumeText,
@@ -578,6 +586,12 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
             setStatus('completed');
           },
           onError: (error) => {
+            const limitMsg = getUsageLimitMessage(error);
+            if (limitMsg) {
+              setUsageLimitError(limitMsg);
+              setStatus('idle');
+              return;
+            }
             setMessages(prev => [...prev, {
               type: 'error',
               content: `面试出错: ${error}`,
@@ -605,12 +619,12 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
       if (error instanceof Error) {
         if (error.name === 'AbortError') {
           setStatus('stopped');
-        } else if (error.message.includes('INTERVIEW_TRIAL_LIMIT_EXCEEDED')) {
-          setUsageLimitError('模拟面试免费体验次数已用完（共1次）。升级 VIP 享无限次面试！');
-        } else if (error.message.includes('DAILY_LIMIT_EXCEEDED')) {
-          setUsageLimitError('今日使用次数已达上限，请明天再试。');
-        } else if (error.message.includes('MONTHLY_INTERVIEW_LIMIT_EXCEEDED')) {
-          setUsageLimitError('本月面试次数已达上限，请下月再试。');
+        } else {
+          const limitMsg = getUsageLimitMessage(error.message);
+          if (limitMsg) {
+            setUsageLimitError(limitMsg);
+            setStatus('idle');
+          }
         }
       }
     }
@@ -876,6 +890,12 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
             setInteractiveState(null);
           },
           onError: (error) => {
+            const limitMsg = getUsageLimitMessage(error);
+            if (limitMsg) {
+              setUsageLimitError(limitMsg);
+              setStatus('waiting_input');
+              return;
+            }
             setMessages(prev => [...prev, {
               type: 'error',
               content: `回答处理出错: ${error}`,
@@ -896,12 +916,10 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
       }
     } catch (error) {
       if (error instanceof Error) {
-        if (error.message.includes('INTERVIEW_TRIAL_LIMIT_EXCEEDED')) {
-          setUsageLimitError('模拟面试免费体验次数已用完（共1次）。升级 VIP 享无限次面试！');
-        } else if (error.message.includes('DAILY_LIMIT_EXCEEDED')) {
-          setUsageLimitError('今日使用次数已达上限，请明天再试。');
-        } else if (error.message.includes('MONTHLY_INTERVIEW_LIMIT_EXCEEDED')) {
-          setUsageLimitError('本月面试次数已达上限，请下月再试。');
+        const limitMsg = getUsageLimitMessage(error.message);
+        if (limitMsg) {
+          setUsageLimitError(limitMsg);
+          setStatus('waiting_input');
         } else {
           console.error('Submit answer error:', error);
         }

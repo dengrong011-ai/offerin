@@ -5,6 +5,7 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { setCorsHeaders } from '../_cors';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
@@ -248,14 +249,7 @@ const getErrorMessage = (status: string): string => {
 };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS: 限制为项目域名
-  const allowedOrigins = ['https://offerin.co', 'https://www.offerin.co', 'http://localhost:5173', 'http://localhost:5174'];
-  const reqOrigin = req.headers.origin || '';
-  if (allowedOrigins.includes(reqOrigin)) {
-    res.setHeader('Access-Control-Allow-Origin', reqOrigin);
-  }
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  setCorsHeaders(res, req.headers.origin || '');
 
   // 处理预检请求
   if (req.method === 'OPTIONS') {

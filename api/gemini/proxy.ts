@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
+import { setCorsHeaders } from '../_cors';
 
 /**
  * Vercel Serverless 代理 — 安全版
@@ -438,23 +439,20 @@ async function checkAndLogUsage(
 // ============ 主处理函数 ============
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS
-  const allowedOrigins = [
-    'https://offerin.co',
-    'https://www.offerin.co',
-    'http://localhost:3000',
-    'http://localhost:5173',
-    'http://localhost:5174',
-  ];
-  const origin = req.headers.origin || '';
-  if (allowedOrigins.includes(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  }
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  setCorsHeaders(res, req.headers.origin || '');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
+  }
+
+  // 生产环境必须配置 Upstash Redis，否则多实例限流失效
+  const isProduction = process.env.VERCEL_ENV === 'production';
+  if (isProduction && (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN)) {
+    console.error('Production requires UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.');
+    return res.status(503).json({
+      error: 'UPSTASH_REDIS_REQUIRED',
+      message: 'Rate limiting requires Redis in production. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in Vercel.',
+    });
   }
 
   if (req.method !== 'POST') {
