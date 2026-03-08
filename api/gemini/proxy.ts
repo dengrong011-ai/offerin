@@ -449,6 +449,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).end();
   }
 
+  try {
   // 生产环境必须配置 Upstash Redis，否则多实例限流失效
   const isProduction = process.env.VERCEL_ENV === 'production';
   if (isProduction && (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN)) {
@@ -541,16 +542,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const streamParam = isStream ? '&alt=sse' : '';
     const url = `${GOOGLE_API_BASE}/models/${model}:${action}?key=${apiKey}${streamParam}`;
 
-    const googleResponse = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody),
-    });
+    let googleResponse: Response;
+    try {
+      googleResponse = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+      });
+    } catch (fetchErr: any) {
+      console.error('Google API fetch error:', fetchErr?.message || fetchErr);
+      return res.status(502).json({ error: 'AI_SERVICE_ERROR', message: 'Model unavailable or network error' });
+    }
 
     if (!googleResponse.ok) {
       const errorText = await googleResponse.text();
       console.error('Google API error:', googleResponse.status, errorText);
-      return res.status(googleResponse.status).json({
+      return res.status(502).json({
         error: 'AI_SERVICE_ERROR',
       });
     }
@@ -582,5 +589,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   } catch (error: any) {
     console.error('Proxy error:', error);
     return res.status(500).json({ error: error.message || 'Internal proxy error' });
+  }
+
+  } catch (err: any) {
+    console.error('Handler error:', err);
+    return res.status(500).json({ error: 'AI_SERVICE_ERROR', message: err?.message || 'Service temporarily unavailable' });
   }
 }
