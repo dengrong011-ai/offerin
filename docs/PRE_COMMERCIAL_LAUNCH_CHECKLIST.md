@@ -25,8 +25,8 @@
 
 ### 4. 域名与 CORS
 
-- **现状**：统一白名单在 **`api/shared/cors.ts`**（`ALLOWED_ORIGINS`），被 `api/gemini/proxy.ts`、`api/xorpay/create.ts`、`api/xorpay/query.ts` 使用；含 `https://offerin.co`、`https://www.offerin.co` 及本地开发 origin。
-- **确认**：若正式域不同（如多域名、子域），只需在 **`api/shared/cors.ts`** 中修改 `ALLOWED_ORIGINS` 并部署即可。
+- **现状**：CORS 白名单内联在 `api/gemini/proxy.ts`、`api/xorpay/create.ts`、`api/xorpay/query.ts` 的 `CORS_ORIGINS` 常量中；含 `https://offerin.co`、`https://www.offerin.co` 及本地开发 origin。
+- **确认**：若正式域不同，需在上述三个文件中同步修改 `CORS_ORIGINS` 并部署。
 
 ---
 
@@ -90,7 +90,7 @@
 | [ ] Supabase 套餐与连接/MAU 确认 | 支撑 10 万+ 用户 |
 | [ ] XorPay 生产密钥与回调 URL 正确 | 支付与 VIP 正常 |
 | [ ] 真实小额支付全流程跑通 | 创建→支付→回调→VIP |
-| [ ] CORS 含正式域名 | 与 `api/shared/cors.ts` 中 `ALLOWED_ORIGINS` 一致 |
+| [ ] CORS 含正式域名 | 与三处 API 中 `CORS_ORIGINS` 一致 |
 | [ ] （可选）usage_logs 复合索引 | 执行 `011_usage_logs_monthly_index.sql` |
 | [ ] （可选）Sentry 错误监控 | 配置 `VITE_SENTRY_DSN` 即启用前端上报 |
 | [ ] Gemini / Vercel 用量或预算告警 | 见 `docs/COST_ALERTS.md` |

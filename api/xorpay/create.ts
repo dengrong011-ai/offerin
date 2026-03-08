@@ -5,8 +5,9 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { setCorsHeaders } from '../shared/cors';
 import { createClient } from '@supabase/supabase-js';
+
+const CORS_ORIGINS = ['https://offerin.co', 'https://www.offerin.co', 'http://localhost:3000', 'http://localhost:5173', 'http://localhost:5174'];
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
@@ -249,9 +250,11 @@ const getErrorMessage = (status: string): string => {
 };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  setCorsHeaders(res, req.headers.origin || '');
+  const origin = req.headers.origin || '';
+  if (CORS_ORIGINS.includes(origin)) res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-  // 处理预检请求
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
