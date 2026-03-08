@@ -2,7 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
-import { setCorsHeaders } from '../_cors';
+import { setCorsHeaders } from '../../lib/cors';
 
 /**
  * Vercel Serverless 代理 — 安全版
