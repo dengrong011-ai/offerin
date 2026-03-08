@@ -4,7 +4,7 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { setCorsHeaders } from '../../lib/cors';
+import { setCorsHeaders } from '../shared/cors';
 
 const XORPAY_APP_ID = (process.env.XORPAY_APP_ID || process.env.VITE_XORPAY_APP_ID || '').trim();
 const XORPAY_APP_SECRET = process.env.XORPAY_APP_SECRET || process.env.VITE_XORPAY_APP_SECRET || '';

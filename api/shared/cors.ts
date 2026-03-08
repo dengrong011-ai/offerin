@@ -1,6 +1,8 @@
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+
 /**
  * 统一 CORS 白名单（与前端正式域名一致）
- * 修改后需同步到所有对外 API：gemini/proxy、xorpay/create、xorpay/query
+ * 被 api/gemini/proxy、api/xorpay/create、api/xorpay/query 引用
  */
 export const ALLOWED_ORIGINS = [
   'https://offerin.co',
@@ -19,4 +21,9 @@ export function setCorsHeaders(
   }
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+}
+
+/** 避免被当作独立路由时报错，直接 404 */
+export default function handler(_req: VercelRequest, res: VercelResponse) {
+  res.status(404).end();
 }
