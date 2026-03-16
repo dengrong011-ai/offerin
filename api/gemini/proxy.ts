@@ -173,7 +173,7 @@ const MEMBERSHIP_LIMITS: Record<string, {
 };
 
 // 允许的 actionType 白名单（防止前端传入非法值绕过配额）
-const ALLOWED_ACTION_TYPES = new Set(['diagnosis', 'interview', 'translation', 'resume_edit', 'auto_rewrite']);
+const ALLOWED_ACTION_TYPES = new Set(['diagnosis', 'interview', 'translation', 'resume_edit', 'auto_rewrite', 'file_extract', 'transcribe']);
 
 // 允许的模型白名单（防止调用非预期的昂贵模型）
 const ALLOWED_MODELS = new Set([
@@ -298,7 +298,8 @@ async function checkAndLogUsage(
   }
 
   // auto_rewrite: 诊断后自动触发的重构，不单独计配额（诊断时已记录）
-  if (actionType === 'auto_rewrite') {
+  // file_extract / transcribe: 辅助类操作（OCR提取文字、音频转文字），不消耗使用配额
+  if (actionType === 'auto_rewrite' || actionType === 'file_extract' || actionType === 'transcribe') {
     return { allowed: true };
   }
 

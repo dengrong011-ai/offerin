@@ -554,9 +554,10 @@ export interface AudioTranscriptionCallbacks {
 
 export const transcribeAudio = async (
   audioBlob: Blob,
-  callbacks: AudioTranscriptionCallbacks
+  callbacks: AudioTranscriptionCallbacks,
+  actionType: string = 'transcribe'
 ) => {
-  const client = createAIClient('resume_edit');
+  const client = createAIClient(actionType);
   
 
   callbacks.onTranscribing();
@@ -623,9 +624,10 @@ export const transcribeAudio = async (
 
 // 从文件中提取文本内容
 export const extractTextFromFile = async (
-  fileData: { data: string; mimeType: string }
+  fileData: { data: string; mimeType: string },
+  actionType: string = 'file_extract'
 ): Promise<string> => {
-  const client = createAIClient('resume_edit');
+  const client = createAIClient(actionType);
   
 
   try {
