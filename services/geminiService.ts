@@ -1,11 +1,10 @@
 
 import { createAIClient, type AIClient } from "./geminiProxy";
 
-// 重试配置 - 优化版：减少无效等待，更快得到结果
 const RETRY_CONFIG = {
-  maxRetries: 3,        // 主模型最多重试 3 次（降低无效等待）
-  baseDelay: 1500,      // 初始等待 1.5 秒（从 3s 降低）
-  maxDelay: 5000,       // 最大等待 5 秒（从 15s 降低）
+  maxRetries: 2,        // 主模型最多重试 2 次（快速失败，尽早尝试备用模型）
+  baseDelay: 800,       // 初始等待 0.8 秒
+  maxDelay: 3000,       // 最大等待 3 秒
 };
 
 // 备用模型列表（按优先级排序）：主模型 3.1 pro，备选 2.5 pro，不允许直接降级
@@ -78,7 +77,7 @@ async function generateContentStreamWithRetry(
       
       console.log(`主模型持续失败，尝试备用模型: ${fallbackModel}`);
       try {
-        await delay(500); // 快速切换，减少等待
+        await delay(500);
         const stream = await client.generateContentStream({
           ...options,
           model: fallbackModel,
@@ -136,7 +135,7 @@ async function generateContentWithRetry(
       
       console.log(`主模型持续失败，尝试备用模型: ${fallbackModel}`);
       try {
-        await delay(500); // 快速切换
+        await delay(500);
         const response = await client.generateContent({
           ...options,
           model: fallbackModel,
@@ -166,7 +165,7 @@ const DIAGNOSIS_SYSTEM_INSTRUCTION = `你是资深求职辅导师，专注互联
 
 **【风格要求】** 极简直接，点到即止，数据说话，无需冗余修饰。
 
-**【职业阶段】** 应届(教育/实习) | 初级2-3年(执行力/量化) | 中级5-8年(专业深度) | 资深10年+(战略/管理)
+**【职业阶段】** 应届(教育/实习) | 0-2年(教育/工作) | 初级2-3年(执行力/量化) | 中级5-8年(专业深度) | 资深10年+(战略/管理)
 
 **【职能量化重点】**
 - 产品：DAU/MAU、留存、转化率、营收
@@ -228,7 +227,8 @@ const RESUME_SYSTEM_INSTRUCTION = `你是资深简历专家，专注互联网/AI
 
 **【职业阶段板块顺序】**
 - 应届：个人信息→教育→实习→技能
-- 初级：个人信息→工作经历→教育→技能
+- 0-2年（刚毕业、工作经历少）：个人信息→教育→工作经历/核心项目→技能。除非学历有明显负面影响（如非目标院校、GPA偏低、专业与岗位严重不匹配），否则学历必须靠前
+- 初级2-3年：学历突出时 个人信息→教育→工作经历→技能；学历一般或负向时 个人信息→工作经历→教育→技能
 - 中级：个人信息→工作经历→技能→教育
 - 资深：个人信息→核心业绩→管理经历→教育
 
@@ -431,9 +431,14 @@ export const rewriteResumeStream = async (
   jdFile?: FileData,
   resumeFile?: FileData
 ) => {
-  // auto_rewrite: 不单独计配额（诊断时已记录）
   const client = createAIClient('auto_rewrite');
-  const { buildParts, baseContext } = buildAnalysisContext(jd, resume, aspiration, jdFile, resumeFile);
+  // 重构阶段：如果已有文本内容则跳过附件，避免重复传输大文件（诊断时已解析过）
+  const skipFiles = !!(jd.trim() || resume.trim());
+  const { buildParts, baseContext } = buildAnalysisContext(
+    jd, resume, aspiration,
+    skipFiles ? undefined : jdFile,
+    skipFiles ? undefined : resumeFile
+  );
 
   const parts = buildParts();
   parts.push({ 

@@ -1,6 +1,6 @@
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { analyzeResumeStream, rewriteResumeStream, translateResume, FileData, condenseResume } from './services/geminiService';
+import { analyzeResumeStream, rewriteResumeStream, translateResume, FileData, condenseResume, extractTextFromFile } from './services/geminiService';
 import MarkdownRenderer from './components/MarkdownRenderer';
 import type { ResumeTemplate } from './components/MarkdownRenderer';
 import InterviewChat from './components/InterviewChat';
@@ -429,11 +429,25 @@ const App: React.FC = () => {
 
     try {
       const { data, mime } = await compressImage(file);
-      // 保存文件信息（不回填文本，提交时再提取，加快速度）
+      // 保存文件信息
       if (type === 'jd') {
         setJdFile({ name: file.name, data, mime });
       } else {
         setResumeFile({ name: file.name, data, mime });
+      }
+      
+      // 异步预提取文本内容，回填到文本框（防止附件过大降级后丢失内容）
+      try {
+        const extractedText = await extractTextFromFile({ data, mimeType: mime });
+        if (extractedText && extractedText.trim()) {
+          if (type === 'jd') {
+            setJd(prev => prev || extractedText.trim());
+          } else {
+            setResume(prev => prev || extractedText.trim());
+          }
+        }
+      } catch (extractErr) {
+        console.warn('文件文本预提取失败，将依赖附件模式:', extractErr);
       }
     } catch (err: any) {
       setError(err.message || '文件处理失败。');
@@ -454,11 +468,25 @@ const App: React.FC = () => {
             const { data, mime } = await compressImage(file);
             const fileName = `pasted-image-${new Date().getTime()}.jpg`;
             
-            // 保存文件信息（不回填文本，提交时再提取，加快速度）
+            // 保存文件信息
             if (type === 'jd') {
               setJdFile({ name: fileName, data, mime });
             } else {
               setResumeFile({ name: fileName, data, mime });
+            }
+            
+            // 异步预提取文本内容，回填到文本框
+            try {
+              const extractedText = await extractTextFromFile({ data, mimeType: mime });
+              if (extractedText && extractedText.trim()) {
+                if (type === 'jd') {
+                  setJd(prev => prev || extractedText.trim());
+                } else {
+                  setResume(prev => prev || extractedText.trim());
+                }
+              }
+            } catch (extractErr) {
+              console.warn('粘贴图片文本预提取失败:', extractErr);
             }
           } catch (err: any) {
             setError('粘贴图片处理失败：' + err.message);

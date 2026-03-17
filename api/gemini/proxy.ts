@@ -206,20 +206,32 @@ async function checkRateLimit(key: string): Promise<{ success: boolean; remainin
   return { success: checkRateLimitMemory(key) };
 }
 
-// ============ Supabase 服务端客户端 ============
+// ============ Supabase 服务端客户端（单例复用，避免每次请求创建新实例） ============
 
-function getSupabaseAdmin() {
-  const url = process.env.VITE_SUPABASE_URL || '';
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-  return createClient(url, serviceKey);
+let _supabaseAdmin: SupabaseClient | null = null;
+
+function getSupabaseAdmin(): SupabaseClient {
+  if (!_supabaseAdmin) {
+    const url = process.env.VITE_SUPABASE_URL || '';
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+    _supabaseAdmin = createClient(url, serviceKey);
+  }
+  return _supabaseAdmin;
 }
 
-function getSupabaseAuth(jwt: string) {
-  const url = process.env.VITE_SUPABASE_URL || '';
-  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || '';
-  return createClient(url, anonKey, {
-    global: { headers: { Authorization: `Bearer ${jwt}` } }
-  });
+let _lastAuthJwt = '';
+let _supabaseAuth: SupabaseClient | null = null;
+
+function getSupabaseAuth(jwt: string): SupabaseClient {
+  if (!_supabaseAuth || _lastAuthJwt !== jwt) {
+    const url = process.env.VITE_SUPABASE_URL || '';
+    const anonKey = process.env.VITE_SUPABASE_ANON_KEY || '';
+    _supabaseAuth = createClient(url, anonKey, {
+      global: { headers: { Authorization: `Bearer ${jwt}` } }
+    });
+    _lastAuthJwt = jwt;
+  }
+  return _supabaseAuth;
 }
 
 // ============ 核心鉴权 + 配额校验 ============
@@ -283,6 +295,31 @@ async function authenticateUser(authHeader: string | undefined): Promise<AuthRes
   }
 }
 
+// 用量校验短期缓存：同一用户 10 秒内的连续请求跳过 DB 查询（诊断 + 自动重构场景）
+const usageCacheMap = new Map<string, { allowed: boolean; time: number }>();
+const USAGE_CACHE_TTL = 10_000; // 10 秒
+
+function getCachedUsage(userId: string, actionType: string): { allowed: boolean } | null {
+  const key = `${userId}:${actionType}`;
+  const entry = usageCacheMap.get(key);
+  if (entry && Date.now() - entry.time < USAGE_CACHE_TTL) {
+    return { allowed: entry.allowed };
+  }
+  return null;
+}
+
+function setCachedUsage(userId: string, actionType: string, allowed: boolean) {
+  const key = `${userId}:${actionType}`;
+  usageCacheMap.set(key, { allowed, time: Date.now() });
+  // 清理过期条目（避免内存泄漏）
+  if (usageCacheMap.size > 500) {
+    const now = Date.now();
+    for (const [k, v] of usageCacheMap) {
+      if (now - v.time > USAGE_CACHE_TTL) usageCacheMap.delete(k);
+    }
+  }
+}
+
 async function checkAndLogUsage(
   userId: string,
   membershipType: string,
@@ -293,7 +330,7 @@ async function checkAndLogUsage(
 
   // Pro 用户无限制（异步记录，不阻塞）
   if (membershipType === 'pro') {
-    Promise.resolve(supabaseAdmin.from('usage_logs').insert({ user_id: userId, action_type: actionType })).catch(() => {});
+    supabaseAdmin.from('usage_logs').insert({ user_id: userId, action_type: actionType }).then(() => {}).catch(() => {});
     return { allowed: true };
   }
 
@@ -303,12 +340,20 @@ async function checkAndLogUsage(
     return { allowed: true };
   }
 
+  // VIP 用户：大多数场景直接放行（月限额很高），用缓存跳过 DB
+  if (membershipType === 'vip') {
+    const cached = getCachedUsage(userId, actionType);
+    if (cached?.allowed) {
+      supabaseAdmin.from('usage_logs').insert({ user_id: userId, action_type: actionType }).then(() => {}).catch(() => {});
+      return { allowed: true };
+    }
+  }
+
   // Special 白名单用户：所有操作共享每日限额
   if (membershipType === 'special') {
     const today = new Date().toISOString().split('T')[0];
     const dailyLimit = limits.daily_diagnosis; // 20
     
-    // 统计今日所有操作的总次数
     const { count } = await supabaseAdmin
       .from('usage_logs')
       .select('*', { count: 'exact', head: true })
@@ -320,7 +365,7 @@ async function checkAndLogUsage(
       return { allowed: false, reason: 'DAILY_LIMIT_EXCEEDED' };
     }
 
-    await supabaseAdmin.from('usage_logs').insert({ user_id: userId, action_type: actionType });
+    supabaseAdmin.from('usage_logs').insert({ user_id: userId, action_type: actionType }).then(() => {}).catch(() => {});
     return { allowed: true };
   }
 
@@ -364,6 +409,7 @@ async function checkAndLogUsage(
         return { allowed: false, reason: 'TRANSLATION_LIMIT_EXCEEDED' };
       }
     }
+
   }
 
   if (membershipType === 'vip') {
@@ -433,8 +479,9 @@ async function checkAndLogUsage(
     // 翻译暂不限制
   }
 
-  // 记录使用（异步，不阻塞响应）
-  Promise.resolve(supabaseAdmin.from('usage_logs').insert({ user_id: userId, action_type: actionType })).catch(() => {});
+  // 记录使用（异步，不阻塞响应）+ 缓存结果
+  setCachedUsage(userId, actionType, true);
+  supabaseAdmin.from('usage_logs').insert({ user_id: userId, action_type: actionType }).then(() => {}).catch(() => {});
   return { allowed: true };
 }
 
