@@ -92,11 +92,11 @@ export const saveInterviewHistoryAsync = async (
 
 // ==================== API 调用基础设施 ====================
 
-// 重试配置 - 增强版，应对 Google API 高负载
+// 重试配置 - 快速降级，主模型 2 次失败即切备用模型
 const RETRY_CONFIG = {
-  maxRetries: 5,
-  baseDelay: 3000,
-  maxDelay: 15000,
+  maxRetries: 2,
+  baseDelay: 1500,
+  maxDelay: 5000,
 };
 
 // 备用模型列表（主模型持续失败时逐个尝试）
