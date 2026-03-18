@@ -891,18 +891,26 @@ const App: React.FC = () => {
       if (!parentDiv) return;
       
       const canvas = await html2canvas(parentDiv, {
-        scale: 2.5, 
+        scale: 2.5,
         useCORS: true,
         backgroundColor: '#ffffff',
         logging: false,
         width: A4_WIDTH_PX,
         windowWidth: 1024
       });
-      
+
+      // Safari 下 data URL 过大可能失败，改用 Blob
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png');
+      });
+      const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.download = getResumeFileName('png');
-      link.href = canvas.toDataURL('image/png');
+      link.href = url;
+      document.body.appendChild(link);
       link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
     } catch (e) {
       console.error('Image export failed', e);
       alert('图片导出失败，请重试');
@@ -960,10 +968,14 @@ const App: React.FC = () => {
       
       const totalContentHeight = contentContainer.scrollHeight;
       console.log('PDF导出 - 内容高度:', totalContentHeight);
-      
+
+      // Safari/iOS 下 canvas 尺寸限制更严，用 scale 2 避免超出导致导出失败
+      const isSafari = typeof navigator !== 'undefined' && /apple/i.test(navigator.vendor || '') && !/crios|fxios/i.test(navigator.userAgent || '');
+      const pdfScale = isSafari ? 2 : 3;
+
       // 渲染完整内容为canvas - 明确指定高度以确保完整渲染
       const contentCanvas = await html2canvas(contentContainer, {
-        scale: 3,
+        scale: pdfScale,
         useCORS: true,
         backgroundColor: '#ffffff',
         logging: false,
@@ -1203,7 +1215,18 @@ const App: React.FC = () => {
       document.body.removeChild(tempContainer);
       
       console.log('PDF 生成完成，共', pageCount, '页');
-      pdf.save(getResumeFileName('pdf'));
+
+      // Safari 下 pdf.save() 会触发页面刷新或失败，改用 blob + link.download（对全浏览器更稳）
+      const filename = getResumeFileName('pdf');
+      const blob = pdf.output('blob');
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
     } catch (e) {
       console.error('PDF export failed', e);
       alert('PDF 生成失败，请重试');

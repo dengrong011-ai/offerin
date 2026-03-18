@@ -1074,11 +1074,14 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
     });
     
     const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
+    link.href = url;
     link.download = `面试记录_${modeLabel}_${timestamp}.md`;
+    document.body.appendChild(link);
     link.click();
-    URL.revokeObjectURL(link.href);
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
   };
 
   // 导出为图片（免费，仅需登录）
@@ -1104,12 +1107,19 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
         windowHeight: element.scrollHeight
       });
       
-      const imgData = canvas.toDataURL('image/png');
+      // Safari 下 data URL 过大可能失败，改用 Blob
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png');
+      });
+      const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       const modeLabel = settings.mode === 'interactive' ? '人机交互' : '纯模拟';
       link.download = `面试记录_${modeLabel}_${new Date().toISOString().split('T')[0]}.png`;
-      link.href = imgData;
+      link.href = url;
+      document.body.appendChild(link);
       link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
     } catch (error) {
       console.error('Image export error:', error);
     } finally {
