@@ -40,10 +40,10 @@ function getRedisRatelimit(): Ratelimit | null {
       token: redisToken,
     });
     
-    // 滑动窗口限流：每分钟 30 次请求
+    // 滑动窗口限流：每分钟 90 次（一场 8 轮面试约 17 次，诊断等叠加需余量）
     ratelimit = new Ratelimit({
       redis,
-      limiter: Ratelimit.slidingWindow(30, '1 m'),
+      limiter: Ratelimit.slidingWindow(90, '1 m'),
       analytics: true,
       prefix: 'offerin:ratelimit:',
     });
@@ -100,7 +100,7 @@ async function getWhitelistEntry(email: string, supabaseAdmin: SupabaseClient): 
 
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT_WINDOW_MS = 60_000;
-const RATE_LIMIT_MAX = 30;
+const RATE_LIMIT_MAX = 90;
 
 function checkRateLimitMemory(key: string): boolean {
   const now = Date.now();
@@ -516,24 +516,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: 'GEMINI_API_KEY not configured on server' });
   }
 
-  // ---- 并行执行 Rate Limiting + JWT 鉴权（减少串行等待） ----
+  // ---- 鉴权 + 限流（登录用户按 user_id 计限，避免同 IP 多用户互相抢额度）
+  const authUser = await authenticateUser(req.headers.authorization);
+  if (!authUser) {
+    return res.status(401).json({ error: 'UNAUTHORIZED' });
+  }
+
   const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || 
                    req.socket?.remoteAddress || 'unknown';
-  
-  const [rateLimitResult, authUser] = await Promise.all([
-    checkRateLimit(clientIp),
-    authenticateUser(req.headers.authorization),
-  ]);
+  const rateLimitKey = authUser ? `user:${authUser.userId}` : `ip:${clientIp}`;
+  const rateLimitResult = await checkRateLimit(rateLimitKey);
 
   if (!rateLimitResult.success) {
     return res.status(429).json({ 
       error: 'RATE_LIMIT_EXCEEDED',
       remaining: rateLimitResult.remaining ?? 0
     });
-  }
-
-  if (!authUser) {
-    return res.status(401).json({ error: 'UNAUTHORIZED' });
   }
 
   try {
@@ -587,30 +585,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const isStream = mode === 'stream';
     const action = isStream ? 'streamGenerateContent' : 'generateContent';
     const streamParam = isStream ? '&alt=sse' : '';
-    const url = `${GOOGLE_API_BASE}/models/${model}:${action}?key=${apiKey}${streamParam}`;
+    const PRO_MODELS_429_FALLBACK = new Set([
+      'gemini-3.1-pro-preview', 'gemini-3-pro-preview',
+      'gemini-2.5-pro-preview-05-06', 'gemini-2.5-flash-preview-05-20',
+    ]);
+    const FALLBACK_MODEL = 'gemini-2.0-flash'; // 单独配额池，Pro 限流时仍可能可用
 
-    let googleResponse: Response;
-    try {
-      googleResponse = await fetch(url, {
+    const doFetch = (targetModel: string) => {
+      const url = `${GOOGLE_API_BASE}/models/${targetModel}:${action}?key=${apiKey}${streamParam}`;
+      return fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
       });
+    };
+
+    let googleResponse: Response;
+    try {
+      googleResponse = await doFetch(model);
     } catch (fetchErr: any) {
       console.error('Google API fetch error:', fetchErr?.message || fetchErr);
       return res.status(502).json({ error: 'AI_SERVICE_ERROR', message: 'Model unavailable or network error' });
     }
 
+    // 主模型 429 时自动 fallback 到 Flash（不同配额池），尽量让用户能用上
+    if (googleResponse.status === 429 && PRO_MODELS_429_FALLBACK.has(model)) {
+      console.warn(`主模型 ${model} 429，fallback 到 ${FALLBACK_MODEL}`);
+      try {
+        const fallbackRes = await doFetch(FALLBACK_MODEL);
+        if (fallbackRes.ok) {
+          googleResponse = fallbackRes;
+        }
+      } catch (_) { /* 保持原 429 响应 */ }
+    }
+
     if (!googleResponse.ok) {
       const errorText = await googleResponse.text();
-      console.error('Google API error:', googleResponse.status, errorText);
-      // Google 429 限流：返回明确错误码，便于前端展示「请稍后再试」友好提示
       if (googleResponse.status === 429) {
+        // 解析 Google 429 详情，便于判断是哪个模型/配额用尽
+        try {
+          const err = JSON.parse(errorText);
+          const details = err?.error?.details?.[0];
+          const quotaMetric = details?.metadata?.['quota_metric'] || details?.metadata?.['service'] || 'unknown';
+          const quotaLimit = details?.metadata?.['quota_limit_value'] || '?';
+          console.warn(`[429] model=${model} quota_metric=${quotaMetric} quota_limit=${quotaLimit}`);
+        } catch (_) {
+          console.error('Google API 429:', errorText);
+        }
         return res.status(429).json({
           error: 'AI_RATE_LIMIT_EXCEEDED',
           message: 'AI 服务当前请求较多，请 1-2 分钟后再试',
         });
       }
+      console.error('Google API error:', googleResponse.status, errorText);
       return res.status(502).json({
         error: 'AI_SERVICE_ERROR',
       });

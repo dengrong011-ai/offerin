@@ -112,7 +112,11 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const isRetryableError = (error: any): boolean => {
   const message = error?.message || '';
   const code = error?.code;
-  return code === 503 || code === 429 ||
+  // 429 / AI 限流不重试：需用户等待 1–2 分钟，立即重试无效
+  if (code === 429 || message.includes('429') || message.includes('AI_RATE_LIMIT_EXCEEDED') || message.includes('RATE_LIMIT_EXCEEDED')) {
+    return false;
+  }
+  return code === 503 ||
          message.includes('503') ||
          message.includes('502') ||
          message.includes('AI_SERVICE_ERROR') ||

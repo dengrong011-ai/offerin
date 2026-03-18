@@ -547,6 +547,20 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
             setUsageLimitShowUpgrade(limitMsg.showUpgrade);
             setStatus('idle');
             if (limitMsg.showUpgrade) onShowVIPModal?.();
+          } else {
+            const busyMsg = getSystemBusyMessage(error.message);
+            if (busyMsg) {
+              setUsageLimitError(busyMsg);
+              setUsageLimitShowUpgrade(false);
+              setStatus('idle');
+            } else {
+              setMessages(prev => [...prev, {
+                type: 'error',
+                content: `面试出错: ${error.message}`,
+                timestamp: new Date().toISOString()
+              }]);
+              setStatus('error');
+            }
           }
         }
       }
