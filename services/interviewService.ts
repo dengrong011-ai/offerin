@@ -94,18 +94,28 @@ export const saveInterviewHistoryAsync = async (
 
 // 重试配置 - 增强版，应对 Google API 高负载
 const RETRY_CONFIG = {
-  maxRetries: 5,        // 增加到 5 次重试
-  baseDelay: 3000,      // 初始等待 3 秒
-  maxDelay: 15000,      // 最大等待 15 秒
+  maxRetries: 5,
+  baseDelay: 3000,
+  maxDelay: 15000,
 };
+
+// 备用模型列表（主模型持续失败时逐个尝试）
+const FALLBACK_MODELS = [
+  'gemini-3.1-pro-preview',
+  'gemini-2.5-pro-preview-05-06',
+  'gemini-2.5-flash-preview-05-20',
+  'gemini-2.0-flash',
+];
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 const isRetryableError = (error: any): boolean => {
   const message = error?.message || '';
   const code = error?.code;
-  return code === 503 || code === 429 || 
-         message.includes('503') || 
+  return code === 503 || code === 429 ||
+         message.includes('503') ||
+         message.includes('502') ||
+         message.includes('AI_SERVICE_ERROR') ||
          message.includes('UNAVAILABLE') ||
          message.includes('high demand') ||
          message.includes('overloaded') ||
@@ -129,35 +139,56 @@ async function generateContentStreamWithRetry(
   abortSignal?: AbortSignal
 ): Promise<AsyncIterable<any>> {
   let lastError: Error | null = null;
-  
+
   for (let attempt = 0; attempt < RETRY_CONFIG.maxRetries; attempt++) {
     if (abortSignal?.aborted) {
       throw new Error('已取消');
     }
-    
+
     try {
       const stream = await client.generateContentStream(options);
       return stream;
     } catch (error: any) {
       lastError = error;
       console.warn(`API 调用失败 (尝试 ${attempt + 1}/${RETRY_CONFIG.maxRetries}):`, error.message);
-      
+
       if (!isRetryableError(error)) {
         throw error;
       }
-      
+
       if (attempt < RETRY_CONFIG.maxRetries - 1) {
         const delayMs = Math.min(
           RETRY_CONFIG.baseDelay * Math.pow(2, attempt) + Math.random() * 1000,
           RETRY_CONFIG.maxDelay
         );
-        console.log(`等待 ${Math.round(delayMs/1000)} 秒后重试...`);
+        console.log(`等待 ${Math.round(delayMs / 1000)} 秒后重试...`);
         await delay(delayMs);
       }
     }
   }
-  
-  throw lastError || new Error('API 调用失败');
+
+  // 主模型重试全部失败后，尝试备用模型（与 geminiService 对齐）
+  if (isRetryableError(lastError)) {
+    for (const fallbackModel of FALLBACK_MODELS) {
+      if (fallbackModel === options.model) continue;
+      if (abortSignal?.aborted) throw new Error('已取消');
+      console.log(`主模型持续失败，尝试备用模型: ${fallbackModel}`);
+      try {
+        await delay(500);
+        const stream = await client.generateContentStream({
+          ...options,
+          model: fallbackModel,
+        });
+        console.log(`备用模型 ${fallbackModel} 成功`);
+        return stream;
+      } catch (fallbackError: any) {
+        console.warn(`备用模型 ${fallbackModel} 也失败:`, fallbackError.message);
+        lastError = fallbackError;
+      }
+    }
+  }
+
+  throw lastError || new Error('API 调用失败，所有模型均不可用');
 }
 
 // ==================== 类型导出 ====================

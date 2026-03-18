@@ -173,7 +173,7 @@ const MEMBERSHIP_LIMITS: Record<string, {
 };
 
 // 允许的 actionType 白名单（防止前端传入非法值绕过配额）
-const ALLOWED_ACTION_TYPES = new Set(['diagnosis', 'interview', 'translation', 'resume_edit', 'auto_rewrite', 'file_extract', 'transcribe']);
+const ALLOWED_ACTION_TYPES = new Set(['diagnosis', 'interview', 'translation', 'resume_edit', 'auto_rewrite', 'file_extract', 'transcribe', 'career_explore']);
 
 // 允许的模型白名单（防止调用非预期的昂贵模型）
 const ALLOWED_MODELS = new Set([
