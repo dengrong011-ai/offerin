@@ -74,9 +74,9 @@ export const MEMBERSHIP_LIMITS = {
     daily_interview: -1,           // VIP 面试不限每日，改为月限
     daily_total: -1,               // VIP 不限每日总操作
     monthly_diagnosis: 200,        // VIP 每月200次诊断（显示为无限）
-    monthly_interview: 100,        // VIP 每月100次面试（显示为无限）
+    monthly_interview: 300,        // VIP 每月300次面试（显示为无限）
     diagnosis_warning_threshold: 100, // 诊断月使用 >100 次发出预警
-    interview_warning_threshold: 80,  // 面试月使用 >80 次发出预警
+    interview_warning_threshold: 240,  // 面试月使用 >240 次发出预警
     can_download: true,            // VIP 可以无限下载
     can_export_interview: true,    // VIP 支持面试记录导出
     can_translate: true,           // VIP 翻译无限

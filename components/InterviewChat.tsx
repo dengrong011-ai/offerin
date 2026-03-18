@@ -51,12 +51,13 @@ interface InterviewChatProps {
   viewingRecord?: SavedInterviewRecord | null;
 }
 
-// 是否为「使用次数/配额」类错误，若是则返回友好文案用于 VIP 弹窗；否则返回 null
-function getUsageLimitMessage(error: string): string | null {
-  if (error.includes('INTERVIEW_TRIAL_LIMIT_EXCEEDED')) return '模拟面试免费体验次数已用完（共1次）。升级 VIP 享无限次面试！';
-  if (error.includes('MONTHLY_INTERVIEW_LIMIT_EXCEEDED')) return '本月面试次数已达上限，请下月再试。升级 VIP 享更多次数。';
-  if (error.includes('DIAGNOSIS_TRIAL_LIMIT_EXCEEDED') || error.includes('USAGE_LIMIT_EXCEEDED')) return '使用次数已用完。升级 VIP 享更多次数！';
-  if (error.includes('DAILY_LIMIT_EXCEEDED')) return '今日使用次数已达上限，请明天再试。';
+// 是否为「使用次数/配额」类错误；返回 { message, showUpgrade }
+// showUpgrade=false：已是 VIP/Pro 等，仅额度用尽，不弹升级
+function getUsageLimitMessage(error: string): { message: string; showUpgrade: boolean } | null {
+  if (error.includes('INTERVIEW_TRIAL_LIMIT_EXCEEDED')) return { message: '模拟面试免费体验次数已用完（共1次）。升级 VIP 享无限次面试！', showUpgrade: true };
+  if (error.includes('MONTHLY_INTERVIEW_LIMIT_EXCEEDED')) return { message: '本月面试额度已用完（300次/月），下月 1 号自动恢复。', showUpgrade: false };
+  if (error.includes('DIAGNOSIS_TRIAL_LIMIT_EXCEEDED') || error.includes('USAGE_LIMIT_EXCEEDED')) return { message: '使用次数已用完。升级 VIP 享更多次数！', showUpgrade: true };
+  if (error.includes('DAILY_LIMIT_EXCEEDED')) return { message: '今日使用次数已达上限，请明天再试。', showUpgrade: false };
   return null;
 }
 
@@ -91,8 +92,9 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
   const [saveRecordSuccess, setSaveRecordSuccess] = useState(false);
   const [status, setStatus] = useState<InterviewStatus>('idle');
   
-  // 使用限制相关状态
+  // 使用限制相关状态；showUpgrade=false 时仅显示「我知道了」（VIP 本月额度用尽等）
   const [usageLimitError, setUsageLimitError] = useState<string | null>(null);
+  const [usageLimitShowUpgrade, setUsageLimitShowUpgrade] = useState(true);
   const [showUpgradeHint, setShowUpgradeHint] = useState(false);
   
   const [resumeText, setResumeText] = useState(initialResume);
@@ -125,6 +127,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
   // 进入面试页时清除之前的次数错误提示，避免显示诊断等其它页的遗留错误
   useEffect(() => {
     setUsageLimitError(null);
+    setUsageLimitShowUpgrade(true);
   }, []);
   
   // 人机交互模式状态
@@ -456,8 +459,10 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
       if (!limitCheck.allowed) {
         if (limitCheck.isTrialLimit) {
           setUsageLimitError(`模拟面试免费体验次数已用完（共${limitCheck.limit}次）。升级 VIP 享无限次面试！`);
+          setUsageLimitShowUpgrade(true);
         } else {
-          setUsageLimitError(`本月面试次数已达上限。`);
+          setUsageLimitError('本月面试额度已用完（300次/月），下月 1 号自动恢复。');
+          setUsageLimitShowUpgrade(false);
         }
         return;
       }
@@ -504,14 +509,16 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
           onError: (error) => {
             const limitMsg = getUsageLimitMessage(error);
             if (limitMsg) {
-              setUsageLimitError(limitMsg);
+              setUsageLimitError(limitMsg.message);
+              setUsageLimitShowUpgrade(limitMsg.showUpgrade);
               setStatus('idle');
-              onShowVIPModal?.();
+              if (limitMsg.showUpgrade) onShowVIPModal?.();
               return;
             }
             const busyMsg = getSystemBusyMessage(error);
             if (busyMsg) {
               setUsageLimitError(busyMsg);
+              setUsageLimitShowUpgrade(false);
               setStatus('idle');
               return;
             }
@@ -536,9 +543,10 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
         } else {
           const limitMsg = getUsageLimitMessage(error.message);
           if (limitMsg) {
-            setUsageLimitError(limitMsg);
+            setUsageLimitError(limitMsg.message);
+            setUsageLimitShowUpgrade(limitMsg.showUpgrade);
             setStatus('idle');
-            onShowVIPModal?.();
+            if (limitMsg.showUpgrade) onShowVIPModal?.();
           }
         }
       }
@@ -562,8 +570,10 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
       if (!limitCheck.allowed) {
         if (limitCheck.isTrialLimit) {
           setUsageLimitError(`模拟面试免费体验次数已用完（共${limitCheck.limit}次）。升级 VIP 享无限次面试！`);
+          setUsageLimitShowUpgrade(true);
         } else {
-          setUsageLimitError(`本月面试次数已达上限。`);
+          setUsageLimitError('本月面试额度已用完（300次/月），下月 1 号自动恢复。');
+          setUsageLimitShowUpgrade(false);
         }
         return;
       }
@@ -610,14 +620,16 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
           onError: (error) => {
             const limitMsg = getUsageLimitMessage(error);
             if (limitMsg) {
-              setUsageLimitError(limitMsg);
+              setUsageLimitError(limitMsg.message);
+              setUsageLimitShowUpgrade(limitMsg.showUpgrade);
               setStatus('idle');
-              onShowVIPModal?.();
+              if (limitMsg.showUpgrade) onShowVIPModal?.();
               return;
             }
             const busyMsg = getSystemBusyMessage(error);
             if (busyMsg) {
               setUsageLimitError(busyMsg);
+              setUsageLimitShowUpgrade(false);
               setStatus('idle');
               return;
             }
@@ -651,13 +663,15 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
         } else {
           const limitMsg = getUsageLimitMessage(error.message);
           if (limitMsg) {
-            setUsageLimitError(limitMsg);
+            setUsageLimitError(limitMsg.message);
+            setUsageLimitShowUpgrade(limitMsg.showUpgrade);
             setStatus('idle');
-            onShowVIPModal?.();
+            if (limitMsg.showUpgrade) onShowVIPModal?.();
           } else {
             const busyMsg = getSystemBusyMessage(error.message);
             if (busyMsg) {
               setUsageLimitError(busyMsg);
+              setUsageLimitShowUpgrade(false);
               setStatus('idle');
             }
           }
@@ -928,14 +942,16 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
           onError: (error) => {
             const limitMsg = getUsageLimitMessage(error);
             if (limitMsg) {
-              setUsageLimitError(limitMsg);
+              setUsageLimitError(limitMsg.message);
+              setUsageLimitShowUpgrade(limitMsg.showUpgrade);
               setStatus('waiting_input');
-              onShowVIPModal?.();
+              if (limitMsg.showUpgrade) onShowVIPModal?.();
               return;
             }
             const busyMsg = getSystemBusyMessage(error);
             if (busyMsg) {
               setUsageLimitError(busyMsg);
+              setUsageLimitShowUpgrade(false);
               setStatus('waiting_input');
               return;
             }
@@ -961,13 +977,15 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
       if (error instanceof Error) {
         const limitMsg = getUsageLimitMessage(error.message);
         if (limitMsg) {
-          setUsageLimitError(limitMsg);
+          setUsageLimitError(limitMsg.message);
+          setUsageLimitShowUpgrade(limitMsg.showUpgrade);
           setStatus('waiting_input');
-          onShowVIPModal?.();
+          if (limitMsg.showUpgrade) onShowVIPModal?.();
         } else {
           const busyMsg = getSystemBusyMessage(error.message);
           if (busyMsg) {
             setUsageLimitError(busyMsg);
+            setUsageLimitShowUpgrade(false);
             setStatus('waiting_input');
           } else {
             console.error('Submit answer error:', error);
@@ -1298,7 +1316,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
       {/* 使用限制提示弹窗 */}
       {usageLimitError && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setUsageLimitError(null)} />
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => { setUsageLimitError(null); setUsageLimitShowUpgrade(true); }} />
           <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center">
@@ -1306,27 +1324,30 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
               </div>
               <div>
                 <h3 className="font-semibold text-zinc-900">功能受限</h3>
-                <p className="text-sm text-zinc-500">升级会员解锁更多功能</p>
+                <p className="text-sm text-zinc-500">{usageLimitShowUpgrade ? '升级会员解锁更多功能' : '额度说明'}</p>
               </div>
             </div>
             <p className="text-zinc-600 text-sm mb-6">{usageLimitError}</p>
             <div className="flex gap-3">
               <button
-                onClick={() => setUsageLimitError(null)}
-                className="flex-1 px-4 py-2.5 border border-zinc-200 rounded-lg text-sm font-medium text-zinc-600 hover:bg-zinc-50 transition-colors"
+                onClick={() => { setUsageLimitError(null); setUsageLimitShowUpgrade(true); }}
+                className={usageLimitShowUpgrade ? 'flex-1 px-4 py-2.5 border border-zinc-200 rounded-lg text-sm font-medium text-zinc-600 hover:bg-zinc-50 transition-colors' : 'flex-1 px-4 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 rounded-lg text-sm font-medium text-white hover:from-amber-600 hover:to-orange-600 transition-colors'}
               >
-                稍后再说
+                {usageLimitShowUpgrade ? '稍后再说' : '我知道了'}
               </button>
-              <button
-                onClick={() => {
-                  setUsageLimitError(null);
-                  onShowVIPModal?.();
-                }}
-                className="flex-1 px-4 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 rounded-lg text-sm font-medium text-white hover:from-amber-600 hover:to-orange-600 transition-colors flex items-center justify-center gap-1.5"
-              >
-                <Crown size={16} />
-                升级 VIP
-              </button>
+              {usageLimitShowUpgrade && (
+                <button
+                  onClick={() => {
+                    setUsageLimitError(null);
+                    setUsageLimitShowUpgrade(true);
+                    onShowVIPModal?.();
+                  }}
+                  className="flex-1 px-4 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 rounded-lg text-sm font-medium text-white hover:from-amber-600 hover:to-orange-600 transition-colors flex items-center justify-center gap-1.5"
+                >
+                  <Crown size={16} />
+                  升级 VIP
+                </button>
+              )}
             </div>
           </div>
         </div>

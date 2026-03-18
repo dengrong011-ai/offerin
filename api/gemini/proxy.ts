@@ -150,9 +150,9 @@ const MEMBERSHIP_LIMITS: Record<string, {
     daily_diagnosis: -1,          // 诊断不限每日，改为月限
     daily_interview: -1,          // 面试不限每日，改为月限
     monthly_diagnosis: 200,       // 每月200次诊断（显示为无限）
-    monthly_interview: 100,       // 每月100次面试（显示为无限）
+    monthly_interview: 300,       // 每月300次面试（显示为无限）
     diagnosis_warning_threshold: 100, // 诊断月使用 >100 次发出预警
-    interview_warning_threshold: 80,  // 面试月使用 >80 次发出预警
+    interview_warning_threshold: 240, // 面试月使用 >240 次发出预警
   },
   pro: {
     diagnosis_trial_count: -1,
@@ -413,7 +413,7 @@ async function checkAndLogUsage(
   }
 
   if (membershipType === 'vip') {
-    // VIP 用户：面试按月限制（100次/月），使用 UTC 月份边界与前端一致
+    // VIP 用户：面试按月限制（300次/月），使用 UTC 月份边界与前端一致
     if (actionType === 'interview') {
       const monthlyLimit = limits.monthly_interview;
       const warningThreshold = (limits as any).interview_warning_threshold || 80;
