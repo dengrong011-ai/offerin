@@ -413,16 +413,15 @@ async function checkAndLogUsage(
   }
 
   if (membershipType === 'vip') {
-    // VIP 用户：面试按月限制（100次/月，显示为无限），其他按日限制（50次/天）
+    // VIP 用户：面试按月限制（100次/月），使用 UTC 月份边界与前端一致
     if (actionType === 'interview') {
-      // 月度面试限额
       const monthlyLimit = limits.monthly_interview;
       const warningThreshold = (limits as any).interview_warning_threshold || 80;
       
       if (monthlyLimit > 0) {
         const now = new Date();
-        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-        const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999).toISOString();
+        const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+        const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999)).toISOString();
         
         const { count } = await supabaseAdmin
           .from('usage_logs')
@@ -445,14 +444,14 @@ async function checkAndLogUsage(
         }
       }
     } else if (actionType === 'diagnosis' || actionType === 'resume_edit' || actionType === 'auto_rewrite') {
-      // 诊断/编辑 按月限制（200次/月）
+      // 诊断/编辑 按月限制（200次/月），使用 UTC 月份边界与前端一致
       const monthlyLimit = (limits as any).monthly_diagnosis || -1;
       const warningThreshold = (limits as any).diagnosis_warning_threshold || 100;
       
       if (monthlyLimit > 0) {
         const now = new Date();
-        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-        const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999).toISOString();
+        const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+        const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999)).toISOString();
         
         // 统计诊断相关的所有操作
         const { count } = await supabaseAdmin
@@ -605,6 +604,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!googleResponse.ok) {
       const errorText = await googleResponse.text();
       console.error('Google API error:', googleResponse.status, errorText);
+      // Google 429 限流：返回明确错误码，便于前端展示「请稍后再试」友好提示
+      if (googleResponse.status === 429) {
+        return res.status(429).json({
+          error: 'AI_RATE_LIMIT_EXCEEDED',
+          message: 'AI 服务当前请求较多，请 1-2 分钟后再试',
+        });
+      }
       return res.status(502).json({
         error: 'AI_SERVICE_ERROR',
       });

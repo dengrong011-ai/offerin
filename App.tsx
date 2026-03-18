@@ -630,8 +630,8 @@ const App: React.FC = () => {
         setError('系统配置错误：API Key 无效或未启用计费，请检查服务器环境变量设置。');
       } else if (msg === 'SAFETY_BLOCKED') {
         setError('安全策略限制：内容被系统判定为敏感信息而拦截，请检查输入内容。');
-      } else if (msg === 'QUOTA_EXCEEDED') {
-        setError('配额限制：请求频率过快或已达今日上限，请稍后再试。');
+      } else if (msg === 'QUOTA_EXCEEDED' || msg.includes('AI_RATE_LIMIT_EXCEEDED') || msg.includes('RATE_LIMIT_EXCEEDED')) {
+        setError('AI 服务当前请求较多，请 1-2 分钟后再试，不要反复点击。');
       } else if (msg === 'EMPTY_RESPONSE') {
         setError('空响应：模型未能生成结果，请重试。');
       } else if (msg.includes('400')) {
@@ -1245,8 +1245,11 @@ const App: React.FC = () => {
       }
     } catch (err: any) {
       const msg = err?.message || '精简失败，请重试';
+      const isBusyError = /(AI_RATE_LIMIT_EXCEEDED|RATE_LIMIT_EXCEEDED|429)/i.test(msg);
       const isLimitError = /(USAGE_LIMIT_EXCEEDED|DIAGNOSIS_TRIAL_LIMIT_EXCEEDED|TRIAL_LIMIT_EXCEEDED|使用次数|上限|403)/i.test(msg);
-      if (isLimitError) {
+      if (isBusyError) {
+        setError('AI 服务当前请求较多，请 1-2 分钟后再试，不要反复点击。');
+      } else if (isLimitError) {
         setUsageLimitError('精调/精简功能使用次数已达上限。升级 VIP 享更多使用次数！');
       } else {
         setError(msg);

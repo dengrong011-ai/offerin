@@ -109,25 +109,40 @@ export const updateUserProfile = async (userId: string, updates: Partial<UserPro
 
 // ============ 使用限制相关 ============
 
-// VIP 白名单已移至服务端 (api/gemini/proxy.ts)
-// 前端不再暴露白名单邮箱
+// 与后端一致：使用 UTC 月份边界，避免前后端时区不一致导致计数差异
+function getUtcMonthRange(): { start: string; end: string } {
+  const now = new Date();
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999));
+  return { start: start.toISOString(), end: end.toISOString() };
+}
+
+// 获取「与后端一致」的有效会员类型（profiles + 白名单覆盖）
+async function getEffectiveMembership(userId: string): Promise<string> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) return (await getUserProfile(userId))?.membership_type || 'free';
+    const res = await fetch('/api/user/membership', {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    });
+    if (!res.ok) return (await getUserProfile(userId))?.membership_type || 'free';
+    const { membershipType } = await res.json();
+    return membershipType || 'free';
+  } catch {
+    return (await getUserProfile(userId))?.membership_type || 'free';
+  }
+}
 
 // 检查用户是否可以执行操作（诊断/面试）
-// 注意：这是前端预检查（用于 UI 提示），真正的权威校验在服务端 proxy 层
+// 注意：使用 getEffectiveMembership 与后端 proxy 保持一致（含白名单）
 export const checkUsageLimit = async (
   userId: string, 
   actionType: 'diagnosis' | 'interview' | 'resume_edit',
   _userEmail?: string
 ): Promise<{ allowed: boolean; remaining: number; limit: number; isTrialLimit?: boolean }> => {
   try {
-    // 获取用户资料
-    const profile = await getUserProfile(userId);
-    if (!profile) {
-      return { allowed: false, remaining: 0, limit: 0 };
-    }
-
-    const membership = profile.membership_type;
-    const limits = MEMBERSHIP_LIMITS[membership];
+    const membership = await getEffectiveMembership(userId);
+    const limits = MEMBERSHIP_LIMITS[membership] || MEMBERSHIP_LIMITS.free;
     
     // 免费用户：诊断(含全局重构)3次 和 面试1次，分开计算
     if (membership === 'free') {
@@ -184,13 +199,11 @@ export const checkUsageLimit = async (
       return { allowed: remaining > 0, remaining: Math.max(0, remaining), limit: dailyLimit };
     }
 
-    // VIP 用户：面试按月限制，其他按日限制
+    // VIP 用户：面试按月限制（使用 UTC 月份，与后端一致）
     if (membership === 'vip' && actionType === 'interview') {
       const monthlyLimit = limits.monthly_interview;
       if (monthlyLimit > 0) {
-        const now = new Date();
-        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-        const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999).toISOString();
+        const { start: monthStart, end: monthEnd } = getUtcMonthRange();
         
         const { count, error } = await supabase
           .from('usage_logs')

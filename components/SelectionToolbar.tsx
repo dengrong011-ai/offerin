@@ -178,8 +178,14 @@ const SelectionToolbar: React.FC<SelectionToolbarProps> = ({
         console.error('Rewrite error:', error);
         setIsRewriting(false);
         setStreamingText('');
+        const busyMessage = 'AI 服务当前请求较多，请 1-2 分钟后再试，不要反复点击。';
         const limitMessage = '精调功能使用次数已达上限。升级 VIP 享更多使用次数！';
+        const isBusyError = /(AI_RATE_LIMIT_EXCEEDED|RATE_LIMIT_EXCEEDED|429)/i.test(error);
         const isLimitError = /(USAGE_LIMIT_EXCEEDED|DIAGNOSIS_TRIAL_LIMIT_EXCEEDED|TRIAL_LIMIT_EXCEEDED|使用次数|上限|403)/i.test(error);
+        if (isBusyError) {
+          setErrorMessage(busyMessage);
+          return;
+        }
         if (isLimitError && onShowLimitError) {
           onShowLimitError(limitMessage);
           setVisible(false);
@@ -204,9 +210,13 @@ const SelectionToolbar: React.FC<SelectionToolbarProps> = ({
     } catch (err: any) {
       setIsRewriting(false);
       const errorMsg = err?.message || '重写失败';
+      const busyMessage = 'AI 服务当前请求较多，请 1-2 分钟后再试，不要反复点击。';
       const limitMessage = '精调功能使用次数已达上限。升级 VIP 享更多使用次数！';
+      const isBusyError = /(AI_RATE_LIMIT_EXCEEDED|RATE_LIMIT_EXCEEDED|429)/i.test(errorMsg);
       const isLimitError = /(USAGE_LIMIT_EXCEEDED|DIAGNOSIS_TRIAL_LIMIT_EXCEEDED|TRIAL_LIMIT_EXCEEDED|使用次数|上限|403)/i.test(errorMsg);
-      if (isLimitError) {
+      if (isBusyError) {
+        setErrorMessage(busyMessage);
+      } else if (isLimitError) {
         if (onShowLimitError) {
           onShowLimitError(limitMessage);
           setVisible(false);

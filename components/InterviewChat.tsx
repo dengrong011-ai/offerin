@@ -60,6 +60,14 @@ function getUsageLimitMessage(error: string): string | null {
   return null;
 }
 
+// 是否为「AI 服务限流/请求过多」类错误，返回友好文案；不弹 VIP
+function getSystemBusyMessage(error: string): string | null {
+  if (error.includes('AI_RATE_LIMIT_EXCEEDED') || error.includes('RATE_LIMIT_EXCEEDED') || error.includes('429')) {
+    return 'AI 服务当前请求较多，请 1-2 分钟后再试，不要反复点击。';
+  }
+  return null;
+}
+
 const InterviewChat: React.FC<InterviewChatProps> = ({ 
   onBack, 
   initialResume = '', 
@@ -501,6 +509,12 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
               onShowVIPModal?.();
               return;
             }
+            const busyMsg = getSystemBusyMessage(error);
+            if (busyMsg) {
+              setUsageLimitError(busyMsg);
+              setStatus('idle');
+              return;
+            }
             setMessages(prev => [...prev, {
               type: 'error',
               content: `面试出错: ${error}`,
@@ -601,6 +615,12 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
               onShowVIPModal?.();
               return;
             }
+            const busyMsg = getSystemBusyMessage(error);
+            if (busyMsg) {
+              setUsageLimitError(busyMsg);
+              setStatus('idle');
+              return;
+            }
             setMessages(prev => [...prev, {
               type: 'error',
               content: `面试出错: ${error}`,
@@ -634,6 +654,12 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
             setUsageLimitError(limitMsg);
             setStatus('idle');
             onShowVIPModal?.();
+          } else {
+            const busyMsg = getSystemBusyMessage(error.message);
+            if (busyMsg) {
+              setUsageLimitError(busyMsg);
+              setStatus('idle');
+            }
           }
         }
       }
@@ -907,6 +933,12 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
               onShowVIPModal?.();
               return;
             }
+            const busyMsg = getSystemBusyMessage(error);
+            if (busyMsg) {
+              setUsageLimitError(busyMsg);
+              setStatus('waiting_input');
+              return;
+            }
             setMessages(prev => [...prev, {
               type: 'error',
               content: `回答处理出错: ${error}`,
@@ -933,7 +965,13 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
           setStatus('waiting_input');
           onShowVIPModal?.();
         } else {
-          console.error('Submit answer error:', error);
+          const busyMsg = getSystemBusyMessage(error.message);
+          if (busyMsg) {
+            setUsageLimitError(busyMsg);
+            setStatus('waiting_input');
+          } else {
+            console.error('Submit answer error:', error);
+          }
         }
       }
     } finally {

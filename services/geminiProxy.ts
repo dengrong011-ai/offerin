@@ -83,11 +83,14 @@ async function proxyStreamRequest(options: {
       if (errorJson.error === 'RATE_LIMIT_EXCEEDED') {
         throw new Error('RATE_LIMIT_EXCEEDED');
       }
+      if (errorJson.error === 'AI_RATE_LIMIT_EXCEEDED') {
+        throw new Error('AI_RATE_LIMIT_EXCEEDED');
+      }
       if (errorJson.error?.includes('LIMIT_EXCEEDED')) {
         throw new Error(errorJson.error);
       }
     } catch (e: any) {
-      if (e.message === 'UNAUTHORIZED' || e.message === 'RATE_LIMIT_EXCEEDED' || e.message === 'PAYLOAD_TOO_LARGE' || e.message?.includes('LIMIT_EXCEEDED')) {
+      if (e.message === 'UNAUTHORIZED' || e.message === 'RATE_LIMIT_EXCEEDED' || e.message === 'AI_RATE_LIMIT_EXCEEDED' || e.message === 'PAYLOAD_TOO_LARGE' || e.message?.includes('LIMIT_EXCEEDED')) {
         throw e;
       }
     }
@@ -180,11 +183,14 @@ async function proxyGenerateRequest(options: {
       if (errorJson.error === 'UNAUTHORIZED') {
         throw new Error('UNAUTHORIZED');
       }
+      if (errorJson.error === 'AI_RATE_LIMIT_EXCEEDED') {
+        throw new Error('AI_RATE_LIMIT_EXCEEDED');
+      }
       if (errorJson.error?.includes('LIMIT_EXCEEDED')) {
         throw new Error(errorJson.error);
       }
     } catch (e: any) {
-      if (e.message === 'UNAUTHORIZED' || e.message?.includes('LIMIT_EXCEEDED')) {
+      if (e.message === 'UNAUTHORIZED' || e.message === 'AI_RATE_LIMIT_EXCEEDED' || e.message?.includes('LIMIT_EXCEEDED')) {
         throw e;
       }
     }
