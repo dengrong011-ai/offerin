@@ -40,10 +40,10 @@ function getRedisRatelimit(): Ratelimit | null {
       token: redisToken,
     });
     
-    // 滑动窗口限流：每分钟 90 次（一场 8 轮面试约 17 次，诊断等叠加需余量）
+    // 滑动窗口限流：每分钟 150 次（8 轮面试约 17 次，诊断/重构/多轮叠加需余量，减少 429）
     ratelimit = new Ratelimit({
       redis,
-      limiter: Ratelimit.slidingWindow(90, '1 m'),
+      limiter: Ratelimit.slidingWindow(150, '1 m'),
       analytics: true,
       prefix: 'offerin:ratelimit:',
     });
@@ -100,7 +100,7 @@ async function getWhitelistEntry(email: string, supabaseAdmin: SupabaseClient): 
 
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT_WINDOW_MS = 60_000;
-const RATE_LIMIT_MAX = 90;
+const RATE_LIMIT_MAX = 150;
 
 function checkRateLimitMemory(key: string): boolean {
   const now = Date.now();
@@ -589,7 +589,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       'gemini-3.1-pro-preview', 'gemini-3-pro-preview',
       'gemini-2.5-pro-preview-05-06', 'gemini-2.5-flash-preview-05-20',
     ]);
-    const FALLBACK_MODEL = 'gemini-2.0-flash'; // 单独配额池，Pro 限流时仍可能可用
+    const FALLBACK_MODELS = ['gemini-2.0-flash', 'gemini-2.5-flash-preview-05-20']; // 不同配额池，逐个尝试
 
     const doFetch = (targetModel: string) => {
       const url = `${GOOGLE_API_BASE}/models/${targetModel}:${action}?key=${apiKey}${streamParam}`;
@@ -608,15 +608,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(502).json({ error: 'AI_SERVICE_ERROR', message: 'Model unavailable or network error' });
     }
 
-    // 主模型 429 时自动 fallback 到 Flash（不同配额池），尽量让用户能用上
+    // 主模型 429 时依次 fallback（不同配额池），尽量让用户能用上
     if (googleResponse.status === 429 && PRO_MODELS_429_FALLBACK.has(model)) {
-      console.warn(`主模型 ${model} 429，fallback 到 ${FALLBACK_MODEL}`);
-      try {
-        const fallbackRes = await doFetch(FALLBACK_MODEL);
-        if (fallbackRes.ok) {
-          googleResponse = fallbackRes;
-        }
-      } catch (_) { /* 保持原 429 响应 */ }
+      for (const fallback of FALLBACK_MODELS) {
+        if (fallback === model) continue;
+        console.warn(`主模型 ${model} 429，尝试 fallback: ${fallback}`);
+        try {
+          const fallbackRes = await doFetch(fallback);
+          if (fallbackRes.ok) {
+            googleResponse = fallbackRes;
+            break;
+          }
+        } catch (_) { /* 继续下一个 */ }
+      }
     }
 
     if (!googleResponse.ok) {
