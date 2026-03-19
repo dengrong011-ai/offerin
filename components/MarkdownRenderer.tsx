@@ -63,8 +63,8 @@ const MarkdownRenderer: React.FC<Props> = ({
       // 链接 [text](url)：图片存储 URL 仅显示文字不转链
       .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) =>
         isImageStorageUrl(url) ? text : `<a href="${url}" target="_blank" rel="noopener" style="${linkStyle}">${text}</a>`)
-      // 裸 URL 转链接：排除图片存储 URL
-      .replace(/(https?:\/\/[^\s<)]+)/g, (url) =>
+      // 裸 URL 转链接：排除图片存储 URL、排除已有 href=" 内的 URL（避免 [text](url) 转链后被二次替换）
+      .replace(/(?<!href=")(?<!src=")(https?:\/\/[^\s<)]+)/g, (url) =>
         isImageStorageUrl(url) ? url : `<a href="${url}" target="_blank" rel="noopener" style="${linkStyle}">${url}</a>`)
       // 加粗：**text**
       .replace(/\*\*([^*]+)\*\*/g, '<strong style="font-weight: 700; color: #18181b;">$1</strong>')

@@ -1151,6 +1151,22 @@ const App: React.FC = () => {
       const pageCount = pageBreaksInCanvas.length - 1;
       console.log('智能分页结果(canvas像素):', pageBreaksInCanvas.map(p => Math.round(p / canvasScale)), '总页数:', pageCount);
       
+      // 收集所有 <a href> 的位置，用于在 PDF 中叠加可点击链接
+      const containerRect = contentContainer.getBoundingClientRect();
+      const linkRects: { href: string; left: number; top: number; width: number; height: number }[] = [];
+      contentClone.querySelectorAll<HTMLAnchorElement>('a[href]').forEach((a) => {
+        const href = a.getAttribute('href') || '';
+        if (!href || !/^https?:\/\//i.test(href)) return;
+        const r = a.getBoundingClientRect();
+        linkRects.push({
+          href,
+          left: r.left - containerRect.left,
+          top: r.top - containerRect.top,
+          width: r.width,
+          height: r.height,
+        });
+      });
+      
       // 为每一页创建带边距的完整A4页面
       // PDF 页面固定为标准 A4 尺寸（210x297mm），canvas 也必须保持标准 A4 比例
       // 当内容使用容差侵入底部边距时，通过减少底部 padding 来容纳，而非增大 canvas
@@ -1208,6 +1224,36 @@ const App: React.FC = () => {
         
         // 固定使用标准 A4 尺寸，确保不超出 PDF 页面边界
         pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+        
+        // 叠加本页的可点击链接
+        const minBottomPadding = 10 * canvasScale;
+        const availableForContent = pageHeightInCanvas - paddingTopInCanvas - minBottomPadding;
+        const fitScale = srcHeight > availableForContent ? availableForContent / srcHeight : 1;
+        linkRects.forEach((lr) => {
+          const lcLeft = lr.left * canvasScale;
+          const lcTop = lr.top * canvasScale;
+          const lcW = lr.width * canvasScale;
+          const lcH = lr.height * canvasScale;
+          const overlapStart = Math.max(lcTop, srcY);
+          const overlapEnd = Math.min(lcTop + lcH, srcY + srcHeight);
+          if (overlapStart >= overlapEnd) return;
+          const relTop = overlapStart - srcY;
+          const relH = overlapEnd - overlapStart;
+          const pageX = paddingLeftInCanvas + lcLeft * fitScale;
+          const pageY = paddingTopInCanvas + relTop * fitScale;
+          const pageW = lcW * fitScale;
+          const pageH = relH * fitScale;
+          const pdfX = (pageX / pageWidthInCanvas) * pdfWidth;
+          const pdfY = (pageY / pageHeightInCanvas) * pdfHeight;
+          const pdfW = (pageW / pageWidthInCanvas) * pdfWidth;
+          const pdfH = (pageH / pageHeightInCanvas) * pdfHeight;
+          try {
+            pdf.link(pdfX, pdfY, pdfW, pdfH, { url: lr.href });
+          } catch (_) {
+            // 某些 PDF 阅读器对链接数量或格式有限制，忽略单条失败
+          }
+        });
+        
         console.log(`第 ${i + 1} 页渲染完成, srcHeight=${Math.round(srcHeight/canvasScale)}px, pdfSize=${pdfWidth}x${pdfHeight}mm`);
       }
       
