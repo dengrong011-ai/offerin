@@ -18,12 +18,19 @@ const FALLBACK_MODELS = [
 // 带重试的延迟函数
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+const is429Error = (error: any): boolean => {
+  const message = error?.message || '';
+  const code = error?.code;
+  return code === 429 || message.includes('429') || message.includes('AI_RATE_LIMIT_EXCEEDED') || message.includes('RATE_LIMIT_EXCEEDED');
+};
+
 // 判断是否为可重试的错误
 const isRetryableError = (error: any): boolean => {
   const message = error?.message || '';
   const code = error?.code;
-  return code === 503 || code === 429 || 
-         message.includes('503') || 
+  if (is429Error(error)) return false; // 429 不重试同一模型，但会走 fallback
+  return code === 503 || code === 429 ||
+         message.includes('503') ||
          message.includes('UNAVAILABLE') ||
          message.includes('high demand') ||
          message.includes('overloaded') ||
@@ -55,6 +62,7 @@ async function generateContentStreamWithRetry(
       lastError = error;
       console.warn(`API 调用失败 (尝试 ${attempt + 1}/${RETRY_CONFIG.maxRetries}):`, error.message);
       
+      if (is429Error(error)) break; // 429 不重试，直接进入 fallback
       if (!isRetryableError(error)) {
         throw error;
       }
@@ -70,8 +78,8 @@ async function generateContentStreamWithRetry(
     }
   }
   
-  // 主模型失败后，尝试备用模型
-  if (isRetryableError(lastError)) {
+  // 主模型失败后，尝试备用模型（含 429 时直接 fallback，不同配额池）
+  if (isRetryableError(lastError) || is429Error(lastError)) {
     for (const fallbackModel of FALLBACK_MODELS) {
       if (fallbackModel === options.model) continue; // 跳过已尝试的主模型
       
@@ -113,6 +121,7 @@ async function generateContentWithRetry(
       lastError = error;
       console.warn(`API 调用失败 (尝试 ${attempt + 1}/${RETRY_CONFIG.maxRetries}):`, error.message);
       
+      if (is429Error(error)) break; // 429 不重试，直接进入 fallback
       if (!isRetryableError(error)) {
         throw error;
       }
@@ -128,8 +137,8 @@ async function generateContentWithRetry(
     }
   }
   
-  // 主模型失败后，尝试备用模型
-  if (isRetryableError(lastError)) {
+  // 主模型失败后，尝试备用模型（含 429 时直接 fallback，不同配额池）
+  if (isRetryableError(lastError) || is429Error(lastError)) {
     for (const fallbackModel of FALLBACK_MODELS) {
       if (fallbackModel === options.model) continue;
       

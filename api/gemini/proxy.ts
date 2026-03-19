@@ -589,7 +589,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       'gemini-3.1-pro-preview', 'gemini-3-pro-preview',
       'gemini-2.5-pro-preview-05-06', 'gemini-2.5-flash-preview-05-20',
     ]);
-    const FALLBACK_MODELS = ['gemini-2.0-flash', 'gemini-2.5-flash-preview-05-20']; // 不同配额池，逐个尝试
+    const FALLBACK_MODELS = ['gemini-2.5-pro-preview-05-06', 'gemini-2.5-flash-preview-05-20', 'gemini-2.0-flash']; // 不同配额池，先试 2.5 Pro 再 Flash
 
     const doFetch = (targetModel: string) => {
       const url = `${GOOGLE_API_BASE}/models/${targetModel}:${action}?key=${apiKey}${streamParam}`;
