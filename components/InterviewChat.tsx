@@ -1158,7 +1158,17 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
       };
       const modeLabel = settings.mode === 'interactive' ? '人机交互' : '纯AI模拟';
       const timestamp = new Date().toLocaleDateString('zh-CN');
-      const title = `${modeLabel} - ${roleLabels[settings.interviewerRole] || settings.interviewerRole} (${timestamp})`;
+      const roleLabel = roleLabels[settings.interviewerRole] || settings.interviewerRole;
+
+      // 未完成时加入轮次信息，避免记录库出现多条同标题
+      let title: string;
+      if (status === 'completed') {
+        title = `${modeLabel} - ${roleLabel} (${timestamp})`;
+      } else {
+        const completedRounds = messages.filter(m => m.type === 'interviewee' && !m.isStreaming).length;
+        const currentRound = Math.min(completedRounds + 1, settings.totalRounds);
+        title = `${modeLabel} - ${roleLabel}（进行中 ${currentRound}/${settings.totalRounds}）(${timestamp})`;
+      }
 
       const result = await saveInterviewRecord(user.id, {
         title,
@@ -1406,7 +1416,8 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
             <Settings size={16} />
             <span className="text-[12px]">{showSettings ? '隐藏设置' : '显示设置'}</span>
           </button>
-          {status === 'completed' && (
+          {/* 有对话内容即可保存，不要求全部轮次完成 */}
+          {messages.length > 0 && status !== 'idle' && (
             <div className="relative" ref={exportMenuRef}>
               <button
                 onClick={() => setShowExportMenu(!showExportMenu)}
@@ -1422,6 +1433,11 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
               </button>
               {showExportMenu && (
                 <div className="absolute right-0 top-full mt-1 bg-white border border-zinc-200 rounded-lg shadow-lg py-1 z-50 min-w-[160px]">
+                  {status === 'running' && (
+                    <div className="px-3 py-2 text-[11px] text-amber-600 bg-amber-50 border-b border-amber-100">
+                      AI 正在生成中，导出的为当前部分内容
+                    </div>
+                  )}
                   {/* 保存到记录库 */}
                   {!viewingRecord && (
                     <>
