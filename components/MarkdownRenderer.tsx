@@ -55,9 +55,18 @@ const MarkdownRenderer: React.FC<Props> = ({
     accentLight: '#e4e4e7', // zinc-200
   };
 
+  // 图片存储 URL 白名单：不转成链接，避免破坏 <img src="...">
+  const isImageStorageUrl = (url: string) => /supabase\.co\/storage|resume-photos|\/storage\/v1\/object\/public\//i.test(url);
+  const linkStyle = 'color:#2563eb;text-decoration:underline;';
   const processCommonMarkdown = (html: string) => {
     return html
-      // 加粗：**text** 
+      // 链接 [text](url)：图片存储 URL 仅显示文字不转链
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) =>
+        isImageStorageUrl(url) ? text : `<a href="${url}" target="_blank" rel="noopener" style="${linkStyle}">${text}</a>`)
+      // 裸 URL 转链接：排除图片存储 URL
+      .replace(/(https?:\/\/[^\s<)]+)/g, (url) =>
+        isImageStorageUrl(url) ? url : `<a href="${url}" target="_blank" rel="noopener" style="${linkStyle}">${url}</a>`)
+      // 加粗：**text**
       .replace(/\*\*([^*]+)\*\*/g, '<strong style="font-weight: 700; color: #18181b;">$1</strong>')
       // 行内代码：`code`
       .replace(/`([^`]+)`/g, '<code style="background: #f4f4f5; color: #18181b; padding: 1px 5px; border-radius: 3px; font-size: 0.9em; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;">$1</code>')
@@ -129,13 +138,13 @@ const MarkdownRenderer: React.FC<Props> = ({
           <div style="flex:1;min-width:0;">
             <h1 class="font-bold text-slate-900 uppercase" style="font-size: 24pt; margin: 0 0 6px 0; padding: 0; font-family: ${s.fontFamily}; letter-spacing: 0.5px; line-height: 1;">${headerName}</h1>
             ${contactLines.map((line: string) => 
-              `<div style="font-size: 10.5pt; line-height: ${s.lineHeightPx}; margin-top: 2px;" class="text-slate-700 break-words font-serif italic">${line}</div>`
+              `<div style="font-size: 10.5pt; line-height: ${s.lineHeightPx}; margin-top: 2px;" class="text-slate-700 break-words font-serif italic">${processCommonMarkdown(line)}</div>`
             ).join('\n')}
             ${summaryLines.length ? summaryLines.map((line: string) => 
               `<div style="font-size: ${s.baseTextSize}; line-height: ${s.lineHeightPx}; margin-top: 4px; font-family: ${s.fontFamily};" class="text-slate-900 break-words">${processCommonMarkdown(line)}</div>`
             ).join('\n') : ''}
           </div>
-          ${imgUrl ? `<div style="flex-shrink:0;width:80px;height:107px;"><img src="${imgUrl}" style="width:80px;height:107px;object-fit:cover;border:1px solid #ddd;border-radius:2px;display:block;" alt="Profile" onerror="this.style.display='none';this.parentElement.style.background='#f1f5f9';this.parentElement.style.border='1px solid #ddd';this.parentElement.style.borderRadius='2px';" /></div>` : ''}
+          ${imgUrl ? `<div style="flex-shrink:0;width:80px;height:107px;overflow:hidden;"><img src="${imgUrl}" style="width:80px;height:107px;object-fit:cover;border:1px solid #ddd;border-radius:2px;display:block;" alt="" onerror="this.style.display='none';this.parentElement.style.background='#f1f5f9';" /></div>` : ''}
         </div>
       `;
       html = html.replace(headerMatchStr, headerHtml);
@@ -246,7 +255,7 @@ const MarkdownRenderer: React.FC<Props> = ({
     if (nameMatch && headerMatchStr) {
       // 模板2头部：照片在左侧 + 姓名加粗大字 + 联系方式紧凑一行
       const contactHtml = contactLines.length 
-        ? `<div style="font-size: 9.5pt; line-height: 1.6; margin-top: 4px; color: #374151; font-family: ${s.fontFamily};">${contactLines.join(' &nbsp;|&nbsp; ')}</div>` 
+        ? `<div style="font-size: 9.5pt; line-height: 1.6; margin-top: 4px; color: #374151; font-family: ${s.fontFamily};">${contactLines.map((l: string) => processCommonMarkdown(l)).join(' &nbsp;|&nbsp; ')}</div>` 
         : '';
       const summaryHtml = summaryLines.length 
         ? summaryLines.map((line: string) => 
@@ -256,7 +265,7 @@ const MarkdownRenderer: React.FC<Props> = ({
       
       const headerHtml = `
         <div style="display:flex;align-items:flex-start;gap:14px;margin-top:0;margin-bottom:10px;width:100%;padding-top:2px;">
-          ${imgUrl ? `<div style="flex-shrink:0;width:88px;height:110px;"><img src="${imgUrl}" style="width:88px;height:110px;object-fit:cover;border:2px solid ${s.accentLight};border-radius:6px;display:block;" alt="Profile" onerror="this.style.display='none';this.parentElement.style.background='#f1f5f9';this.parentElement.style.border='2px solid ${s.accentLight}';this.parentElement.style.borderRadius='6px';" /></div>` : ''}
+          ${imgUrl ? `<div style="flex-shrink:0;width:88px;height:110px;overflow:hidden;"><img src="${imgUrl}" style="width:88px;height:110px;object-fit:cover;border:2px solid ${s.accentLight};border-radius:6px;display:block;" alt="" onerror="this.style.display='none';this.parentElement.style.background='#f1f5f9';" /></div>` : ''}
           <div style="flex:1;min-width:0;">
             <h1 style="font-size: 22pt; margin: 0 0 2px 0; padding: 0; font-family: ${s.fontFamily}; font-weight: 900; color: #111827; letter-spacing: 0.3px; line-height: 1.1; -webkit-text-stroke: 0.5px #111827;">${headerName}</h1>
             ${contactHtml}
@@ -378,7 +387,7 @@ const MarkdownRenderer: React.FC<Props> = ({
 
     if (nameMatch && headerMatchStr) {
       const contactHtml = contactLines.length 
-        ? `<div style="font-size: 10pt; line-height: 1.6; margin-top: 4px; color: #374151; font-family: ${bf}; text-align: center;">${contactLines.join(' &nbsp;|&nbsp; ')}</div>` 
+        ? `<div style="font-size: 10pt; line-height: 1.6; margin-top: 4px; color: #374151; font-family: ${bf}; text-align: center;">${contactLines.map((l: string) => processCommonMarkdown(l)).join(' &nbsp;|&nbsp; ')}</div>` 
         : '';
       const summaryHtml = summaryLines.length 
         ? summaryLines.map((line: string) => 
@@ -388,7 +397,7 @@ const MarkdownRenderer: React.FC<Props> = ({
       
       const headerHtml = `
         <div style="position:relative;margin-top:0;margin-bottom:10px;width:100%;padding-top:2px;">
-          ${imgUrl ? `<div style="position:absolute;right:0;top:0;width:80px;height:107px;"><img src="${imgUrl}" style="width:80px;height:107px;object-fit:cover;border:1px solid #d1d5db;display:block;" alt="Profile" onerror="this.style.display='none';this.parentElement.style.display='none';" /></div>` : ''}
+          ${imgUrl ? `<div style="position:absolute;right:0;top:0;width:80px;height:107px;overflow:hidden;"><img src="${imgUrl}" style="width:80px;height:107px;object-fit:cover;border:1px solid #d1d5db;display:block;" alt="" onerror="this.style.display='none';this.parentElement.style.background='#f1f5f9';" /></div>` : ''}
           <div style="text-align:center;${imgUrl ? 'padding-right:90px;' : ''}">
             <h1 style="font-size: 22pt; margin: 0 0 2px 0; padding: 0; font-family: ${hf}; font-weight: 900; color: #111827; letter-spacing: 1px; line-height: 1.2; -webkit-text-stroke: 0.5px #111827;">${headerName}</h1>
             ${contactHtml}
