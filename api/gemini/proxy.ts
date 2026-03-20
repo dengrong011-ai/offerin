@@ -179,8 +179,11 @@ const ALLOWED_ACTION_TYPES = new Set(['diagnosis', 'interview', 'translation', '
 const ALLOWED_MODELS = new Set([
   'gemini-3.1-pro-preview',
   'gemini-3-pro-preview',
-  'gemini-2.5-pro-preview-05-06',   // 备用模型
-  'gemini-2.5-flash-preview-05-20', // 备用模型
+  'gemini-2.5-pro',
+  'gemini-2.5-flash',
+  // 旧 preview ID（部分项目仍可用，保留白名单以免历史客户端 400）
+  'gemini-2.5-pro-preview-05-06',
+  'gemini-2.5-flash-preview-05-20',
   'gemini-2.0-flash',
   'gemini-2.0-flash-lite',
 ]);
@@ -585,11 +588,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const isStream = mode === 'stream';
     const action = isStream ? 'streamGenerateContent' : 'generateContent';
     const streamParam = isStream ? '&alt=sse' : '';
+    /** 命中这些「主模型」且 Google 返回 429/404 时，在同一请求内按 FALLBACK_MODELS 顺序再试（不重复请求已成功的主模型名） */
     const PRO_MODELS_429_FALLBACK = new Set([
       'gemini-3.1-pro-preview', 'gemini-3-pro-preview',
+      'gemini-2.5-pro', 'gemini-2.5-flash',
       'gemini-2.5-pro-preview-05-06', 'gemini-2.5-flash-preview-05-20',
     ]);
-    const FALLBACK_MODELS = ['gemini-2.5-pro-preview-05-06', 'gemini-2.5-flash-preview-05-20', 'gemini-2.0-flash']; // 不同配额池，先试 2.5 Pro 再 Flash
+    /** 服务端兜底：稳定 ID（与 Google 文档 Model code 一致） */
+    const FALLBACK_MODELS = ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash'];
 
     const doFetch = (targetModel: string) => {
       const url = `${GOOGLE_API_BASE}/models/${targetModel}:${action}?key=${apiKey}${streamParam}`;
@@ -601,6 +607,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     };
 
     let googleResponse: Response;
+    /** 客户端可通过响应头 X-Gemini-Model 查看实际命中的模型（含 fallback） */
+    let resolvedModel = model;
     try {
       googleResponse = await doFetch(model);
     } catch (fetchErr: any) {
@@ -617,6 +625,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const fallbackRes = await doFetch(fallback);
           if (fallbackRes.ok) {
             googleResponse = fallbackRes;
+            resolvedModel = fallback;
+            break;
+          }
+        } catch (_) { /* 继续下一个 */ }
+      }
+    }
+
+    // 404 ENTITY_NOT_FOUND：主模型不可用（如 API Key 无权限）时尝试 fallback
+    if (googleResponse.status === 404 && PRO_MODELS_429_FALLBACK.has(model)) {
+      for (const fallback of FALLBACK_MODELS) {
+        if (fallback === model) continue;
+        console.warn(`主模型 ${model} 404，尝试 fallback: ${fallback}`);
+        try {
+          const fallbackRes = await doFetch(fallback);
+          if (fallbackRes.ok) {
+            googleResponse = fallbackRes;
+            resolvedModel = fallback;
             break;
           }
         } catch (_) { /* 继续下一个 */ }
@@ -651,6 +676,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Gemini-Model', resolvedModel);
+      res.setHeader('Access-Control-Expose-Headers', 'X-Gemini-Model');
 
       const body = googleResponse.body;
       if (!body) {
@@ -669,6 +696,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     } else {
       const data = await googleResponse.json();
+      res.setHeader('X-Gemini-Model', resolvedModel);
+      res.setHeader('Access-Control-Expose-Headers', 'X-Gemini-Model');
       return res.status(200).json(data);
     }
   } catch (error: any) {

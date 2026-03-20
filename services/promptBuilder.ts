@@ -347,6 +347,8 @@ export const buildInterviewerPrompt = (params: InterviewerPromptParams): string 
 
   const roleConfig = ROLE_CONFIG[interviewerRole];
   const isFollowUp = isInteractiveMode && !isFirstRound && userAnswer;
+  /** 纯模拟模式下候选人发言在 conversationHistory 里，同样要「先回应追问」 */
+  const hasIntervieweeInHistory = conversationHistory.some((h) => h.role === 'interviewee');
 
   // 1. 角色人设
   let prompt = roleConfig.systemInstruction;
@@ -420,7 +422,7 @@ ${supplementInfo!.otherInfo ? `- 其他信息：${supplementInfo!.otherInfo}` : 
   // 7. 阶段指导
   const phaseDescriptions: Record<string, string> = {
     opening: `这是面试开场阶段。请：
-- 简短介绍自己（你是${roleConfig.title}）
+- 简短介绍自己：只说"我是${roleConfig.title}"或"我是本轮的面试官"，【严禁】编造或使用任何姓名（如李磊、王明等）
 - 简要说明本轮面试的重点
 - 用一个轻松的开场问题让候选人自我介绍`,
 
@@ -461,7 +463,7 @@ ${roleConfig.closingGuidance.candidateQuestionTopics.map(t => `- ${t}`).join('\n
       basic: '当前是基础了解阶段，围绕你的核心关注点进行初步探查。',
       professional: '当前是深入考察阶段，可以追问细节、要求数据支撑。',
       scenario: '当前是场景测试阶段，可以给出假设场景考察应变能力。',
-      closing: `当前是收尾阶段。${roleConfig.closingGuidance.interviewerGuide}\n请询问候选人是否有想问的问题。`
+      closing: `当前是收尾阶段。候选人已经提出了问题。请针对候选人刚才的问题，结合岗位（JD）和候选人背景（简历）给出真实、有价值的回答，然后感谢候选人的时间。不要重复询问"你有什么问题想问我的吗"。`
     };
     prompt += `\n- **阶段指导**: ${phaseGuidance[phase] || phaseGuidance.basic}`;
   }
@@ -473,12 +475,20 @@ ${roleConfig.closingGuidance.candidateQuestionTopics.map(t => `- ${t}`).join('\n
   if (isInteractiveMode && !isFollowUp) {
     prompt += `
 
-# 人机交互模式特别说明
+# 真人作答补充说明（对话连贯性与纯模拟相同）
 这是真实用户在回答问题。你需要：
 1. 仔细阅读用户的回答，理解其内容和质量
-2. 根据用户回答的内容自然地追问或转换话题
-3. 如果用户回答得好，可以适当肯定；如果回答不够完整，可以追问
-4. 保持对话的连贯性和自然性，就像真实面试一样`;
+2. 若对方话中有反问，必须先回应（与上方「对话连贯性」一致）
+3. 根据用户回答自然地追问或转换话题；回答得好可适当肯定
+4. 保持真实面试般的连贯性`;
+  }
+
+  // 9.1 双向对话（纯模拟 + 人机交互均适用：历史里已有候选人发言时）
+  if (hasIntervieweeInHistory && !(isFollowUp && userAnswer)) {
+    prompt += `
+
+# 【重要】对话连贯性（纯模拟与人机交互相同）
+请阅读对话历史：若候选人上一轮回答中**向你提出问题、反问或想了解团队/业务**，你必须在本轮发言中**先简要回应**，再衔接你的考察；不得无视对方追问、只按简历清单抛新问题。换到简历上另一段经历时需承上启下。`;
   }
 
   // 9.5 Peers/+1/+2 简历绑定约束（专业面试官必须围绕简历提问）
@@ -506,14 +516,15 @@ ${roleConfig.closingGuidance.candidateQuestionTopics.map(t => `- ${t}`).join('\n
 
 ## 追问原则
 当候选人回答后，你的追问应该：
-1. 围绕 ta 刚才提到的**具体细节**深挖
-2. 或者关联 ta 简历中的**其他相关经历**
-3. 考察 ta 的经验如何**迁移到目标岗位**`;
+1. **若对方话中有反问/追问你**：必须先回应，再追问或换题
+2. 围绕 ta 刚才提到的**具体细节**深挖
+3. 或者关联 ta 简历中的**其他相关经历**（换段经历前须承上启下，禁止零衔接跳题）
+4. 考察 ta 的经验如何**迁移到目标岗位**`;
   }
 
-  // 10. 用户回答（人机交互后续轮）
+  // 10. 用户回答（人机交互 follow-up 时单独再贴一遍，便于模型定位）
   if (isFollowUp && userAnswer) {
-    prompt += `\n\n# 候选人刚才的回答\n${codeBlock(userAnswer)}`;
+    prompt += `\n\n# 【重要】候选人刚才的回答（含反问须先回应）\n${codeBlock(userAnswer)}`;
   }
 
   // 11. 多样性指令
@@ -526,7 +537,18 @@ ${roleConfig.closingGuidance.candidateQuestionTopics.map(t => `- ${t}`).join('\n
 
   // 13. 节奏控制 + 输出要求
   if (isFollowUp) {
-    prompt += `\n${PACE_CONTROL.feedback}\n\n# 点评风格\n${({ standard: '给出客观、专业的点评', pressure: '指出不足之处，追问细节', friendly: '以鼓励为主，温和地提出改进建议' })[roleConfig.style] || ''}\n\n${PACE_CONTROL.feedbackOutputRules}`;
+    // 收尾阶段 + 候选人已提问：应回答候选人问题并感谢，而非「点评+下一个问题」
+    const isClosingFollowUp = phase === 'closing';
+    const outputRules = isClosingFollowUp
+      ? `# 输出要求（收尾阶段 - 候选人已提问）
+候选人已经提出了问题，你的任务是**回答**他们的问题，而非继续提问。
+1. 直接针对候选人的问题给出回答，可结合岗位（JD）虚构合理的团队/业务细节
+2. 回答后感谢候选人的时间，自然结束
+3. 【严禁】不要再次说"你有什么问题想问我的吗？"或任何邀请提问的话——候选人已经问过了
+4. 直接输出你的回答内容，不要加角色标识`
+      : PACE_CONTROL.feedbackInteractiveFollowUpRules;
+    const styleBlock = isClosingFollowUp ? '' : `\n\n# 点评风格\n${({ standard: '给出客观、专业的点评', pressure: '指出不足之处，追问细节', friendly: '以鼓励为主，温和地提出改进建议' })[roleConfig.style] || ''}`;
+    prompt += `\n${PACE_CONTROL.feedback}${styleBlock}\n\n${outputRules}`;
   } else {
     prompt += `\n${PACE_CONTROL.interviewer}\n\n${PACE_CONTROL.outputRules}`;
   }
@@ -670,7 +692,8 @@ ${supplementInfo!.otherInfo ? `- 其他：${supplementInfo!.otherInfo}` : ''}
 
 # 当前面试官信息
 你正在面对的是 **${roleConfig.name}（${roleConfig.title}）**。
-请根据面试官的角色调整你的回答策略：
+- 【重要】不要编造或称呼面试官的名字（如"王明"等），系统未提供面试官姓名，直接回答即可
+- 请根据面试官的角色调整你的回答策略：
 ${interviewerRole === 'ta' ? '- 这是 HR 筛选轮，重点展示求职动机、稳定性和职业规划，保持真诚自然' :
   interviewerRole === 'peers' ? '- 这是专业面试轮，需要展示项目深度和技术细节，用数据和案例支撑' :
   interviewerRole === 'leader' ? '- 这是 Leader 面试轮，重点展示方法论、成长潜力和主动性，多说"How"和"Why"' :
@@ -693,6 +716,7 @@ ${historyContext}
 4. **案例支撑**: 尽量用具体的项目经验和数据来支撑你的观点
 5. **适度谦逊**: 对于不了解的问题，诚实地表示不太了解，但可以表达学习意愿
 6. **展示热情**: 表达对这个岗位和公司的兴趣和热情
+7. **不要照抄问题**: 不要逐字复述面试官的问题或简历原文，要用自己的话展开具体细节和案例
 
 # 回答技巧
 - 使用 STAR 法则（Situation-Task-Action-Result）描述项目经验
@@ -706,7 +730,8 @@ ${closingGuidance}
 - 保持自然、专业的对话语气
 - 回答长度适中，重点突出，不要过于冗长
 - 如果是开场自我介绍，控制在1-2分钟的口述长度
-- 如果面试官在收尾，要礼貌地表达感谢和期待`;
+- 如果面试官在收尾，要礼貌地表达感谢和期待
+- 【重要】根据轮次调整开场：首轮可简短开场；后续轮次直接进入回答，不要每轮重复"您好/感谢您给我机会/很高兴和您探讨"等套话，像真实面试一样自然承接上一轮对话`;
 };
 
 // ==================== 面试评价 Prompt 构建 ====================

@@ -72,7 +72,7 @@ const InterviewLibrary: React.FC<InterviewLibraryProps> = ({
 
   const handleStartRename = (record: SavedInterviewRecord) => {
     setEditingTitleId(record.id);
-    setEditingTitleValue(record.title);
+    setEditingTitleValue(getDisplayTitle(record));
     setActiveMenu(null);
   };
 
@@ -114,6 +114,16 @@ const InterviewLibrary: React.FC<InterviewLibraryProps> = ({
   };
 
   const modeLabel = (mode: string) => mode === 'interactive' ? '人机交互' : '纯AI模拟';
+
+  // 展示标题：岗位名 - 第x轮；旧记录从 summary 提取岗位；已重命名的记录保持原样
+  const getDisplayTitle = (record: SavedInterviewRecord): string => {
+    const isOldFormat = record.title.startsWith('纯AI模拟') || record.title.startsWith('人机交互');
+    const jobMatch = record.summary?.match(/岗位[：:]\s*([^|\n]+)/);
+    const jobName = jobMatch ? jobMatch[1].trim().substring(0, 25) : null;
+    const roleLabel = roleLabels[record.interviewer_role] || record.interviewer_role;
+    if (jobName && isOldFormat) return `${jobName} - ${roleLabel}`;
+    return record.title.replace(/\s*\([0-9/年月日\u4e00-\u9fa5]+\)\s*$/g, '').trim() || record.title;
+  };
 
   const filteredRecords = searchQuery
     ? records.filter(r =>
@@ -236,7 +246,7 @@ const InterviewLibrary: React.FC<InterviewLibraryProps> = ({
                           onClick={e => { e.stopPropagation(); handleStartRename(record); }}
                           title="点击重命名"
                         >
-                          {record.title}
+                          {getDisplayTitle(record)}
                         </h3>
                       )}
                     </div>
@@ -250,7 +260,7 @@ const InterviewLibrary: React.FC<InterviewLibraryProps> = ({
                     : '暂无摘要'}
                 </p>
 
-                {/* 标签 */}
+                {/* 标签：面试模式、轮次数量（第x轮已放入标题） */}
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
                     record.interview_mode === 'interactive'
@@ -262,9 +272,6 @@ const InterviewLibrary: React.FC<InterviewLibraryProps> = ({
                     ) : (
                       <span className="flex items-center gap-0.5"><Play size={9} /> 纯AI模拟</span>
                     )}
-                  </span>
-                  <span className="text-[10px] px-1.5 py-0.5 bg-zinc-100 text-zinc-500 rounded">
-                    {roleLabels[record.interviewer_role] || record.interviewer_role}
                   </span>
                   <span className="text-[10px] px-1.5 py-0.5 bg-zinc-100 text-zinc-500 rounded">
                     {record.total_rounds} 轮

@@ -13,14 +13,40 @@
 import { GoogleGenAI } from "@google/genai";
 import { supabase } from "./supabaseClient";
 
+/** 本地开发时在控制台打印本次实际使用的模型（代理从响应头读，含服务端 fallback） */
+function logDevGeminiModel(requestedModel: string, actualModel: string | null) {
+  if (!import.meta.env.DEV) return;
+  const actual = actualModel || requestedModel;
+  const fallback = actual !== requestedModel;
+  console.log(
+    `%c[Offerin Gemini]%c 实际模型: %c${actual}%c${fallback ? ` （请求: ${requestedModel}，已 fallback）` : ''}`,
+    'color:#10b981;font-weight:bold',
+    'color:inherit',
+    fallback ? 'color:#f97316' : 'color:#22c55e',
+    'font-weight:600',
+    'color:#64748b;font-weight:normal'
+  );
+}
+
 // 判断是否应该使用代理
 const shouldUseProxy = (): boolean => {
   if (typeof window === 'undefined') return false;
   const hostname = window.location.hostname;
-  return hostname !== 'localhost' && hostname !== '127.0.0.1';
+  const isLocal = hostname === 'localhost' || hostname === '127.0.0.1';
+  const remoteProxyUrl = import.meta.env.VITE_REMOTE_PROXY_URL || '';
+  // 本地开发时，若配置了 VITE_REMOTE_PROXY_URL，则走线上代理（解决本地直连 ENTITY_NOT_FOUND / OCR 不可用）
+  if (isLocal && remoteProxyUrl) return true;
+  return !isLocal;
 };
 
-const getProxyUrl = (): string => '/api/gemini/proxy';
+const getProxyUrl = (): string => {
+  if (typeof window === 'undefined') return '/api/gemini/proxy';
+  const remoteProxyUrl = import.meta.env.VITE_REMOTE_PROXY_URL || '';
+  if (remoteProxyUrl && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+    return `${remoteProxyUrl.replace(/\/$/, '')}/api/gemini/proxy`;
+  }
+  return '/api/gemini/proxy';
+};
 
 const getLocalApiKey = (): string => {
   // 本地开发时从环境变量获取（需要在 .env.local 中设置 VITE_GEMINI_API_KEY）
@@ -96,6 +122,8 @@ async function proxyStreamRequest(options: {
     }
     throw new Error(`Proxy API error ${response.status}: ${errorData}`);
   }
+
+  logDevGeminiModel(model, response.headers.get('X-Gemini-Model'));
 
   const reader = response.body?.getReader();
   if (!reader) {
@@ -197,6 +225,8 @@ async function proxyGenerateRequest(options: {
     throw new Error(`Proxy API error ${response.status}: ${errorData}`);
   }
 
+  logDevGeminiModel(model, response.headers.get('X-Gemini-Model'));
+
   const data = await response.json();
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
   return { text };
@@ -224,10 +254,14 @@ export function createAIClient(actionType?: string) {
       const ai = new GoogleGenAI({ apiKey });
       return {
         generateContentStream: async (options: { model: string; contents: any[]; config: any }) => {
-          return ai.models.generateContentStream(options);
+          const stream = await ai.models.generateContentStream(options);
+          logDevGeminiModel(options.model, options.model);
+          return stream;
         },
         generateContent: async (options: { model: string; contents: any[]; config: any }) => {
-          return ai.models.generateContent(options);
+          const out = await ai.models.generateContent(options);
+          logDevGeminiModel(options.model, options.model);
+          return out;
         },
       };
     }

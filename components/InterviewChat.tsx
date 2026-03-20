@@ -1127,6 +1127,20 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
     }
   };
 
+  // 从 JD 或 summary 中提取岗位名称
+  const extractJobName = (): string => {
+    const summaryMsg = messages.find(m => m.type === 'summary');
+    const summary = summaryMsg?.content || '';
+    const jd = jdText.trim();
+    const m1 = summary.match(/岗位[：:]\s*([^|\n]+)/);
+    if (m1) return m1[1].trim().substring(0, 25);
+    const m2 = jd.match(/(?:岗位|招聘|职位)[^：:]*[：:]\s*([^\n|]+)/);
+    if (m2) return m2[1].trim().substring(0, 25);
+    const firstLine = jd.split('\n').find(l => l.trim());
+    if (firstLine && firstLine.length <= 30) return firstLine.trim().substring(0, 25);
+    return '面试记录';
+  };
+
   // 保存面试记录到记录库
   const handleSaveToLibrary = async () => {
     if (!user) {
@@ -1156,18 +1170,17 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
         director: '第四轮/+2',
         hrbp: '第五轮/HRBP'
       };
-      const modeLabel = settings.mode === 'interactive' ? '人机交互' : '纯AI模拟';
-      const timestamp = new Date().toLocaleDateString('zh-CN');
       const roleLabel = roleLabels[settings.interviewerRole] || settings.interviewerRole;
+      const jobName = extractJobName();
 
-      // 未完成时加入轮次信息，避免记录库出现多条同标题
+      // 标题：岗位名 - 第x轮/xxx（时间在底部，不重复）
       let title: string;
       if (status === 'completed') {
-        title = `${modeLabel} - ${roleLabel} (${timestamp})`;
+        title = `${jobName} - ${roleLabel}`;
       } else {
         const completedRounds = messages.filter(m => m.type === 'interviewee' && !m.isStreaming).length;
         const currentRound = Math.min(completedRounds + 1, settings.totalRounds);
-        title = `${modeLabel} - ${roleLabel}（进行中 ${currentRound}/${settings.totalRounds}）(${timestamp})`;
+        title = `${jobName} - ${roleLabel}（进行中 ${currentRound}/${settings.totalRounds}）`;
       }
 
       const result = await saveInterviewRecord(user.id, {
@@ -1416,63 +1429,63 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
             <Settings size={16} />
             <span className="text-[12px]">{showSettings ? '隐藏设置' : '显示设置'}</span>
           </button>
-          {/* 有对话内容即可保存，不要求全部轮次完成 */}
+          {/* 保存与下载分开：有对话内容即可操作 */}
           {messages.length > 0 && status !== 'idle' && (
-            <div className="relative" ref={exportMenuRef}>
-              <button
-                onClick={() => setShowExportMenu(!showExportMenu)}
-                disabled={isExporting || isSavingRecord}
-                className="p-2 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-md transition-colors flex items-center gap-1.5"
-              >
-                {isExporting || isSavingRecord ? (
-                  <Loader2 size={16} className="animate-spin" />
-                ) : (
-                  <Download size={16} />
-                )}
-                <span className="text-[12px]">下载记录</span>
-              </button>
-              {showExportMenu && (
-                <div className="absolute right-0 top-full mt-1 bg-white border border-zinc-200 rounded-lg shadow-lg py-1 z-50 min-w-[160px]">
-                  {status === 'running' && (
-                    <div className="px-3 py-2 text-[11px] text-amber-600 bg-amber-50 border-b border-amber-100">
-                      AI 正在生成中，导出的为当前部分内容
-                    </div>
+            <>
+              {/* 保存到记录库（独立按钮） */}
+              {!viewingRecord && (
+                <button
+                  onClick={handleSaveToLibrary}
+                  disabled={isSavingRecord}
+                  className="p-2 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-md transition-colors flex items-center gap-1.5"
+                >
+                  {isSavingRecord ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <Save size={16} />
                   )}
-                  {/* 保存到记录库 */}
-                  {!viewingRecord && (
-                    <>
-                      <button
-                        onClick={handleSaveToLibrary}
-                        disabled={isSavingRecord}
-                        className="w-full px-3 py-2 text-left text-[13px] text-zinc-700 hover:bg-zinc-50 flex items-center gap-2 transition-colors"
-                      >
-                        {isSavingRecord ? (
-                          <Loader2 size={14} className="animate-spin text-zinc-400" />
-                        ) : (
-                          <Save size={14} className="text-zinc-400" />
-                        )}
-                        保存到记录库
-                      </button>
-                      <div className="border-t border-zinc-100 my-1" />
-                    </>
-                  )}
-                  <button
-                    onClick={handleExportMarkdown}
-                    className="w-full px-3 py-2 text-left text-[13px] text-zinc-700 hover:bg-zinc-50 flex items-center gap-2 transition-colors"
-                  >
-                    <FileText size={14} className="text-zinc-400" />
-                    导出文本
-                  </button>
-                  <button
-                    onClick={handleExportImage}
-                    className="w-full px-3 py-2 text-left text-[13px] text-zinc-700 hover:bg-zinc-50 flex items-center gap-2 transition-colors"
-                  >
-                    <ImageIcon size={14} className="text-zinc-400" />
-                    导出图片
-                  </button>
-                </div>
+                  <span className="text-[12px]">保存到记录库</span>
+                </button>
               )}
-            </div>
+              {/* 下载记录（下拉：导出文本/图片） */}
+              <div className="relative" ref={exportMenuRef}>
+                <button
+                  onClick={() => setShowExportMenu(!showExportMenu)}
+                  disabled={isExporting}
+                  className="p-2 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-md transition-colors flex items-center gap-1.5"
+                >
+                  {isExporting ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <Download size={16} />
+                  )}
+                  <span className="text-[12px]">下载记录</span>
+                </button>
+                {showExportMenu && (
+                  <div className="absolute right-0 top-full mt-1 bg-white border border-zinc-200 rounded-lg shadow-lg py-1 z-50 min-w-[160px]">
+                    {status === 'running' && (
+                      <div className="px-3 py-2 text-[11px] text-amber-600 bg-amber-50 border-b border-amber-100">
+                        AI 正在生成中，导出的为当前部分内容
+                      </div>
+                    )}
+                    <button
+                      onClick={handleExportMarkdown}
+                      className="w-full px-3 py-2 text-left text-[13px] text-zinc-700 hover:bg-zinc-50 flex items-center gap-2 transition-colors"
+                    >
+                      <FileText size={14} className="text-zinc-400" />
+                      导出文本
+                    </button>
+                    <button
+                      onClick={handleExportImage}
+                      className="w-full px-3 py-2 text-left text-[13px] text-zinc-700 hover:bg-zinc-50 flex items-center gap-2 transition-colors"
+                    >
+                      <ImageIcon size={14} className="text-zinc-400" />
+                      导出图片
+                    </button>
+                  </div>
+                )}
+              </div>
+            </>
           )}
           {/* 保存成功提示 */}
           {saveRecordSuccess && (

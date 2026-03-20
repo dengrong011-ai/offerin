@@ -7,11 +7,13 @@ const RETRY_CONFIG = {
   maxDelay: 3000,       // 最大等待 3 秒
 };
 
-// 备用模型列表（按优先级排序）：主模型 3.1 pro，备选 2.5 pro，不允许直接降级
+/**
+ * 主模型失败后的降级链（主模型在各 API 调用里写死为 gemini-3.1-pro-preview，不要重复写进本数组）
+ * 顺序：2.5 Pro → 2.5 Flash → 2.0 Flash
+ */
 const FALLBACK_MODELS = [
-  "gemini-3.1-pro-preview",         // 主模型
-  "gemini-2.5-pro-preview-05-06",   // 备选
-  "gemini-2.5-flash-preview-05-20",
+  "gemini-2.5-pro",
+  "gemini-2.5-flash",
   "gemini-2.0-flash",
 ];
 
@@ -22,6 +24,11 @@ const is429Error = (error: any): boolean => {
   const message = error?.message || '';
   const code = error?.code;
   return code === 429 || message.includes('429') || message.includes('AI_RATE_LIMIT_EXCEEDED') || message.includes('RATE_LIMIT_EXCEEDED');
+};
+
+const is404OrEntityNotFound = (error: any): boolean => {
+  const message = error?.message || '';
+  return message.includes('404') || message.includes('Requested entity was not found') || message.includes('ENTITY_NOT_FOUND');
 };
 
 // 判断是否为可重试的错误
@@ -63,6 +70,7 @@ async function generateContentStreamWithRetry(
       console.warn(`API 调用失败 (尝试 ${attempt + 1}/${RETRY_CONFIG.maxRetries}):`, error.message);
       
       if (is429Error(error)) break; // 429 不重试，直接进入 fallback
+      if (is404OrEntityNotFound(error)) break; // 404 不重试，直接进入 fallback
       if (!isRetryableError(error)) {
         throw error;
       }
@@ -78,8 +86,8 @@ async function generateContentStreamWithRetry(
     }
   }
   
-  // 主模型失败后，尝试备用模型（含 429 时直接 fallback，不同配额池）
-  if (isRetryableError(lastError) || is429Error(lastError)) {
+  // 主模型失败后，尝试备用模型（含 429/404 时直接 fallback，不同配额池）
+  if (isRetryableError(lastError) || is429Error(lastError) || is404OrEntityNotFound(lastError)) {
     for (const fallbackModel of FALLBACK_MODELS) {
       if (fallbackModel === options.model) continue; // 跳过已尝试的主模型
       
@@ -122,6 +130,7 @@ async function generateContentWithRetry(
       console.warn(`API 调用失败 (尝试 ${attempt + 1}/${RETRY_CONFIG.maxRetries}):`, error.message);
       
       if (is429Error(error)) break; // 429 不重试，直接进入 fallback
+      if (is404OrEntityNotFound(error)) break; // 404 不重试，直接进入 fallback
       if (!isRetryableError(error)) {
         throw error;
       }
@@ -137,8 +146,8 @@ async function generateContentWithRetry(
     }
   }
   
-  // 主模型失败后，尝试备用模型（含 429 时直接 fallback，不同配额池）
-  if (isRetryableError(lastError) || is429Error(lastError)) {
+  // 主模型失败后，尝试备用模型（含 429/404 时直接 fallback，不同配额池）
+  if (isRetryableError(lastError) || is429Error(lastError) || is404OrEntityNotFound(lastError)) {
     for (const fallbackModel of FALLBACK_MODELS) {
       if (fallbackModel === options.model) continue;
       

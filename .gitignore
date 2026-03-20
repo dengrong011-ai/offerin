@@ -1,3 +1,6 @@
+# 用户反馈数据（本地使用，不上传）
+feedback/
+
 # Logs
 logs
 *.log

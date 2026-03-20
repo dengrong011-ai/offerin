@@ -99,11 +99,16 @@ const RETRY_CONFIG = {
   maxDelay: 5000,
 };
 
-// 备用模型列表（主模型持续失败时逐个尝试）
+/**
+ * 仅主模型（各调用处写的 gemini-3.1-pro-preview）失败后的降级顺序，不要包含主模型本身。
+ * 实际流程：① 先请求主模型，最多重试 RETRY_CONFIG.maxRetries 次（429/404 不重试同模型，直接进②）
+ * ② 按顺序尝试下列模型，直到成功或全部失败。
+ * 另：走 /api/gemini/proxy 时，服务端对单次请求还有一层 429/404 → 2.5pro→2.5flash→2.0 的 fallback（见 proxy.ts）。
+ */
+/** 使用官方稳定 Model code：preview-05-06 等旧 ID 在 v1beta 易 404，见 ai.google.dev 文档 */
 const FALLBACK_MODELS = [
-  'gemini-3.1-pro-preview',
-  'gemini-2.5-pro-preview-05-06',
-  'gemini-2.5-flash-preview-05-20',
+  'gemini-2.5-pro',
+  'gemini-2.5-flash',
   'gemini-2.0-flash',
 ];
 
@@ -113,6 +118,11 @@ const is429Error = (error: any): boolean => {
   const message = error?.message || '';
   const code = error?.code;
   return code === 429 || message.includes('429') || message.includes('AI_RATE_LIMIT_EXCEEDED') || message.includes('RATE_LIMIT_EXCEEDED');
+};
+
+const is404OrEntityNotFound = (error: any): boolean => {
+  const message = error?.message || '';
+  return message.includes('404') || message.includes('Requested entity was not found') || message.includes('ENTITY_NOT_FOUND');
 };
 
 const isRetryableError = (error: any): boolean => {
@@ -160,6 +170,7 @@ async function generateContentStreamWithRetry(
       console.warn(`API 调用失败 (尝试 ${attempt + 1}/${RETRY_CONFIG.maxRetries}):`, error.message);
 
       if (is429Error(error)) break; // 429 不重试，直接进入 fallback
+      if (is404OrEntityNotFound(error)) break; // 404 不重试，直接进入 fallback
       if (!isRetryableError(error)) {
         throw error;
       }
@@ -175,8 +186,8 @@ async function generateContentStreamWithRetry(
     }
   }
 
-  // 主模型重试全部失败后，尝试备用模型（含 429 时直接 fallback，不同配额池）
-  if (isRetryableError(lastError) || is429Error(lastError)) {
+  // 主模型重试全部失败后，尝试备用模型（含 429/404 时直接 fallback，不同配额池）
+  if (isRetryableError(lastError) || is429Error(lastError) || is404OrEntityNotFound(lastError)) {
     for (const fallbackModel of FALLBACK_MODELS) {
       if (fallbackModel === options.model) continue;
       if (abortSignal?.aborted) throw new Error('已取消');
@@ -187,7 +198,15 @@ async function generateContentStreamWithRetry(
           ...options,
           model: fallbackModel,
         });
-        console.log(`备用模型 ${fallbackModel} 成功`);
+        if (import.meta.env.DEV) {
+          console.log(
+            `%c[Offerin Gemini]%c 面试客户端重试成功，实际模型: %c${fallbackModel}%c（主模型 ${options.model} 未成功）`,
+            'color:#10b981;font-weight:bold',
+            '',
+            'color:#f97316;font-weight:600',
+            ''
+          );
+        }
         return stream;
       } catch (fallbackError: any) {
         console.warn(`备用模型 ${fallbackModel} 也失败:`, fallbackError.message);
@@ -288,10 +307,14 @@ export const runInterview = async (
       });
 
       let interviewerResponse = '';
+      const simulationInterviewerUserText =
+        roundNum === 1
+          ? '请根据当前面试阶段，提出你的问题。'
+          : '请阅读对话历史中候选人上一轮的回答。若其中向你提出问题、反问或想了解团队/业务，请先真诚、简要回应，再自然衔接你的下一个考察问题；禁止无视对方追问、突兀跳到简历上另一段无关经历。请直接输出你作为面试官的完整发言。';
       try {
         const stream = await generateContentStreamWithRetry(client, {
           model: "gemini-3.1-pro-preview",
-          contents: [{ parts: [{ text: "请根据当前面试阶段，提出你的问题。" }] }],
+          contents: [{ parts: [{ text: simulationInterviewerUserText }] }],
           config: {
             systemInstruction: interviewerPrompt,
             temperature: PHASE_TEMPERATURE[phase] ?? 0.8,
@@ -689,10 +712,14 @@ export const processUserAnswer = async (
   });
 
   let interviewerResponse = '';
+  // 收尾阶段：把候选人问题直接放在用户消息中，避免模型忽略 system prompt 中的内容
+  const userPromptText = nextPhase === 'closing'
+    ? `【重要】候选人已经提出了问题，请直接回答，不要再次邀请提问。\n\n候选人刚才的问题：\n${userAnswer}\n\n请针对以上问题给出回答，并感谢候选人的时间。`
+    : `请阅读候选人刚才的回答全文。\n若其中向你提出问题、反问或想了解团队/业务/JD 相关现状，你必须先真诚回应，再点评并衔接下一个考察问题；不要忽略对方的追问、也不要突然跳到简历上无关的另一段经历而不承上启下。\n\n候选人刚才的回答：\n${userAnswer}`;
   try {
     const stream = await generateContentStreamWithRetry(client, {
       model: "gemini-3.1-pro-preview",
-      contents: [{ parts: [{ text: "请对候选人的回答进行点评，并提出下一个问题。" }] }],
+      contents: [{ parts: [{ text: userPromptText }] }],
       config: {
         systemInstruction: feedbackPrompt,
         temperature: PHASE_TEMPERATURE[nextPhase] ?? 0.8,
