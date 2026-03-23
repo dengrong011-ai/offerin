@@ -15,21 +15,24 @@ interface VIPUpgradeModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
+  /** 打开弹窗时默认选中的套餐（首页卡片传入） */
+  defaultProductId?: XorPayProductType;
 }
 
 type PaymentStep = 'info' | 'qrcode' | 'polling' | 'success' | 'error';
-type PlanType = 'vip_sprint' | 'vip_monthly';
+type PlanType = 'resume_pass_10d' | 'full_monthly';
 
 export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({ 
   isOpen, 
   onClose,
-  onSuccess 
+  onSuccess,
+  defaultProductId = 'full_monthly',
 }) => {
   const { user, refreshProfile } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [paymentStep, setPaymentStep] = useState<PaymentStep>('info');
-  const [selectedPlan, setSelectedPlan] = useState<PlanType>('vip_sprint');
+  const [selectedPlan, setSelectedPlan] = useState<PlanType>('full_monthly');
   
   // 支付相关状态
   const [orderId, setOrderId] = useState('');
@@ -40,8 +43,8 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
 
-  const sprintProduct = XORPAY_PRODUCTS['vip_sprint'];
-  const monthlyProduct = XORPAY_PRODUCTS['vip_monthly'];
+  const resumePassProduct = XORPAY_PRODUCTS['resume_pass_10d'];
+  const fullMonthlyProduct = XORPAY_PRODUCTS['full_monthly'];
 
   // 清理定时器
   const clearTimers = () => {
@@ -59,6 +62,21 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
   useEffect(() => {
     return () => clearTimers();
   }, []);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    clearTimers();
+    const p = defaultProductId;
+    if (p === 'resume_pass_10d' || p === 'full_monthly') {
+      setSelectedPlan(p);
+    }
+    setPaymentStep('info');
+    setOrderId('');
+    setQrCodeUrl('');
+    setCountdown(0);
+    setError('');
+    setLoading(false);
+  }, [isOpen, defaultProductId]);
 
   // 重置状态
   const resetState = () => {
@@ -88,10 +106,7 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
     setError('');
 
     try {
-      const notifyUrl = import.meta.env.VITE_XORPAY_NOTIFY_URL || 
-        `${window.location.origin}/api/xorpay/notify`;
-
-      const result = await createXorPayOrder(user.id, selectedPlan as XorPayProductType, notifyUrl);
+      const result = await createXorPayOrder(user.id, selectedPlan as XorPayProductType);
 
       if (!result.success) {
         throw new Error(result.error || '创建订单失败');
@@ -186,7 +201,23 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const currentProduct = selectedPlan === 'vip_sprint' ? sprintProduct : monthlyProduct;
+  const currentProduct = selectedPlan === 'resume_pass_10d' ? resumePassProduct : fullMonthlyProduct;
+
+  const benefitRows =
+    selectedPlan === 'resume_pass_10d'
+      ? [
+          { icon: FileText, text: '10 天内 · 最多 50 次简历诊断', desc: '划选编辑不计入' },
+          { icon: Sparkles, text: '职业探索', desc: '与免费档相同（共 3 次成功）' },
+          { icon: MessageSquare, text: '模拟面试 / 翻译', desc: '与免费体验一致' },
+          { icon: Download, text: 'PDF 导出', desc: '' },
+        ]
+      : [
+          { icon: MessageSquare, text: '每月 30 场模拟面试', desc: '按场次计' },
+          { icon: Globe, text: '职业探索 50 次成功/月', desc: '分步计' },
+          { icon: FileText, text: '简历侧 50 次/月', desc: '诊断 + 划选 + 全局重构' },
+          { icon: Globe, text: '英文翻译不限', desc: '' },
+          { icon: Download, text: 'PDF 与面试记录', desc: '' },
+        ];
 
   if (!isOpen) return null;
 
@@ -217,8 +248,8 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
                 <Crown size={24} />
               </div>
               <div>
-                <h2 className="text-lg font-bold">升级 VIP 会员</h2>
-                <p className="text-white/60 text-sm">解锁全部功能，高效求职</p>
+                <h2 className="text-lg font-bold">开通会员</h2>
+                <p className="text-white/60 text-sm">简历畅改 · 全局畅享</p>
               </div>
             </div>
           </div>
@@ -232,7 +263,7 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
                 <Check size={32} className="text-green-600" />
               </div>
               <h3 className="text-xl font-semibold text-zinc-900 mb-2">开通成功！</h3>
-              <p className="text-zinc-500">恭喜您成为 VIP 会员，尽享全部权益</p>
+              <p className="text-zinc-500">会员权益已生效，可在个人中心查看档位</p>
             </div>
           ) : paymentStep === 'polling' ? (
             <div className="py-8 text-center">
@@ -280,56 +311,45 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
             <>
               {/* 套餐选择 */}
               <div className="grid grid-cols-2 gap-3 mb-5">
-                {/* 冲刺计划 */}
                 <button
-                  onClick={() => setSelectedPlan('vip_sprint')}
+                  type="button"
+                  onClick={() => setSelectedPlan('resume_pass_10d')}
                   className={`relative rounded-xl p-4 border-2 transition-all text-left ${
-                    selectedPlan === 'vip_sprint' 
-                      ? 'border-zinc-900 bg-zinc-50 shadow-sm' 
+                    selectedPlan === 'resume_pass_10d'
+                      ? 'border-zinc-900 bg-zinc-50 shadow-sm'
                       : 'border-zinc-200 hover:border-zinc-300'
                   }`}
                 >
-                  <span className="absolute -top-2.5 left-3 px-2 py-0.5 bg-zinc-900 text-white text-[10px] font-medium rounded-full">
-                    热门
-                  </span>
-                  <div className="text-sm font-semibold text-zinc-900 mb-1">冲刺计划</div>
-                  <div className="text-xs text-zinc-500 mb-3">10 天有效</div>
+                  <div className="text-sm font-semibold text-zinc-900 mb-1">简历畅改</div>
+                  <div className="text-xs text-zinc-500 mb-3">10 天 · 50 次诊断</div>
                   <div className="flex items-baseline gap-1">
-                    <span className="text-2xl font-bold text-zinc-900">{formatXorPayPrice(sprintProduct.priceInCents)}</span>
+                    <span className="text-2xl font-bold text-zinc-900">{formatXorPayPrice(resumePassProduct.priceInCents)}</span>
                   </div>
-                  <div className="text-[10px] text-zinc-400 mt-1">
-                    <span className="line-through">¥29.9</span>
-                    <span className="ml-1 text-zinc-600 font-medium">省33%</span>
-                  </div>
-                  {selectedPlan === 'vip_sprint' && (
+                  {selectedPlan === 'resume_pass_10d' && (
                     <div className="absolute top-3 right-3 w-5 h-5 bg-zinc-900 rounded-full flex items-center justify-center">
                       <Check size={12} className="text-white" />
                     </div>
                   )}
                 </button>
 
-                {/* 月度会员 */}
                 <button
-                  onClick={() => setSelectedPlan('vip_monthly')}
+                  type="button"
+                  onClick={() => setSelectedPlan('full_monthly')}
                   className={`relative rounded-xl p-4 border-2 transition-all text-left ${
-                    selectedPlan === 'vip_monthly' 
-                      ? 'border-zinc-900 bg-zinc-50 shadow-sm' 
+                    selectedPlan === 'full_monthly'
+                      ? 'border-zinc-900 bg-zinc-50 shadow-sm'
                       : 'border-zinc-200 hover:border-zinc-300'
                   }`}
                 >
-                  <span className="absolute -top-2.5 left-3 px-2 py-0.5 bg-zinc-600 text-white text-[10px] font-medium rounded-full">
-                    更划算
+                  <span className="absolute -top-2.5 left-3 px-2 py-0.5 bg-zinc-900 text-white text-[10px] font-medium rounded-full">
+                    推荐
                   </span>
-                  <div className="text-sm font-semibold text-zinc-900 mb-1">月度会员</div>
-                  <div className="text-xs text-zinc-500 mb-3">30 天有效</div>
+                  <div className="text-sm font-semibold text-zinc-900 mb-1">全局畅享</div>
+                  <div className="text-xs text-zinc-500 mb-3">30 天全链路</div>
                   <div className="flex items-baseline gap-1">
-                    <span className="text-2xl font-bold text-zinc-900">{formatXorPayPrice(monthlyProduct.priceInCents)}</span>
+                    <span className="text-2xl font-bold text-zinc-900">{formatXorPayPrice(fullMonthlyProduct.priceInCents)}</span>
                   </div>
-                  <div className="text-[10px] text-zinc-400 mt-1">
-                    <span className="line-through">¥39.9</span>
-                    <span className="ml-1 text-zinc-600 font-medium">省25%</span>
-                  </div>
-                  {selectedPlan === 'vip_monthly' && (
+                  {selectedPlan === 'full_monthly' && (
                     <div className="absolute top-3 right-3 w-5 h-5 bg-zinc-900 rounded-full flex items-center justify-center">
                       <Check size={12} className="text-white" />
                     </div>
@@ -337,26 +357,20 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
                 </button>
               </div>
 
-              {/* VIP 权益列表 */}
               <div className="space-y-3 mb-5">
                 <h4 className="text-sm font-medium text-zinc-700 flex items-center gap-2">
                   <Sparkles size={14} className="text-zinc-600" />
-                  会员专属权益
+                  本档权益
                 </h4>
                 <div className="space-y-2">
-                  {[
-                    { icon: FileText, text: '简历诊断 无限次', desc: '智能分析，精准优化' },
-                    { icon: MessageSquare, text: '模拟面试 无限次', desc: '多轮面试，全真模拟' },
-                    { icon: Download, text: 'PDF 导出无限', desc: '一键下载，随时使用' },
-                    { icon: Globe, text: '英文简历翻译无限', desc: '专业翻译，助力海外求职' },
-                    { icon: Crown, text: '面试记录导出', desc: '保存复盘，持续提升' },
-                  ].map((item, index) => (
+                  {benefitRows.map((item, index) => (
                     <div key={index} className="flex items-center gap-3 p-2.5 bg-zinc-50 rounded-lg">
                       <div className="w-7 h-7 bg-zinc-200 rounded-lg flex items-center justify-center flex-shrink-0">
                         <item.icon size={14} className="text-zinc-700" />
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="font-medium text-zinc-900 text-sm">{item.text}</div>
+                        {item.desc ? <div className="text-[11px] text-zinc-500 mt-0.5">{item.desc}</div> : null}
                       </div>
                       <Check size={14} className="text-zinc-600 flex-shrink-0" />
                     </div>
@@ -364,11 +378,10 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
                 </div>
               </div>
 
-              {/* 对比免费版 */}
               <div className="bg-zinc-100 rounded-lg p-3 mb-5">
-                <div className="flex items-center justify-between text-sm">
+                <div className="flex flex-col gap-1 text-sm">
                   <span className="text-zinc-500">免费版</span>
-                  <span className="text-zinc-400">诊断3次 · 面试1次 · 导出免费</span>
+                  <span className="text-zinc-400 text-xs">诊断+划选 3 次 · 面试 1 场 · 职业探索 3 次成功 · 翻译 3 次</span>
                 </div>
               </div>
 
@@ -392,13 +405,17 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
                 ) : (
                   <>
                     <QrCode size={18} />
-                    支付宝扫码开通 {formatXorPayPrice(currentProduct.priceInCents)}{selectedPlan === 'vip_sprint' ? '/10天' : '/月'}
+                    支付宝扫码开通 {formatXorPayPrice(currentProduct.priceInCents)}
+                    {selectedPlan === 'resume_pass_10d' ? '/10天' : '/月'}
                   </>
                 )}
               </button>
 
               <p className="text-xs text-zinc-400 text-center mt-3">
-                支付即表示同意《VIP会员服务协议》，开通后不支持退款
+                支付即表示同意会员服务协议，开通后不支持退款
+              </p>
+              <p className="text-[11px] text-zinc-400 text-center mt-2 leading-relaxed">
+                单次付费、不设自动续费；到期后账号恢复为免费用户，不会代扣款。
               </p>
             </>
           )}

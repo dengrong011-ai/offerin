@@ -32,7 +32,7 @@ export interface UserProfile {
   email: string;
   nickname: string;
   avatar_url: string | null;
-  membership_type: 'free' | 'vip' | 'pro' | 'special';
+  membership_type: 'free' | 'vip' | 'resume_pass' | 'full_monthly' | 'pro' | 'special';
   daily_usage_count: number;
   last_usage_date: string | null;
   vip_expires_at: string | null;
@@ -67,19 +67,47 @@ export const MEMBERSHIP_LIMITS = {
     features: ['basic_diagnosis', 'basic_interview'],
   },
   vip: {
-    diagnosis_trial_count: -1,     // VIP 不限制
-    interview_trial_count: -1,     // VIP 不限制体验
-    translation_trial_count: -1,   // VIP 翻译无限
-    daily_diagnosis: -1,           // VIP 诊断不限每日，改为月限
-    daily_interview: -1,           // VIP 面试不限每日，改为月限
-    daily_total: -1,               // VIP 不限每日总操作
-    monthly_diagnosis: 200,        // VIP 每月200次诊断（显示为无限）
-    monthly_interview: 300,        // VIP 每月300次面试（显示为无限）
-    diagnosis_warning_threshold: 100, // 诊断月使用 >100 次发出预警
-    interview_warning_threshold: 240,  // 面试月使用 >240 次发出预警
-    can_download: true,            // VIP 可以无限下载
-    can_export_interview: true,    // VIP 支持面试记录导出
-    can_translate: true,           // VIP 翻译无限
+    diagnosis_trial_count: -1,     // 老 VIP：月限见 proxy
+    interview_trial_count: -1,
+    translation_trial_count: -1,
+    daily_diagnosis: -1,
+    daily_interview: -1,
+    daily_total: -1,
+    monthly_diagnosis: 200,
+    monthly_interview: 300,
+    diagnosis_warning_threshold: 100,
+    interview_warning_threshold: 240,
+    can_download: true,
+    can_export_interview: true,
+    can_translate: true,
+    features: ['basic_diagnosis', 'basic_interview', 'advanced_diagnosis', 'resume_export', 'interview_history', 'translation', 'interview_export'],
+  },
+  resume_pass: {
+    diagnosis_trial_count: -1,
+    interview_trial_count: 1,
+    translation_trial_count: 3,
+    daily_diagnosis: -1,
+    daily_interview: -1,
+    daily_total: -1,
+    monthly_diagnosis: -1,
+    monthly_interview: -1,
+    can_download: true,
+    can_export_interview: false,
+    can_translate: true,
+    features: ['basic_diagnosis', 'advanced_diagnosis', 'resume_export'],
+  },
+  full_monthly: {
+    diagnosis_trial_count: -1,
+    interview_trial_count: -1,
+    translation_trial_count: -1,
+    daily_diagnosis: -1,
+    daily_interview: -1,
+    daily_total: -1,
+    monthly_diagnosis: 50,
+    monthly_interview: 30,
+    can_download: true,
+    can_export_interview: true,
+    can_translate: true,
     features: ['basic_diagnosis', 'basic_interview', 'advanced_diagnosis', 'resume_export', 'interview_history', 'translation', 'interview_export'],
   },
   pro: {

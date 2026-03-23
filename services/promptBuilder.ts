@@ -212,7 +212,7 @@ export const extractCandidateCommitments = (
   if (candidateResponses.length === 0) return '';
 
   // 关键词检测：薪资相关
-  const salaryKeywords = ['薪资', '薪酬', 'base', 'Base', 'total', 'Total', '年薪', '月薪', '万', 'k', 'K', '涨幅', '期望', '底线', '目前'];
+  const salaryKeywords = ['薪资', '薪酬', 'base', 'Base', 'total', 'Total', '年薪', '月薪', '万', 'k', 'K', '涨幅', '期望', '底线', '目前', 'salary', 'Salary', 'compensation', 'Compensation', 'package', 'Package', 'equity', 'Equity', 'RSU', 'rsu', 'bonus', 'Bonus'];
   const timeKeywords = ['到岗', '入职', '交接', '离职', '月', '周'];
   const offerKeywords = ['offer', 'Offer', '其他机会', '其他公司', '竞争'];
 
@@ -347,9 +347,6 @@ export const buildInterviewerPrompt = (params: InterviewerPromptParams): string 
 
   const roleConfig = ROLE_CONFIG[interviewerRole];
   const isFollowUp = isInteractiveMode && !isFirstRound && userAnswer;
-  /** 纯模拟模式下候选人发言在 conversationHistory 里，同样要「先回应追问」 */
-  const hasIntervieweeInHistory = conversationHistory.some((h) => h.role === 'interviewee');
-
   // 1. 角色人设
   let prompt = roleConfig.systemInstruction;
 
@@ -381,8 +378,10 @@ export const buildInterviewerPrompt = (params: InterviewerPromptParams): string 
   const isClosing = phase === 'closing';
 
   if (isClosing) {
-    // 收尾阶段：不注入 JD/简历，面试官已充分了解候选人
-    prompt += `\n# 岗位与候选人信息\n（你已在前面轮次充分了解了岗位 JD 和候选人简历，收尾阶段不再重复。请基于之前的对话记忆进行收尾。）\n`;
+    // 收尾阶段：注入摘要版 JD/简历，便于回答候选人反问时对照（完整版已在前面轮次出现过）
+    prompt += `\n# 岗位JD（收尾用·核心摘要）\n${codeBlock(summarizeJD(jobDescription))}\n`;
+    prompt += `\n# 候选人简历（收尾用·核心摘要）\n${codeBlock(summarizeResume(resume))}\n`;
+    prompt += `\n（以上为便于收尾作答的摘要；请结合对话历史回应候选人，勿机械复述全文。）\n`;
   } else if (useFullContext) {
     // 首轮/第二轮：注入完整 JD 和简历
     prompt += `\n# 岗位JD（职位描述）\n${codeBlock(jobDescription)}\n`;
@@ -416,15 +415,21 @@ ${supplementInfo!.otherInfo ? `- 其他信息：${supplementInfo!.otherInfo}` : 
 `;
   }
 
-  // 6. 面试进度
-  prompt += `\n# 当前面试进度\n- 当前轮次: 第 ${currentRound} 轮 / 共 ${totalRounds} 轮\n- 当前阶段: ${phase}`;
+  // 6. 面试进度（仅供模型内部编排，勿在对候选人发言中念轮次）
+  prompt += `\n# 当前面试进度（内部参考，禁止在对候选人发言中提及「第几轮」「共几轮」等数字）\n- 当前轮次: 第 ${currentRound} 轮 / 共 ${totalRounds} 轮\n- 当前阶段: ${phase}`;
 
   // 7. 阶段指导
+  const isOpeningFirstRound = phase === 'opening' && currentRound === 1;
+
   const phaseDescriptions: Record<string, string> = {
-    opening: `这是面试开场阶段。请：
-- 简短介绍自己：只说"我是${roleConfig.title}"或"我是本轮的面试官"，【严禁】编造或使用任何姓名（如李磊、王明等）
-- 简要说明本轮面试的重点
-- 用一个轻松的开场问题让候选人自我介绍`,
+    opening: `这是面试开场阶段（第 1 轮）。请**只输出一段连贯发言**，顺序固定为：
+1. 简短问候 + 自我介绍身份：只说「我是${roleConfig.title}」或「我是本轮面试官」，【严禁】编造姓名
+2. 用一两句话说明岗位/团队/考察侧重点（可结合 JD 标题与职责，不要展开成长篇 JD 复述）
+3. **邀请候选人做 1–2 分钟自我介绍**（可提示结合简历经历与应聘动机）
+
+【严禁】在本轮就追问简历里某段项目的技术细节、数据口径、长场景假设题、或「你当时具体怎么做的」类深挖；这些放到后续「基础了解/深入考察」阶段。
+【严禁】在同一次输出里先抛复杂业务/技术题，再单独写一段「你好欢迎」式寒暄（会显得像两轮话拼在一起）。
+【长度】整段发言总字数尽量不超过 400 字（JD 极短时可略增）`,
 
     basic: `这是基础了解阶段。围绕你的核心使命中的前几个重点进行提问。
 参考问题：
@@ -471,28 +476,10 @@ ${roleConfig.closingGuidance.candidateQuestionTopics.map(t => `- ${t}`).join('\n
   // 8. 对话历史（智能摘要）
   prompt += buildHistoryContext(conversationHistory, 6, true);
 
-  // 9. 人机交互额外指导
-  if (isInteractiveMode && !isFollowUp) {
-    prompt += `
+  // 9. 人机交互：候选人为真实用户；双向对话与「先回应追问」见下方 PACE_CONTROL.interviewer，此处不重复展开
 
-# 真人作答补充说明（对话连贯性与纯模拟相同）
-这是真实用户在回答问题。你需要：
-1. 仔细阅读用户的回答，理解其内容和质量
-2. 若对方话中有反问，必须先回应（与上方「对话连贯性」一致）
-3. 根据用户回答自然地追问或转换话题；回答得好可适当肯定
-4. 保持真实面试般的连贯性`;
-  }
-
-  // 9.1 双向对话（纯模拟 + 人机交互均适用：历史里已有候选人发言时）
-  if (hasIntervieweeInHistory && !(isFollowUp && userAnswer)) {
-    prompt += `
-
-# 【重要】对话连贯性（纯模拟与人机交互相同）
-请阅读对话历史：若候选人上一轮回答中**向你提出问题、反问或想了解团队/业务**，你必须在本轮发言中**先简要回应**，再衔接你的考察；不得无视对方追问、只按简历清单抛新问题。换到简历上另一段经历时需承上启下。`;
-  }
-
-  // 9.5 Peers/+1/+2 简历绑定约束（专业面试官必须围绕简历提问）
-  if (['peers', 'leader', 'director'].includes(interviewerRole)) {
+  // 9.5 Peers/+1/+2 简历绑定约束（专业面试官必须围绕简历提问）——开场第 1 轮不注入，避免与「先自我介绍」冲突
+  if (['peers', 'leader', 'director'].includes(interviewerRole) && !isOpeningFirstRound) {
     prompt += `
 
 # 【重要】简历绑定原则
@@ -527,8 +514,10 @@ ${roleConfig.closingGuidance.candidateQuestionTopics.map(t => `- ${t}`).join('\n
     prompt += `\n\n# 【重要】候选人刚才的回答（含反问须先回应）\n${codeBlock(userAnswer)}`;
   }
 
-  // 11. 多样性指令
-  prompt += generateDiversityInstructions(resume);
+  // 11. 多样性指令（开场第 1 轮不注入，避免诱导「情景题/假设题」与开场冲突）
+  if (!isOpeningFirstRound) {
+    prompt += generateDiversityInstructions(resume);
+  }
 
   // 12. 阶段描述（非 followUp 模式）
   if (!isFollowUp) {
@@ -615,33 +604,7 @@ ${roleConfig.closingGuidance.avoidQuestions.map(q => `- ${q}`).join('\n')}
 
   const hasSupplement = supplementInfo && (supplementInfo.currentSalary || supplementInfo.expectedSalary || supplementInfo.availableTime || supplementInfo.otherInfo);
 
-  const salarySection = hasSupplement ? `
-# 你的真实情况（用于谈薪环节）
-${supplementInfo!.currentSalary ? `- 当前薪资：${supplementInfo!.currentSalary}` : ''}
-${supplementInfo!.expectedSalary ? `- 期望薪资：${supplementInfo!.expectedSalary}` : ''}
-${supplementInfo!.availableTime ? `- 到岗时间：${supplementInfo!.availableTime}` : ''}
-${supplementInfo!.otherInfo ? `- 其他：${supplementInfo!.otherInfo}` : ''}
-
-**【重要】谈薪策略指导**：
-1. **保持前后一致**：一旦你报出了一个期望数字，后续对话中必须保持一致，不要自相矛盾
-2. **先了解再报价**：如果面试官问薪资期望，可以先反问"请问这个岗位的预算范围是多少？"
-3. **报价策略（重要）**：
-   - 可以先说"希望整体涨幅在 30% 左右"或"期望 XX 万左右"
-   - 不要主动给范围！HR 会直接按下限压价
-   - 给一个目标数字，如"期望 75 万左右"，而不是"70-80万"
-   - 如果 HR 追问底线，可以说"希望不低于 70 万"（比真实底线高一些）
-   - 真实底线（如 65 万）绝对不要透露
-   - 你报出的数字必须和上面"期望薪资"信息一致
-4. **强调价值**：在谈薪资的同时，强调自己能带来的价值
-5. **底线策略**：你有底线，但不要轻易透露给 HRBP。如果 HRBP 反复追问，可以说"这个需要看整体 package"或"我更关注整体机会"
-6. **如果有竞争 Offer**：可以适当透露以增加议价筹码，但不要编造
-7. **到岗时间**：表达一定的灵活性，但也要尊重自己的实际情况
-
-**禁止事项**：
-- 禁止在对话中给出不同的数字（如先说75万，后说80万）
-- 禁止直接暴露自己的底线
-- 禁止表现得太急切或太强硬
-` : `
+  const salaryInferenceTaHrbp = `
 # 薪资情况推理（用户未提供具体薪资信息）
 用户没有填写补充薪资信息。当面试官问到薪资相关问题时，你需要根据以下线索**自行推理**出合理的薪资数据来回答。
 
@@ -674,17 +637,51 @@ ${supplementInfo!.otherInfo ? `- 其他：${supplementInfo!.otherInfo}` : ''}
 - 强调自身价值，而非单纯讨价还价
 `;
 
+  const salaryInferenceOtherRoles = `
+# 薪资（未填写补充信息）
+若面试官未主动问及薪资，无需主动展开长篇谈薪；若问及，结合自身经历与市场合理回应，避免编造与简历矛盾的数字；可先反问岗位预算范围。`;
+
+  const salarySection = hasSupplement ? `
+# 你的真实情况（用于谈薪环节）
+${supplementInfo!.currentSalary ? `- 当前薪资：${supplementInfo!.currentSalary}` : ''}
+${supplementInfo!.expectedSalary ? `- 期望薪资：${supplementInfo!.expectedSalary}` : ''}
+${supplementInfo!.availableTime ? `- 到岗时间：${supplementInfo!.availableTime}` : ''}
+${supplementInfo!.otherInfo ? `- 其他：${supplementInfo!.otherInfo}` : ''}
+
+**【重要】谈薪策略指导**：
+1. **保持前后一致**：一旦你报出了一个期望数字，后续对话中必须保持一致，不要自相矛盾
+2. **先了解再报价**：如果面试官问薪资期望，可以先反问"请问这个岗位的预算范围是多少？"
+3. **报价策略（重要）**：
+   - 可以先说"希望整体涨幅在 30% 左右"或"期望 XX 万左右"
+   - 不要主动给范围！HR 会直接按下限压价
+   - 给一个目标数字，如"期望 75 万左右"，而不是"70-80万"
+   - 如果 HR 追问底线，可以说"希望不低于 70 万"（比真实底线高一些）
+   - 真实底线（如 65 万）绝对不要透露
+   - 你报出的数字必须和上面"期望薪资"信息一致
+4. **强调价值**：在谈薪资的同时，强调自己能带来的价值
+5. **底线策略**：你有底线，但不要轻易透露给 HRBP。如果 HRBP 反复追问，可以说"这个需要看整体 package"或"我更关注整体机会"
+6. **如果有竞争 Offer**：可以适当透露以增加议价筹码，但不要编造
+7. **到岗时间**：表达一定的灵活性，但也要尊重自己的实际情况
+
+**禁止事项**：
+- 禁止在对话中给出不同的数字（如先说75万，后说80万）
+- 禁止直接暴露自己的底线
+- 禁止表现得太急切或太强硬
+` : (interviewerRole === 'ta' || interviewerRole === 'hrbp')
+  ? salaryInferenceTaHrbp
+  : salaryInferenceOtherRoles;
+
   // 根据对话轮次决定是否使用摘要（候选人第一次回答需完整简历，后续可用摘要）
   const roundCount = conversationHistory.filter(h => h.role === 'interviewee').length;
   const useFullResume = roundCount <= 1; // 前两轮用完整简历
   const isClosing = currentPhase === 'closing';
 
   const resumeContent = isClosing
-    ? `（你已清楚自己的简历内容，收尾阶段不再重复。基于之前的对话进行反问。）`
+    ? `${codeBlock(summarizeResume(resume))}\n（收尾反问阶段：以上为简历摘要，可结合前几轮对话回忆细节。）`
     : useFullResume ? codeBlock(resume) : codeBlock(summarizeResume(resume));
 
   const jdContent = isClosing
-    ? `（你已了解目标岗位信息，收尾阶段不再重复。）`
+    ? `${codeBlock(summarizeJD(jobDescription))}\n（收尾阶段：结合岗位与自身经历组织反问。）`
     : useFullResume ? codeBlock(jobDescription) : codeBlock(summarizeJD(jobDescription));
 
   return `# 角色设定
@@ -731,7 +728,8 @@ ${closingGuidance}
 - 回答长度适中，重点突出，不要过于冗长
 - 如果是开场自我介绍，控制在1-2分钟的口述长度
 - 如果面试官在收尾，要礼貌地表达感谢和期待
-- 【重要】根据轮次调整开场：首轮可简短开场；后续轮次直接进入回答，不要每轮重复"您好/感谢您给我机会/很高兴和您探讨"等套话，像真实面试一样自然承接上一轮对话`;
+- 【重要】根据轮次调整开场：首轮可简短开场；后续轮次直接进入回答，不要每轮重复"您好/感谢您给我机会/很高兴和您探讨"等套话，像真实面试一样自然承接上一轮对话
+- 【重要】**禁止输出空内容、仅省略号「…」或无话术占位**；必须给出至少数句完整中文回答（若对问题不了解，可诚实说明并表达学习意愿）`;
 };
 
 // ==================== 面试评价 Prompt 构建 ====================

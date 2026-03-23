@@ -4,7 +4,7 @@ import {
   Briefcase, User, Hash, Info, AlertCircle, Award, 
   Send, Square, Plus, X, FileText, Upload, Settings,
   Download, RefreshCw, Loader2, ArrowLeft, ChevronDown, ChevronUp, Image as ImageIcon,
-  Play, MessageSquare, Users, Mic, MicOff, StopCircle, CheckCircle2, File, Paperclip, Lock, Crown, Save
+  Play, MessageSquare, Users, Mic, MicOff, StopCircle, CheckCircle2, File, Paperclip, Lock, Crown, Save, FolderOpen
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import html2canvas from 'html2canvas';
@@ -21,6 +21,10 @@ import { saveInterviewRecord } from '../services/interviewRecordService';
 import type { SavedInterviewRecord } from '../services/interviewRecordService';
 import { useAuth } from '../contexts/AuthContext';
 import { checkUsageLimit } from '../services/authService';
+import { getSavedResumeBodyMarkdown } from '../services/resumeService';
+import SavedResumePickModal, { type SavedResumePickMode } from './SavedResumePickModal';
+import SavedJdPickModal from './SavedJdPickModal';
+import type { SavedResume, SavedJd } from '../types';
 
 // Markdown 预处理：确保标题、列表等块级元素前后有空行，增强渲染鲁棒性
 const normalizeMarkdown = (text: string): string => {
@@ -33,6 +37,15 @@ const normalizeMarkdown = (text: string): string => {
     .replace(/([^\n\-\*\d])\n([\-\*]\s)/g, '$1\n\n$2')
     .replace(/([^\n\-\*\d])\n(\d+\.\s)/g, '$1\n\n$2');
 };
+
+/** 解析面评与推荐反问；兼容模型输出的分隔符变体（空格、大小写） */
+const SECTION_DIVIDER_PATTERN = /={3,}\s*SECTION_DIVIDER\s*={3,}/i;
+function splitSummaryReportAndQuestions(fullContent: string): [string, string] {
+  const parts = fullContent.split(SECTION_DIVIDER_PATTERN);
+  const reportContent = parts[0] ?? '';
+  const questionsContent = parts.length > 1 ? parts.slice(1).join('').trim() : '';
+  return [reportContent, questionsContent];
+}
 
 // 文件数据类型
 interface FileData {
@@ -48,6 +61,8 @@ interface InterviewChatProps {
   initialJdFile?: FileData | null;
   initialResumeFile?: FileData | null;
   onShowVIPModal?: () => void;
+  /** 未登录时从简历库载入会调用，例如打开登录弹窗 */
+  onRequireLogin?: () => void;
   viewingRecord?: SavedInterviewRecord | null;
 }
 
@@ -76,6 +91,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
   initialJdFile = null,
   initialResumeFile = null,
   onShowVIPModal,
+  onRequireLogin,
   viewingRecord = null
 }) => {
   const { user, profile } = useAuth();
@@ -108,7 +124,43 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
   const [fileError, setFileError] = useState<string | null>(null);
   const resumeFileInputRef = useRef<HTMLInputElement>(null);
   const jdFileInputRef = useRef<HTMLInputElement>(null);
-  
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [jdLibraryOpen, setJdLibraryOpen] = useState(false);
+
+  const handleLibraryPick = useCallback((r: SavedResume, mode: SavedResumePickMode) => {
+    if (mode === 'resume' || mode === 'both') {
+      setResumeText(getSavedResumeBodyMarkdown(r));
+      setResumeFile(null);
+    }
+    if (mode === 'jd' || mode === 'both') {
+      setJdText(r.job_description || '');
+      setJdFile(null);
+    }
+  }, []);
+
+  const openResumeLibrary = useCallback(() => {
+    if (!user?.id) {
+      if (onRequireLogin) onRequireLogin();
+      else setFileError('请先登录后再从简历库载入');
+      return;
+    }
+    setLibraryOpen(true);
+  }, [user?.id, onRequireLogin]);
+
+  const openJdLibrary = useCallback(() => {
+    if (!user?.id) {
+      if (onRequireLogin) onRequireLogin();
+      else setFileError('请先登录后再从 JD 库载入');
+      return;
+    }
+    setJdLibraryOpen(true);
+  }, [user?.id, onRequireLogin]);
+
+  const handleJdLibraryPick = useCallback((item: SavedJd) => {
+    setJdText(item.content);
+    setJdFile(null);
+  }, []);
+
   // 补充信息状态（薪资、到岗时间等）
   const [supplementInfo, setSupplementInfo] = useState<InterviewSupplementInfo>({
     currentSalary: '',
@@ -150,6 +202,8 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
   const bottomRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  /** 防止连点「开始面试」导致并发两场、消息串轮次 */
+  const interviewStartInFlightRef = useRef(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
   const inputTextareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -444,6 +498,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
 
   // 纯模拟模式开始面试
   const handleStartSimulationInterview = useCallback(async () => {
+    if (interviewStartInFlightRef.current) return;
     if (!resumeText.trim() || !jdText.trim()) {
       setMessages(prev => [...prev, {
         type: 'error',
@@ -468,6 +523,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
       }
     }
 
+    interviewStartInFlightRef.current = true;
     setStatus('running');
     setShowInputPanel(false);
     setMessages([]);
@@ -564,11 +620,14 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
           }
         }
       }
+    } finally {
+      interviewStartInFlightRef.current = false;
     }
   }, [resumeText, jdText, settings, supplementInfo, user, onShowVIPModal]);
 
   // 人机交互模式开始面试
   const handleStartInteractiveInterview = useCallback(async () => {
+    if (interviewStartInFlightRef.current) return;
     if (!resumeText.trim() || !jdText.trim()) {
       setMessages(prev => [...prev, {
         type: 'error',
@@ -593,6 +652,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
       }
     }
 
+    interviewStartInFlightRef.current = true;
     setStatus('running');
     setShowInputPanel(false);
     setMessages([]);
@@ -691,6 +751,8 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
           }
         }
       }
+    } finally {
+      interviewStartInFlightRef.current = false;
     }
   }, [resumeText, jdText, settings, supplementInfo, onShowVIPModal]);
 
@@ -1274,7 +1336,15 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
             </div>
             <div className="bg-white border border-zinc-200 rounded-lg px-4 py-3">
               <div className="text-[13px] text-zinc-800 prose prose-sm max-w-none prose-zinc">
-                <ReactMarkdown>{normalizeMarkdown(content || '...')}</ReactMarkdown>
+                <ReactMarkdown>
+                  {normalizeMarkdown(
+                    content?.trim()
+                      ? content
+                      : isStreaming
+                        ? '…'
+                        : '（本段未生成有效内容，请重试面试或稍后再试）'
+                  )}
+                </ReactMarkdown>
               </div>
             </div>
           </div>
@@ -1306,7 +1376,17 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
                 : 'bg-zinc-50 border-zinc-200'
             }`}>
               <div className="text-[13px] text-zinc-800 prose prose-sm max-w-none prose-zinc">
-                <ReactMarkdown>{normalizeMarkdown(content || '...')}</ReactMarkdown>
+                <ReactMarkdown>
+                  {normalizeMarkdown(
+                    content?.trim()
+                      ? content
+                      : isStreaming
+                        ? '…'
+                        : isUserAnswer
+                          ? ''
+                          : '（本段未生成有效内容，请重试面试或稍后再试）'
+                  )}
+                </ReactMarkdown>
               </div>
             </div>
           </div>
@@ -1317,7 +1397,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
     if (type === 'summary') {
       // 解析评估报告和反问建议两个部分
       const fullContent = content || '正在生成评估报告...';
-      const [reportContent, questionsContent] = fullContent.split('===SECTION_DIVIDER===');
+      const [reportContent, questionsContent] = splitSummaryReportAndQuestions(fullContent);
       const hasQuestionsSection = questionsContent && questionsContent.trim().length > 0;
       
       return (
@@ -1359,6 +1439,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
   };
 
   return (
+    <>
     <div className="h-[calc(100vh-80px)] flex flex-col bg-white">
       {/* 使用限制提示弹窗 */}
       {usageLimitError && (
@@ -1649,18 +1730,27 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
 
               {/* JD Input - 与简历优化页面顺序一致 */}
               <div className="space-y-2">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-2">
                   <label className="text-[13px] font-medium text-zinc-700 flex items-center gap-1.5">
                     <Briefcase size={13} className="text-zinc-400" />
                     目标岗位 JD
                   </label>
-                  <button 
-                    onClick={() => jdFileInputRef.current?.click()} 
-                    disabled={processingState.jd} 
-                    className={`text-[12px] text-zinc-400 hover:text-zinc-900 font-medium flex items-center gap-1 transition-colors ${processingState.jd ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  >
-                    <Upload size={11} /> 上传文件
-                  </button>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={openJdLibrary}
+                      className="text-[12px] text-zinc-500 hover:text-zinc-900 font-medium flex items-center gap-1 transition-colors"
+                    >
+                      <Briefcase size={11} /> 从 JD 库
+                    </button>
+                    <button 
+                      onClick={() => jdFileInputRef.current?.click()} 
+                      disabled={processingState.jd} 
+                      className={`text-[12px] text-zinc-400 hover:text-zinc-900 font-medium flex items-center gap-1 transition-colors ${processingState.jd ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      <Upload size={11} /> 上传文件
+                    </button>
+                  </div>
                 </div>
                 {/* JD 完整度提示 - 低调灰色 */}
                 <p className="text-[11px] text-zinc-400 leading-relaxed px-1">
@@ -1686,18 +1776,27 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
 
               {/* Resume Input */}
               <div className="space-y-2">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-2">
                   <label className="text-[13px] font-medium text-zinc-700 flex items-center gap-1.5">
                     <FileText size={13} className="text-zinc-400" />
                     你的简历
                   </label>
-                  <button 
-                    onClick={() => resumeFileInputRef.current?.click()} 
-                    disabled={processingState.resume} 
-                    className={`text-[12px] text-zinc-400 hover:text-zinc-900 font-medium flex items-center gap-1 transition-colors ${processingState.resume ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  >
-                    <Upload size={11} /> 上传文件
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={openResumeLibrary}
+                      className="text-[12px] text-zinc-500 hover:text-zinc-900 font-medium flex items-center gap-1 transition-colors"
+                    >
+                      <FolderOpen size={11} /> 从简历库
+                    </button>
+                    <button 
+                      onClick={() => resumeFileInputRef.current?.click()} 
+                      disabled={processingState.resume} 
+                      className={`text-[12px] text-zinc-400 hover:text-zinc-900 font-medium flex items-center gap-1 transition-colors ${processingState.resume ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      <Upload size={11} /> 上传文件
+                    </button>
+                  </div>
                 </div>
                 <input 
                   type="file" 
@@ -1961,6 +2060,26 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
         </div>
       )}
     </div>
+    {user?.id && (
+      <SavedResumePickModal
+        isOpen={libraryOpen}
+        onClose={() => setLibraryOpen(false)}
+        userId={user.id}
+        modes={['resume']}
+        title="从简历库载入简历"
+        onPick={handleLibraryPick}
+      />
+    )}
+    {user?.id && (
+      <SavedJdPickModal
+        isOpen={jdLibraryOpen}
+        onClose={() => setJdLibraryOpen(false)}
+        userId={user.id}
+        title="从 JD 库载入"
+        onPick={handleJdLibraryPick}
+      />
+    )}
+    </>
   );
 };
 

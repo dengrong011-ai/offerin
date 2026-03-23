@@ -213,7 +213,13 @@ export const generateSign = (...params: string[]): string => {
 
 // ============ 产品配置 ============
 
-export type XorPayProductType = 'vip_sprint' | 'vip_monthly' | 'resume_download' | 'interview_export';
+export type XorPayProductType =
+  | 'vip_sprint'
+  | 'vip_monthly'
+  | 'resume_pass_10d'
+  | 'full_monthly'
+  | 'resume_download'
+  | 'interview_export';
 
 export interface XorPayProduct {
   id: XorPayProductType;
@@ -226,17 +232,31 @@ export interface XorPayProduct {
 export const XORPAY_PRODUCTS: Record<XorPayProductType, XorPayProduct> = {
   vip_sprint: {
     id: 'vip_sprint',
-    name: '冲刺计划',
+    name: '冲刺计划（老用户）',
     price: '19.90',
     priceInCents: 1990,
-    description: '10天无限简历诊断、模拟面试、PDF导出',
+    description: '老 VIP 权益续期 10 天',
   },
   vip_monthly: {
     id: 'vip_monthly',
-    name: 'VIP月度会员',
+    name: 'VIP月度会员（老用户）',
     price: '29.90',
     priceInCents: 2990,
-    description: '无限简历诊断、模拟面试无限次、PDF导出',
+    description: '老 VIP 权益续期 30 天',
+  },
+  resume_pass_10d: {
+    id: 'resume_pass_10d',
+    name: '简历畅改·10天',
+    price: '9.90',
+    priceInCents: 990,
+    description: '10 天内最多 50 次简历诊断；划选编辑不限；全局重构随诊断链路',
+  },
+  full_monthly: {
+    id: 'full_monthly',
+    name: '全局畅享·月度',
+    price: '39.90',
+    priceInCents: 3990,
+    description: '每月 30 场面试、50 次职业探索成功、50 次简历侧用量（诊断+划选+全局重构）',
   },
   resume_download: {
     id: 'resume_download',
@@ -288,7 +308,13 @@ const createLocalOrder = async (
   }
 
   try {
-    const productType = (productId === 'vip_monthly' || productId === 'vip_sprint') ? 'vip' : 'single';
+    const productType =
+      productId === 'vip_monthly' ||
+      productId === 'vip_sprint' ||
+      productId === 'resume_pass_10d' ||
+      productId === 'full_monthly'
+        ? 'vip'
+        : 'single';
     const { data, error } = await supabase
       .from('payment_orders')
       .insert({
@@ -331,16 +357,14 @@ const updateOrderXorPayId = async (
 
 /**
  * 创建 XorPay 支付订单（微信扫码）
- * 通过服务端 API 调用，避免 CORS 问题
- * 
+ * 通过服务端 API 调用，避免 CORS 问题（异步回调 URL 由服务端 XORPAY_NOTIFY_URL 固定）
+ *
  * @param userId 用户ID
  * @param productId 产品ID
- * @param notifyUrl 异步回调地址
  */
 export const createXorPayOrder = async (
   userId: string,
-  productId: XorPayProductType,
-  notifyUrl: string
+  productId: XorPayProductType
 ): Promise<XorPayOrderResult> => {
   const product = XORPAY_PRODUCTS[productId];
   if (!product) {
@@ -360,7 +384,6 @@ export const createXorPayOrder = async (
       body: JSON.stringify({
         userId,
         productId,
-        notifyUrl,
       }),
     });
 
@@ -414,9 +437,14 @@ export const queryXorPayOrderStatus = async (
 
   try {
     // 通过服务端 API 查询，避免前端暴露 APP_SECRET
+    const { data: { session } } = await supabase.auth.getSession();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (session?.access_token) {
+      headers['Authorization'] = `Bearer ${session.access_token}`;
+    }
     const response = await fetch('/api/xorpay/query', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ orderId }),
     });
 
@@ -466,10 +494,14 @@ export const handlePaymentSuccess = async (
     if (orderError) throw orderError;
 
     // 2. 根据产品类型处理
-    if (productId === 'vip_monthly' || productId === 'vip_sprint') {
-      // VIP 会员：更新会员状态
-      const duration = productId === 'vip_sprint' ? 10 : 30;
-      // 如果当前仍在 VIP 有效期内，从现有到期时间叠加；否则从当前时间开始
+    const subMap: Record<string, { membership: string; days: number }> = {
+      vip_sprint: { membership: 'vip', days: 10 },
+      vip_monthly: { membership: 'vip', days: 30 },
+      resume_pass_10d: { membership: 'resume_pass', days: 10 },
+      full_monthly: { membership: 'full_monthly', days: 30 },
+    };
+    if (subMap[productId]) {
+      const { membership, days } = subMap[productId];
       const now = new Date();
       let baseDate = now;
       const { data: profileData } = await supabase
@@ -477,25 +509,25 @@ export const handlePaymentSuccess = async (
         .select('vip_expires_at, membership_type')
         .eq('id', userId)
         .single();
-      if (profileData?.membership_type === 'vip' && profileData?.vip_expires_at) {
+      if (profileData?.membership_type === membership && profileData?.vip_expires_at) {
         const existingExpiry = new Date(profileData.vip_expires_at);
         if (existingExpiry > now) {
           baseDate = existingExpiry;
         }
       }
-      const expiresAt = new Date(baseDate.getTime() + duration * 24 * 60 * 60 * 1000);
+      const expiresAt = new Date(baseDate.getTime() + days * 24 * 60 * 60 * 1000);
 
       const { error: profileError } = await supabase
         .from('profiles')
         .update({
-          membership_type: 'vip',
+          membership_type: membership,
           vip_expires_at: expiresAt.toISOString(),
           updated_at: new Date().toISOString(),
         })
         .eq('id', userId);
 
       if (profileError) throw profileError;
-    } else if (productId === 'resume_download') {
+    } else if (productId === 'resume_download' || productId === 'interview_export') {
       // 单次购买：记录购买记录
       const { error: purchaseError } = await supabase
         .from('single_purchases')

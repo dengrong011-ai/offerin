@@ -1,5 +1,6 @@
 
 import { createAIClient, type AIClient } from "./geminiProxy";
+import { FALLBACK_AFTER_3_1_PRO, MODEL_PRIMARY_INTERVIEW } from "./geminiModelRouting";
 import type { InterviewMessage, InterviewSettings, InterviewMode, InterviewSupplementInfo } from '../types';
 import {
   saveInterviewHistory as saveInterviewHistoryToService,
@@ -64,7 +65,7 @@ export const saveInterviewHistory = (
     const trimmedHistory = allHistory.slice(0, 50);
     localStorage.setItem('offer_ing_interview_history', JSON.stringify(trimmedHistory));
   } catch (error) {
-    console.error('保存面试历史失败:', error);
+    devWarn('保存面试历史失败:', error);
   }
 };
 
@@ -97,22 +98,26 @@ const RETRY_CONFIG = {
   maxRetries: 2,
   baseDelay: 1500,
   maxDelay: 5000,
+  networkRetries: 3,
+  networkBaseDelay: 2000,
+  networkMaxDelay: 8000,
 };
 
 /**
- * 仅主模型（各调用处写的 gemini-3.1-pro-preview）失败后的降级顺序，不要包含主模型本身。
+ * 仅主模型（MODEL_PRIMARY_INTERVIEW）失败后的降级顺序，不要包含主模型本身。
  * 实际流程：① 先请求主模型，最多重试 RETRY_CONFIG.maxRetries 次（429/404 不重试同模型，直接进②）
  * ② 按顺序尝试下列模型，直到成功或全部失败。
  * 另：走 /api/gemini/proxy 时，服务端对单次请求还有一层 429/404 → 2.5pro→2.5flash→2.0 的 fallback（见 proxy.ts）。
  */
-/** 使用官方稳定 Model code：preview-05-06 等旧 ID 在 v1beta 易 404，见 ai.google.dev 文档 */
-const FALLBACK_MODELS = [
-  'gemini-2.5-pro',
-  'gemini-2.5-flash',
-  'gemini-2.0-flash',
-];
+/** 面试保持 3.1 主路径，失败后与诊断一致 */
+const INTERVIEW_FALLBACK_TAIL = [...FALLBACK_AFTER_3_1_PRO];
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+/** 生产环境不输出日志（隐藏模型名等敏感信息） */
+const isDev = import.meta.env.DEV;
+const devLog = (...args: any[]) => { if (isDev) console.log(...args); };
+const devWarn = (...args: any[]) => { if (isDev) console.warn(...args); };
 
 const is429Error = (error: any): boolean => {
   const message = error?.message || '';
@@ -125,10 +130,50 @@ const is404OrEntityNotFound = (error: any): boolean => {
   return message.includes('404') || message.includes('Requested entity was not found') || message.includes('ENTITY_NOT_FOUND');
 };
 
+/** 判断是否为网络层错误（客户端网络中断 / 连接不上服务器，换模型无意义） */
+const isNetworkError = (error: any): boolean => {
+  const message = error?.message || '';
+  return message.includes('Failed to fetch') ||
+         message.includes('network') ||
+         message.includes('ERR_NETWORK') ||
+         message.includes('ECONNRESET') ||
+         message.includes('ECONNREFUSED') ||
+         message.includes('ENOTFOUND') ||
+         message.includes('TypeError: fetch') ||
+         message.includes('Load failed') ||
+         message.includes('aborted');
+};
+
+/** 代理流式 { text } 与 SDK 原生流式 candidates[].parts[] 兼容 */
+function extractStreamChunkText(chunk: unknown): string {
+  if (!chunk || typeof chunk !== 'object') return '';
+  const c = chunk as Record<string, unknown>;
+  const parts = (c.candidates as Array<{ content?: { parts?: Array<{ text?: string }> } }> | undefined)?.[0]?.content?.parts;
+  if (Array.isArray(parts) && parts.length > 0) {
+    const joined = parts.map((p) => (typeof p?.text === 'string' ? p.text : '')).join('');
+    if (joined.length > 0) return joined;
+  }
+  if (typeof c.text === 'string') return c.text;
+  return '';
+}
+
+/** 非流式：代理 { text } 与 SDK candidates.parts 兼容 */
+function extractGenerateText(res: unknown): string {
+  if (!res || typeof res !== 'object') return '';
+  const r = res as Record<string, unknown>;
+  if (typeof r.text === 'string') return r.text;
+  const parts = (r.candidates as Array<{ content?: { parts?: Array<{ text?: string }> } }> | undefined)?.[0]?.content?.parts;
+  if (Array.isArray(parts)) {
+    return parts.map((p) => (typeof p?.text === 'string' ? p.text : '')).join('');
+  }
+  return '';
+}
+
 const isRetryableError = (error: any): boolean => {
   const message = error?.message || '';
   const code = error?.code;
   if (is429Error(error)) return false; // 429 不重试同一模型，但会走 fallback
+  if (isNetworkError(error)) return true; // 网络错误可重试
   return code === 503 ||
          message.includes('503') ||
          message.includes('502') ||
@@ -136,12 +181,7 @@ const isRetryableError = (error: any): boolean => {
          message.includes('UNAVAILABLE') ||
          message.includes('high demand') ||
          message.includes('overloaded') ||
-         message.includes('Failed to fetch') ||
-         message.includes('TypeError') ||
-         message.includes('network') ||
-         message.includes('ECONNRESET') ||
          message.includes('timeout') ||
-         message.includes('aborted') ||
          message.includes('504') ||
          message.includes('TIMEOUT');
 };
@@ -152,66 +192,82 @@ async function generateContentStreamWithRetry(
     model: string;
     contents: any[];
     config: any;
+    fallbackModels?: string[];
+    interviewSessionId?: string;
   },
   abortSignal?: AbortSignal
 ): Promise<AsyncIterable<any>> {
+  const primary = options.model;
+  const tail = options.fallbackModels ?? INTERVIEW_FALLBACK_TAIL;
+  const tryOrder = [primary, ...tail.filter((m) => m !== primary)];
+
   let lastError: Error | null = null;
+  let networkRetryBudget = RETRY_CONFIG.networkRetries;
 
-  for (let attempt = 0; attempt < RETRY_CONFIG.maxRetries; attempt++) {
-    if (abortSignal?.aborted) {
-      throw new Error('已取消');
-    }
+  for (let i = 0; i < tryOrder.length; i++) {
+    const M = tryOrder[i];
+    const proxyFallbacks = tryOrder.slice(i + 1);
 
-    try {
-      const stream = await client.generateContentStream(options);
-      return stream;
-    } catch (error: any) {
-      lastError = error;
-      console.warn(`API 调用失败 (尝试 ${attempt + 1}/${RETRY_CONFIG.maxRetries}):`, error.message);
-
-      if (is429Error(error)) break; // 429 不重试，直接进入 fallback
-      if (is404OrEntityNotFound(error)) break; // 404 不重试，直接进入 fallback
-      if (!isRetryableError(error)) {
-        throw error;
+    for (let attempt = 0; attempt < RETRY_CONFIG.maxRetries; attempt++) {
+      if (abortSignal?.aborted) {
+        throw new Error('已取消');
       }
 
-      if (attempt < RETRY_CONFIG.maxRetries - 1) {
-        const delayMs = Math.min(
-          RETRY_CONFIG.baseDelay * Math.pow(2, attempt) + Math.random() * 1000,
-          RETRY_CONFIG.maxDelay
-        );
-        console.log(`等待 ${Math.round(delayMs / 1000)} 秒后重试...`);
-        await delay(delayMs);
-      }
-    }
-  }
-
-  // 主模型重试全部失败后，尝试备用模型（含 429/404 时直接 fallback，不同配额池）
-  if (isRetryableError(lastError) || is429Error(lastError) || is404OrEntityNotFound(lastError)) {
-    for (const fallbackModel of FALLBACK_MODELS) {
-      if (fallbackModel === options.model) continue;
-      if (abortSignal?.aborted) throw new Error('已取消');
-      console.log(`主模型持续失败，尝试备用模型: ${fallbackModel}`);
       try {
-        await delay(500);
         const stream = await client.generateContentStream({
-          ...options,
-          model: fallbackModel,
+          model: M,
+          contents: options.contents,
+          config: options.config,
+          fallbackModels: proxyFallbacks,
+          ...(options.interviewSessionId ? { interviewSessionId: options.interviewSessionId } : {}),
         });
-        if (import.meta.env.DEV) {
-          console.log(
-            `%c[Offerin Gemini]%c 面试客户端重试成功，实际模型: %c${fallbackModel}%c（主模型 ${options.model} 未成功）`,
-            'color:#10b981;font-weight:bold',
-            '',
-            'color:#f97316;font-weight:600',
-            ''
-          );
-        }
         return stream;
-      } catch (fallbackError: any) {
-        console.warn(`备用模型 ${fallbackModel} 也失败:`, fallbackError.message);
-        lastError = fallbackError;
+      } catch (error: any) {
+        lastError = error;
+        devWarn(
+          `API 调用失败 (模型 ${M}, 尝试 ${attempt + 1}/${RETRY_CONFIG.maxRetries}):`,
+          error.message
+        );
+
+        // 网络错误：不切模型，用更长间隔重试
+        if (isNetworkError(error) && networkRetryBudget > 0) {
+          networkRetryBudget--;
+          const netDelay = Math.min(
+            RETRY_CONFIG.networkBaseDelay * Math.pow(1.5, RETRY_CONFIG.networkRetries - networkRetryBudget - 1) + Math.random() * 1000,
+            RETRY_CONFIG.networkMaxDelay
+          );
+          devLog(`网络异常，${Math.round(netDelay / 1000)} 秒后重试（剩余 ${networkRetryBudget} 次）...`);
+          await delay(netDelay);
+          attempt--;
+          continue;
+        }
+
+        if (is429Error(error)) break;
+        if (is404OrEntityNotFound(error)) break;
+        if (!isRetryableError(error)) {
+          throw error;
+        }
+
+        if (attempt < RETRY_CONFIG.maxRetries - 1) {
+          const delayMs = Math.min(
+            RETRY_CONFIG.baseDelay * Math.pow(2, attempt) + Math.random() * 1000,
+            RETRY_CONFIG.maxDelay
+          );
+          devLog(`等待 ${Math.round(delayMs / 1000)} 秒后重试...`);
+          await delay(delayMs);
+        }
       }
+    }
+
+    // 网络错误耗尽重试预算后直接抛出
+    if (lastError && isNetworkError(lastError) && networkRetryBudget <= 0) {
+      break;
+    }
+
+    if (i < tryOrder.length - 1) {
+      if (abortSignal?.aborted) throw new Error('已取消');
+      devLog(`切换候选模型: ${tryOrder[i + 1]}`);
+      await delay(500);
     }
   }
 
@@ -240,6 +296,8 @@ export interface InteractiveInterviewState {
   conversationHistory: Array<{role: string, content: string}>;
   currentRound: number;
   isComplete: boolean;
+  /** 与代理 usage_logs 场次一致；人机模式整场共用 */
+  interviewSessionId: string;
   supplementInfo?: InterviewSupplementInfo;
 }
 
@@ -254,6 +312,7 @@ export const runInterview = async (
   supplementInfo?: InterviewSupplementInfo
 ) => {
   const client = createAIClient('interview');
+  const interviewSessionId = crypto.randomUUID();
   const conversationHistory: Array<{role: string, content: string}> = [];
   const { totalRounds, interviewerRole } = settings;
 
@@ -309,22 +368,26 @@ export const runInterview = async (
       let interviewerResponse = '';
       const simulationInterviewerUserText =
         roundNum === 1
-          ? '请根据当前面试阶段，提出你的问题。'
+          ? '请开始面试（开场第 1 轮）。格式与约束见系统指令与「本轮要求」。'
           : '请阅读对话历史中候选人上一轮的回答。若其中向你提出问题、反问或想了解团队/业务，请先真诚、简要回应，再自然衔接你的下一个考察问题；禁止无视对方追问、突兀跳到简历上另一段无关经历。请直接输出你作为面试官的完整发言。';
       try {
         const stream = await generateContentStreamWithRetry(client, {
-          model: "gemini-3.1-pro-preview",
+          model: MODEL_PRIMARY_INTERVIEW,
           contents: [{ parts: [{ text: simulationInterviewerUserText }] }],
           config: {
             systemInstruction: interviewerPrompt,
-            temperature: PHASE_TEMPERATURE[phase] ?? 0.8,
+            temperature:
+              roundNum === 1
+                ? Math.min(PHASE_TEMPERATURE[phase] ?? 0.8, 0.72)
+                : PHASE_TEMPERATURE[phase] ?? 0.8,
             safetySettings: SAFETY_SETTINGS,
           },
+          interviewSessionId,
         }, abortSignal);
 
         for await (const chunk of stream) {
           if (abortSignal?.aborted) break;
-          const text = chunk.text || '';
+          const text = extractStreamChunkText(chunk);
           interviewerResponse += text;
           callbacks.onMessage({
             type: 'interviewer',
@@ -335,7 +398,7 @@ export const runInterview = async (
           });
         }
       } catch (error: any) {
-        console.error('Interviewer generation error:', error);
+        devWarn('Interviewer generation error:', error);
         throw error;
       }
 
@@ -367,18 +430,19 @@ export const runInterview = async (
       let intervieweeResponse = '';
       try {
         const stream = await generateContentStreamWithRetry(client, {
-          model: "gemini-3.1-pro-preview",
+          model: MODEL_PRIMARY_INTERVIEW,
           contents: [{ parts: [{ text: `面试官的问题：\n${interviewerResponse}\n\n请专业地回答这个问题。` }] }],
           config: {
             systemInstruction: intervieweePrompt,
             temperature: 0.7,
             safetySettings: SAFETY_SETTINGS,
           },
+          interviewSessionId,
         }, abortSignal);
 
         for await (const chunk of stream) {
           if (abortSignal?.aborted) break;
-          const text = chunk.text || '';
+          const text = extractStreamChunkText(chunk);
           intervieweeResponse += text;
           callbacks.onMessage({
             type: 'interviewee',
@@ -389,11 +453,44 @@ export const runInterview = async (
           });
         }
       } catch (error: any) {
-        console.error('Interviewee generation error:', error);
+        devWarn('Interviewee generation error:', error);
         throw error;
       }
 
       if (abortSignal?.aborted) return;
+
+      if (!intervieweeResponse.trim() && !abortSignal?.aborted) {
+        try {
+          const q =
+            interviewerResponse.length > 20000
+              ? `${interviewerResponse.slice(0, 20000)}\n\n[… 上文已截断]`
+              : interviewerResponse;
+          const res = await client.generateContent({
+            model: MODEL_PRIMARY_INTERVIEW,
+            contents: [
+              {
+                parts: [
+                  {
+                    text: `面试官的问题：\n${q}\n\n请用中文完整回答，至少 4 句话，禁止空内容或仅省略号。`,
+                  },
+                ],
+              },
+            ],
+            config: {
+              systemInstruction:
+                intervieweePrompt +
+                '\n\n【重要】你必须输出一段完整候选人回答，禁止输出空字符串、仅「…」或无话术的占位。',
+              temperature: 0.65,
+              safetySettings: SAFETY_SETTINGS,
+              fallbackModels: INTERVIEW_FALLBACK_TAIL,
+            },
+            interviewSessionId,
+          });
+          intervieweeResponse = extractGenerateText(res).trim();
+        } catch (e) {
+          devWarn('Interviewee non-stream fallback failed:', e);
+        }
+      }
 
       callbacks.onMessage({
         type: 'interviewee',
@@ -422,18 +519,19 @@ export const runInterview = async (
     let summaryContent = '';
     try {
       const stream = await generateContentStreamWithRetry(client, {
-        model: "gemini-3.1-pro-preview",
+        model: MODEL_PRIMARY_INTERVIEW,
         contents: [{ parts: [{ text: summaryPrompt }] }],
         config: {
           systemInstruction: `你是 ${roleConfig.name}（${roleConfig.title}）。${roleConfig.systemInstruction.substring(0, 200)}`,
           temperature: 0.6,
           safetySettings: SAFETY_SETTINGS,
         },
+        interviewSessionId,
       }, abortSignal);
 
       for await (const chunk of stream) {
         if (abortSignal?.aborted) break;
-        const text = chunk.text || '';
+        const text = extractStreamChunkText(chunk);
         summaryContent += text;
         callbacks.onMessage({
           type: 'summary',
@@ -443,7 +541,7 @@ export const runInterview = async (
         });
       }
     } catch (error: any) {
-      console.error('Summary generation error:', error);
+      devWarn('Summary generation error:', error);
       throw error;
     }
 
@@ -466,13 +564,13 @@ export const runInterview = async (
       const { questions, experiences } = extractInterviewContent(conversationHistory);
       saveInterviewHistory(resume, questions, experiences);
     } catch (e) {
-      console.error('保存面试历史失败:', e);
+      devWarn('保存面试历史失败:', e);
     }
 
     callbacks.onComplete();
 
   } catch (error: any) {
-    console.error('Interview error:', error);
+    devWarn('Interview error:', error);
     callbacks.onError(error.message || '面试过程出错');
   }
 };
@@ -488,6 +586,7 @@ export const generateFirstQuestion = async (
   supplementInfo?: InterviewSupplementInfo
 ): Promise<InteractiveInterviewState | null> => {
   const client = createAIClient('interview');
+  const interviewSessionId = crypto.randomUUID();
   const { totalRounds, interviewerRole } = settings;
   const conversationHistory: Array<{role: string, content: string}> = [];
   const currentRound = 1;
@@ -531,18 +630,28 @@ export const generateFirstQuestion = async (
   let interviewerResponse = '';
   try {
     const stream = await generateContentStreamWithRetry(client, {
-      model: "gemini-3.1-pro-preview",
-      contents: [{ parts: [{ text: "请根据当前面试阶段，提出你的问题。" }] }],
+      model: MODEL_PRIMARY_INTERVIEW,
+      contents: [
+        {
+          parts: [
+            {
+              text: `请开始面试（开场第 1 轮）。格式与禁止项见系统指令与「本轮要求」。`,
+            },
+          ],
+        },
+      ],
       config: {
         systemInstruction: interviewerPrompt,
-        temperature: PHASE_TEMPERATURE[phase] ?? 0.8,
+        // 开场首轮略降温度，减少「炫技式长问题」漂移
+        temperature: Math.min(PHASE_TEMPERATURE[phase] ?? 0.8, 0.72),
         safetySettings: SAFETY_SETTINGS,
       },
+      interviewSessionId,
     }, abortSignal);
 
     for await (const chunk of stream) {
       if (abortSignal?.aborted) return null;
-      const text = chunk.text || '';
+      const text = extractStreamChunkText(chunk);
       interviewerResponse += text;
       callbacks.onMessage({
         type: 'interviewer',
@@ -553,7 +662,7 @@ export const generateFirstQuestion = async (
       });
     }
   } catch (error: any) {
-    console.error('First question generation error:', error);
+    devWarn('First question generation error:', error);
     callbacks.onError(error.message || '生成问题出错');
     return null;
   }
@@ -578,6 +687,7 @@ export const generateFirstQuestion = async (
     conversationHistory,
     currentRound,
     isComplete: false,
+    interviewSessionId,
     supplementInfo
   };
 };
@@ -589,7 +699,7 @@ export const processUserAnswer = async (
   abortSignal?: AbortSignal
 ): Promise<InteractiveInterviewState | null> => {
   const client = createAIClient('interview');
-  const { resume, jobDescription, settings, conversationHistory, currentRound, supplementInfo } = state;
+  const { resume, jobDescription, settings, conversationHistory, currentRound, supplementInfo, interviewSessionId } = state;
   const { totalRounds, interviewerRole } = settings;
 
   callbacks.onMessage({
@@ -619,18 +729,19 @@ export const processUserAnswer = async (
     let summaryContent = '';
     try {
       const stream = await generateContentStreamWithRetry(client, {
-        model: "gemini-3.1-pro-preview",
+        model: MODEL_PRIMARY_INTERVIEW,
         contents: [{ parts: [{ text: summaryPrompt }] }],
         config: {
           systemInstruction: `你是 ${roleConfig.name}（${roleConfig.title}）。注意：面试者的回答是真实用户输入的，请基于其实际表现进行评估。${roleConfig.systemInstruction.substring(0, 200)}`,
           temperature: 0.6,
           safetySettings: SAFETY_SETTINGS,
         },
+        interviewSessionId,
       }, abortSignal);
 
       for await (const chunk of stream) {
         if (abortSignal?.aborted) return null;
-        const text = chunk.text || '';
+        const text = extractStreamChunkText(chunk);
         summaryContent += text;
         callbacks.onMessage({
           type: 'summary',
@@ -640,7 +751,7 @@ export const processUserAnswer = async (
         });
       }
     } catch (error: any) {
-      console.error('Summary generation error:', error);
+      devWarn('Summary generation error:', error);
       callbacks.onError(error.message || '生成评估报告出错');
       return null;
     }
@@ -664,7 +775,7 @@ export const processUserAnswer = async (
       const { questions, experiences } = extractInterviewContent(conversationHistory);
       saveInterviewHistory(resume, questions, experiences);
     } catch (e) {
-      console.error('保存面试历史失败:', e);
+      devWarn('保存面试历史失败:', e);
     }
 
     callbacks.onComplete();
@@ -718,18 +829,19 @@ export const processUserAnswer = async (
     : `请阅读候选人刚才的回答全文。\n若其中向你提出问题、反问或想了解团队/业务/JD 相关现状，你必须先真诚回应，再点评并衔接下一个考察问题；不要忽略对方的追问、也不要突然跳到简历上无关的另一段经历而不承上启下。\n\n候选人刚才的回答：\n${userAnswer}`;
   try {
     const stream = await generateContentStreamWithRetry(client, {
-      model: "gemini-3.1-pro-preview",
+      model: MODEL_PRIMARY_INTERVIEW,
       contents: [{ parts: [{ text: userPromptText }] }],
       config: {
         systemInstruction: feedbackPrompt,
         temperature: PHASE_TEMPERATURE[nextPhase] ?? 0.8,
         safetySettings: SAFETY_SETTINGS,
       },
+      interviewSessionId,
     }, abortSignal);
 
     for await (const chunk of stream) {
       if (abortSignal?.aborted) return null;
-      const text = chunk.text || '';
+      const text = extractStreamChunkText(chunk);
       interviewerResponse += text;
       callbacks.onMessage({
         type: 'interviewer',
@@ -740,7 +852,7 @@ export const processUserAnswer = async (
       });
     }
   } catch (error: any) {
-    console.error('Feedback generation error:', error);
+    devWarn('Feedback generation error:', error);
     callbacks.onError(error.message || '生成反馈出错');
     return null;
   }

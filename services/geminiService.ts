@@ -1,21 +1,32 @@
 
 import { createAIClient, type AIClient } from "./geminiProxy";
+import {
+  FALLBACK_AFTER_3_1_PRO,
+  FALLBACK_RESUME_EDIT,
+  FALLBACK_TRANSLATION,
+  MODEL_PRIMARY_AUTO_REWRITE,
+  MODEL_PRIMARY_DIAGNOSIS,
+  MODEL_PRIMARY_FILE_MULTIMODAL,
+  MODEL_PRIMARY_RESUME_EDIT,
+  MODEL_PRIMARY_TRANSLATION,
+} from "./geminiModelRouting";
 
 const RETRY_CONFIG = {
   maxRetries: 2,        // 主模型最多重试 2 次（快速失败，尽早尝试备用模型）
   baseDelay: 800,       // 初始等待 0.8 秒
   maxDelay: 3000,       // 最大等待 3 秒
+  networkRetries: 3,    // 网络错误额外重试次数（不切模型）
+  networkBaseDelay: 2000, // 网络错误初始等待 2 秒
+  networkMaxDelay: 8000,  // 网络错误最大等待 8 秒
 };
 
-/**
- * 主模型失败后的降级链（主模型在各 API 调用里写死为 gemini-3.1-pro-preview，不要重复写进本数组）
- * 顺序：2.5 Pro → 2.5 Flash → 2.0 Flash
- */
-const FALLBACK_MODELS = [
-  "gemini-2.5-pro",
-  "gemini-2.5-flash",
-  "gemini-2.0-flash",
-];
+/** 生产环境不输出日志（隐藏模型名等敏感信息） */
+const isDev = import.meta.env.DEV;
+const devLog = (...args: any[]) => { if (isDev) console.log(...args); };
+const devWarn = (...args: any[]) => { if (isDev) console.warn(...args); };
+
+/** 3.1 主路径之后的默认候选（与 geminiModelRouting 一致） */
+const DEFAULT_TAIL_AFTER_PRIMARY = [...FALLBACK_AFTER_3_1_PRO];
 
 // 带重试的延迟函数
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -31,143 +42,193 @@ const is404OrEntityNotFound = (error: any): boolean => {
   return message.includes('404') || message.includes('Requested entity was not found') || message.includes('ENTITY_NOT_FOUND');
 };
 
-// 判断是否为可重试的错误
+/** 判断是否为网络层错误（客户端网络中断 / 连接不上服务器，换模型无意义） */
+const isNetworkError = (error: any): boolean => {
+  const message = error?.message || '';
+  return message.includes('Failed to fetch') ||
+         message.includes('network') ||
+         message.includes('ERR_NETWORK') ||
+         message.includes('ECONNRESET') ||
+         message.includes('ECONNREFUSED') ||
+         message.includes('ENOTFOUND') ||
+         message.includes('TypeError: fetch') ||
+         message.includes('Load failed') ||
+         message.includes('aborted');
+};
+
+// 判断是否为可重试的错误（服务端暂时不可用）
 const isRetryableError = (error: any): boolean => {
   const message = error?.message || '';
   const code = error?.code;
   if (is429Error(error)) return false; // 429 不重试同一模型，但会走 fallback
+  if (isNetworkError(error)) return true; // 网络错误可重试
   return code === 503 || code === 429 ||
          message.includes('503') ||
          message.includes('UNAVAILABLE') ||
          message.includes('high demand') ||
          message.includes('overloaded') ||
-         message.includes('Failed to fetch') ||
-         message.includes('TypeError') ||
-         message.includes('network') ||
-         message.includes('ECONNRESET') ||
-         message.includes('timeout') ||
-         message.includes('aborted');
+         message.includes('timeout');
 };
 
-// 带重试的流式 API 调用（支持模型回退）
-async function generateContentStreamWithRetry(
+type RetryCallOptions = {
+  model: string;
+  contents: any[];
+  config: any;
+  /** 主模型之后的候选顺序（不含主模型）；缺省为 3.1 路径默认链 */
+  fallbackModels?: string[];
+};
+
+// 带重试的流式 API 调用（支持模型回退；与代理 fallbackModels 同步「剩余候选」）
+// 网络错误（ERR_NETWORK_CHANGED / Failed to fetch）不切模型，用更长间隔重试
+export async function generateContentStreamWithRetry(
   client: AIClient,
-  options: {
-    model: string;
-    contents: any[];
-    config: any;
-  }
+  options: RetryCallOptions
 ): Promise<AsyncIterable<any>> {
+  const primary = options.model;
+  const tail = options.fallbackModels ?? DEFAULT_TAIL_AFTER_PRIMARY;
+  const tryOrder = [primary, ...tail.filter((m) => m !== primary)];
+
   let lastError: Error | null = null;
-  
-  // 首先尝试指定的模型
-  for (let attempt = 0; attempt < RETRY_CONFIG.maxRetries; attempt++) {
-    try {
-      const stream = await client.generateContentStream(options);
-      return stream;
-    } catch (error: any) {
-      lastError = error;
-      console.warn(`API 调用失败 (尝试 ${attempt + 1}/${RETRY_CONFIG.maxRetries}):`, error.message);
-      
-      if (is429Error(error)) break; // 429 不重试，直接进入 fallback
-      if (is404OrEntityNotFound(error)) break; // 404 不重试，直接进入 fallback
-      if (!isRetryableError(error)) {
-        throw error;
-      }
-      
-      if (attempt < RETRY_CONFIG.maxRetries - 1) {
-        const delayMs = Math.min(
-          RETRY_CONFIG.baseDelay * Math.pow(2, attempt) + Math.random() * 1000,
-          RETRY_CONFIG.maxDelay
-        );
-        console.log(`等待 ${Math.round(delayMs/1000)} 秒后重试...`);
-        await delay(delayMs);
-      }
-    }
-  }
-  
-  // 主模型失败后，尝试备用模型（含 429/404 时直接 fallback，不同配额池）
-  if (isRetryableError(lastError) || is429Error(lastError) || is404OrEntityNotFound(lastError)) {
-    for (const fallbackModel of FALLBACK_MODELS) {
-      if (fallbackModel === options.model) continue; // 跳过已尝试的主模型
-      
-      console.log(`主模型持续失败，尝试备用模型: ${fallbackModel}`);
+  let networkRetryBudget = RETRY_CONFIG.networkRetries; // 全局网络重试预算
+
+  for (let i = 0; i < tryOrder.length; i++) {
+    const M = tryOrder[i];
+    const proxyFallbacks = tryOrder.slice(i + 1);
+
+    for (let attempt = 0; attempt < RETRY_CONFIG.maxRetries; attempt++) {
       try {
-        await delay(500);
         const stream = await client.generateContentStream({
-          ...options,
-          model: fallbackModel,
+          model: M,
+          contents: options.contents,
+          config: options.config,
+          fallbackModels: proxyFallbacks,
         });
-        console.log(`备用模型 ${fallbackModel} 成功`);
         return stream;
-      } catch (fallbackError: any) {
-        console.warn(`备用模型 ${fallbackModel} 也失败:`, fallbackError.message);
-        lastError = fallbackError;
+      } catch (error: any) {
+        lastError = error;
+        devWarn(
+          `API 流式失败 (模型 ${M}, 尝试 ${attempt + 1}/${RETRY_CONFIG.maxRetries}):`,
+          error.message
+        );
+
+        // 网络错误：不切模型，用更长间隔重试
+        if (isNetworkError(error) && networkRetryBudget > 0) {
+          networkRetryBudget--;
+          const netDelay = Math.min(
+            RETRY_CONFIG.networkBaseDelay * Math.pow(1.5, RETRY_CONFIG.networkRetries - networkRetryBudget - 1) + Math.random() * 1000,
+            RETRY_CONFIG.networkMaxDelay
+          );
+          devLog(`网络异常，${Math.round(netDelay / 1000)} 秒后重试（剩余 ${networkRetryBudget} 次）...`);
+          await delay(netDelay);
+          // 回退 attempt 使当前模型继续重试（不切模型）
+          attempt--;
+          continue;
+        }
+
+        if (is429Error(error)) break;
+        if (is404OrEntityNotFound(error)) break;
+        if (!isRetryableError(error)) {
+          throw error;
+        }
+
+        if (attempt < RETRY_CONFIG.maxRetries - 1) {
+          const delayMs = Math.min(
+            RETRY_CONFIG.baseDelay * Math.pow(2, attempt) + Math.random() * 1000,
+            RETRY_CONFIG.maxDelay
+          );
+          devLog(`等待 ${Math.round(delayMs / 1000)} 秒后重试...`);
+          await delay(delayMs);
+        }
       }
     }
+
+    // 如果是网络错误导致的失败，不切模型直接抛出（切了也没用）
+    if (lastError && isNetworkError(lastError) && networkRetryBudget <= 0) {
+      break;
+    }
+
+    if (i < tryOrder.length - 1) {
+      devLog(`切换候选模型: ${tryOrder[i + 1]}`);
+      await delay(500);
+    }
   }
-  
-  throw lastError || new Error('API 调用失败，所有模型均不可用');
+
+  throw lastError || new Error("API 调用失败，所有模型均不可用");
 }
 
-// 带重试的普通 API 调用（支持模型回退）
-async function generateContentWithRetry(
+/** 非流式 + 客户端模型链 + 代理内 fallback；职业探索等可复用 */
+export async function generateContentWithRetry(
   client: AIClient,
-  options: {
-    model: string;
-    contents: any[];
-    config: any;
-  }
+  options: RetryCallOptions
 ): Promise<any> {
+  const primary = options.model;
+  const tail = options.fallbackModels ?? DEFAULT_TAIL_AFTER_PRIMARY;
+  const tryOrder = [primary, ...tail.filter((m) => m !== primary)];
+
   let lastError: Error | null = null;
-  
-  for (let attempt = 0; attempt < RETRY_CONFIG.maxRetries; attempt++) {
-    try {
-      const response = await client.generateContent(options);
-      return response;
-    } catch (error: any) {
-      lastError = error;
-      console.warn(`API 调用失败 (尝试 ${attempt + 1}/${RETRY_CONFIG.maxRetries}):`, error.message);
-      
-      if (is429Error(error)) break; // 429 不重试，直接进入 fallback
-      if (is404OrEntityNotFound(error)) break; // 404 不重试，直接进入 fallback
-      if (!isRetryableError(error)) {
-        throw error;
-      }
-      
-      if (attempt < RETRY_CONFIG.maxRetries - 1) {
-        const delayMs = Math.min(
-          RETRY_CONFIG.baseDelay * Math.pow(2, attempt) + Math.random() * 1000,
-          RETRY_CONFIG.maxDelay
-        );
-        console.log(`等待 ${Math.round(delayMs/1000)} 秒后重试...`);
-        await delay(delayMs);
-      }
-    }
-  }
-  
-  // 主模型失败后，尝试备用模型（含 429/404 时直接 fallback，不同配额池）
-  if (isRetryableError(lastError) || is429Error(lastError) || is404OrEntityNotFound(lastError)) {
-    for (const fallbackModel of FALLBACK_MODELS) {
-      if (fallbackModel === options.model) continue;
-      
-      console.log(`主模型持续失败，尝试备用模型: ${fallbackModel}`);
+  let networkRetryBudget = RETRY_CONFIG.networkRetries;
+
+  for (let i = 0; i < tryOrder.length; i++) {
+    const M = tryOrder[i];
+    const proxyFallbacks = tryOrder.slice(i + 1);
+
+    for (let attempt = 0; attempt < RETRY_CONFIG.maxRetries; attempt++) {
       try {
-        await delay(500);
         const response = await client.generateContent({
-          ...options,
-          model: fallbackModel,
+          model: M,
+          contents: options.contents,
+          config: options.config,
+          fallbackModels: proxyFallbacks,
         });
-        console.log(`备用模型 ${fallbackModel} 成功`);
         return response;
-      } catch (fallbackError: any) {
-        console.warn(`备用模型 ${fallbackModel} 也失败:`, fallbackError.message);
-        lastError = fallbackError;
+      } catch (error: any) {
+        lastError = error;
+        devWarn(
+          `API 非流式失败 (模型 ${M}, 尝试 ${attempt + 1}/${RETRY_CONFIG.maxRetries}):`,
+          error.message
+        );
+
+        // 网络错误：不切模型，用更长间隔重试
+        if (isNetworkError(error) && networkRetryBudget > 0) {
+          networkRetryBudget--;
+          const netDelay = Math.min(
+            RETRY_CONFIG.networkBaseDelay * Math.pow(1.5, RETRY_CONFIG.networkRetries - networkRetryBudget - 1) + Math.random() * 1000,
+            RETRY_CONFIG.networkMaxDelay
+          );
+          devLog(`网络异常，${Math.round(netDelay / 1000)} 秒后重试（剩余 ${networkRetryBudget} 次）...`);
+          await delay(netDelay);
+          attempt--;
+          continue;
+        }
+
+        if (is429Error(error)) break;
+        if (is404OrEntityNotFound(error)) break;
+        if (!isRetryableError(error)) {
+          throw error;
+        }
+
+        if (attempt < RETRY_CONFIG.maxRetries - 1) {
+          const delayMs = Math.min(
+            RETRY_CONFIG.baseDelay * Math.pow(2, attempt) + Math.random() * 1000,
+            RETRY_CONFIG.maxDelay
+          );
+          devLog(`等待 ${Math.round(delayMs / 1000)} 秒后重试...`);
+          await delay(delayMs);
+        }
       }
     }
+
+    if (lastError && isNetworkError(lastError) && networkRetryBudget <= 0) {
+      break;
+    }
+
+    if (i < tryOrder.length - 1) {
+      devLog(`切换候选模型: ${tryOrder[i + 1]}`);
+      await delay(500);
+    }
   }
-  
-  throw lastError || new Error('API 调用失败，所有模型均不可用');
+
+  throw lastError || new Error("API 调用失败，所有模型均不可用");
 }
 
 // 动态获取当前日期（中文格式：XXXX年X月）
@@ -239,16 +300,18 @@ const DIAGNOSIS_SYSTEM_INSTRUCTION = `你是资深求职辅导师，专注互联
 只输出诊断报告，禁止在标题冒号后直接接内容。每个板块保持简洁，点到即止。`;
 
 // 简历重构专用系统指令（精简版）
-const RESUME_SYSTEM_INSTRUCTION = `你是资深简历专家，专注互联网/AI/电商/高科技行业。任务：重构精简专业的简历。
+const RESUME_SYSTEM_INSTRUCTION = `你是资深简历专家，专注互联网/AI/电商/高科技行业。任务：重构专业简历。此处「精简」指压缩套话、理顺表达与结构，**不是**删光整块板块或砍掉整节。
 
 **【风格要求】** 动词开头+量化结果，不解释术语，不中英混杂。
+
+**【板块顺序说明】** 下列「→」表示模块的先后；「A/B」表示两个**独立的一级模块**「## …」（如「## 工作经历」与「## 核心项目」）的推荐顺序，**不是**把两段合并成一节或把项目塞进工作经历标题下（雇佣关系下的项目仍写在对应公司条目内即可）。
 
 **【职业阶段板块顺序】**
 - 应届：个人信息→教育→实习→技能
 - 0-2年（刚毕业、工作经历少）：个人信息→教育→工作经历/核心项目→技能。除非学历有明显负面影响（如非目标院校、GPA偏低、专业与岗位严重不匹配），否则学历必须靠前
 - 初级2-3年：学历突出时 个人信息→教育→工作经历→技能；学历一般或负向时 个人信息→工作经历→教育→技能
 - 中级：个人信息→工作经历→技能→教育
-- 资深：个人信息→核心业绩→管理经历→教育
+- 资深：个人信息→工作经历→技能→教育（核心业绩与管理经历写在「## 工作经历」内对应公司与条目中；勿单独新增「## 核心业绩」等与下方允许一级标题不一致的章节）
 
 **【量化参考】**
 - 产品：DAU/MAU增长X%、留存提升X点、转化率X%、营收X万
@@ -259,7 +322,9 @@ const RESUME_SYSTEM_INSTRUCTION = `你是资深简历专家，专注互联网/AI
 
 **【特殊场景】** 转行(可迁移能力) | 大厂→创业(0-1) | 创业→大厂(体系化) | IC→管理(带人规模)
 
-**【核心原则】** 保持精简专业 | 每条必有量化 | 动词有力 | 禁止虚构
+**【核心原则】** 保持精简专业 | 动词有力 | 禁止虚构 | **量化优先**：有依据则写清数字；无依据则保留质性描述，**禁止编造**具体数字、金额或比例；若必须用占位符表示待补充指标，**仅**使用「X%」
+
+**【内容保留】** 在真实、不虚构的前提下，**优先保留**原简历各板块（工作经历、项目、教育、技能等）的要点与条目，避免整段删除或把某一节砍到只剩标题；优化重点放在**措辞、顺序、STAR/可量化处尽量量化**，给用户留出自行补充、逐条精调的空间。
 
 **【禁止使用的标题/关键词】**
 禁止在简历中使用以下词汇作为标题或内容：核心加分项、亮点总结、优势总结、关键优势、核心竞争力总结、个人亮点、职业亮点。
@@ -268,11 +333,11 @@ const RESUME_SYSTEM_INSTRUCTION = `你是资深简历专家，专注互联网/AI
 
 **【严格禁止】**
 1. 禁止添加任何注释、备注或说明性文字（如"注："、"说明："、"备注："、"*注*"等）
-2. 禁止创建"项目经历"/"项目经验"/"核心项目"等独立板块！项目内容必须合并到对应公司的"## 工作经历"条目下，作为该公司经历的子项描述。除非原始简历有独立的"项目经历"板块
-3. 禁止将工作经历拆分成多个部分（如"工作经历"和"工作经历（早期）"），所有工作经历必须放在同一个"## 工作经历"模块下，按时间倒序排列
+2. **个人项目/个人作品与任职经历分离**：若原简历已将「个人项目」「个人作品」「核心项目」「副业/独立开发/开源作品」等**单独成节**（独立 ## 一级标题），输出中**必须保留为独立一级板块**，**禁止**为统一模板而合并进「## 工作经历」。雇主任职期间的项目/业务仍写在对应**公司名**条目下作子 bullet 即可。
+3. **雇佣经历**：禁止将同一套任职拆成多个并列模块（如「工作经历」与「工作经历（早期）」）；所有公司任职必须放在同一个「## 工作经历」下，按时间倒序。禁止在无原稿依据时新建与「工作经历」重复的「项目经历」「项目经验」等混乱标题来塞入本属雇佣的内容。
 4. 禁止在简历条目下添加任何解释性注释（如"此项目体现..."、"此经历证明..."等）
 5. 简历内容必须是纯粹的简历格式，不包含任何元说明或括号备注
-5. 绝对禁止虚构任何原简历内容不存在的项目、经历、技能和数据
+6. 绝对禁止虚构任何原简历内容不存在的项目、经历、技能和数据
 
 **【格式要求】**
 # 姓名
@@ -333,22 +398,22 @@ const buildAnalysisContext = (
   let effectiveResumeFile = resumeFile;
 
   if (totalSize > MAX_PAYLOAD_BASE64_BYTES) {
-    console.warn(`[buildAnalysisContext] 附件总大小 ${(totalSize / 1024 / 1024).toFixed(1)}MB 超过限制，进行降级处理`);
+    devWarn(`[buildAnalysisContext] 附件总大小 ${(totalSize / 1024 / 1024).toFixed(1)}MB 超过限制，进行降级处理`);
     if (resumeFile && jdFile) {
       // 先丢弃 JD 附件（JD 通常有文本备份）
       effectiveJdFile = undefined;
-      console.warn('[buildAnalysisContext] 丢弃 JD 附件，仅保留简历附件');
+      devWarn('[buildAnalysisContext] 丢弃 JD 附件，仅保留简历附件');
       // 如果仅简历仍超限，也丢弃简历附件
       if (estimateBase64Size(resumeFile) > MAX_PAYLOAD_BASE64_BYTES) {
         effectiveResumeFile = undefined;
-        console.warn('[buildAnalysisContext] 简历附件仍超限，全部降级为纯文本');
+        devWarn('[buildAnalysisContext] 简历附件仍超限，全部降级为纯文本');
       }
     } else if (resumeFile && estimateBase64Size(resumeFile) > MAX_PAYLOAD_BASE64_BYTES) {
       effectiveResumeFile = undefined;
-      console.warn('[buildAnalysisContext] 简历附件超限，降级为纯文本');
+      devWarn('[buildAnalysisContext] 简历附件超限，降级为纯文本');
     } else if (jdFile && estimateBase64Size(jdFile) > MAX_PAYLOAD_BASE64_BYTES) {
       effectiveJdFile = undefined;
-      console.warn('[buildAnalysisContext] JD 附件超限，降级为纯文本');
+      devWarn('[buildAnalysisContext] JD 附件超限，降级为纯文本');
     }
   }
   
@@ -402,7 +467,7 @@ export const analyzeResumeStream = async (
 
   try {
     const stream = await generateContentStreamWithRetry(client, {
-      model: "gemini-3.1-pro-preview",
+      model: MODEL_PRIMARY_DIAGNOSIS,
       contents: [{ parts }],
       config: {
         systemInstruction: DIAGNOSIS_SYSTEM_INSTRUCTION,
@@ -426,7 +491,7 @@ export const analyzeResumeStream = async (
     callbacks.onDiagnosisComplete(fullContent);
     return fullContent;
   } catch (error: any) {
-    console.error("Diagnosis Stream Error:", error);
+    devWarn("Diagnosis Stream Error:", error);
     const errMsg = handleApiError(error);
     callbacks.onError(errMsg);
     throw new Error(errMsg);
@@ -470,16 +535,15 @@ ${diagnosisResult}
 1. 必须修正诊断报告中指出的所有"硬伤"
 2. 必须弥补诊断报告中指出的"Gap"（能力差距）
 3. 必须融入诊断报告建议的 ATS 关键词
-4. 严格遵守真实性原则，不要虚构项目、经历、技能和数据（如必须给出虚拟数据，用X%表示）
+4. 严格遵守真实性原则，不要虚构项目、经历、技能和数据；无依据需占位时**仅**使用「X%」，勿用其他占位或模糊数字
 5. 禁止添加任何"注："、"说明："等注释性文字
-6. 禁止创建独立的"项目经历"/"项目经验"板块！所有项目必须合并到对应公司的工作经历下作为子项描述。所有工作经历放在同一个"## 工作经历"下，按时间倒序排列
-7. 紧贴原文内容和经历，仅在表述方式上做专业化优化，不要大幅删改或编造原文不存在的内容
+6. **保留信息量**：优先保留原简历各板块的要点与条目，避免整段删除或把某一节砍到过短；以专业化表述与诊断修正为主，便于用户自行细改。（个人项目与任职经历分离、雇佣经历合并等结构规则以系统指令为准，勿重复发挥。）
 只输出简历内容，直接以 "# 姓名" 开头，不要任何额外说明或备注。` 
   });
 
   try {
     const stream = await generateContentStreamWithRetry(client, {
-      model: "gemini-3.1-pro-preview",
+      model: MODEL_PRIMARY_AUTO_REWRITE,
       contents: [{ parts }],
       config: {
         systemInstruction: RESUME_SYSTEM_INSTRUCTION,
@@ -502,7 +566,7 @@ ${diagnosisResult}
     callbacks.onResumeComplete(fullContent);
     return fullContent;
   } catch (error: any) {
-    console.error("Resume Rewrite Stream Error:", error);
+    devWarn("Resume Rewrite Stream Error:", error);
     const errMsg = handleApiError(error);
     callbacks.onError(errMsg);
     throw new Error(errMsg);
@@ -553,7 +617,8 @@ export const translateResume = async (content: string) => {
 
   try {
      const response = await generateContentWithRetry(client, {
-      model: "gemini-3.1-pro-preview",
+      model: MODEL_PRIMARY_TRANSLATION,
+      fallbackModels: [...FALLBACK_TRANSLATION],
       contents: [{ parts: [{ text: prompt }] }],
       config: {
         systemInstruction: systemInstruction,
@@ -562,7 +627,7 @@ export const translateResume = async (content: string) => {
     });
     return response.text || "";
   } catch (e: any) {
-      console.error("Translation Error:", e);
+      devWarn("Translation Error:", e);
       throw new Error(e.message || "TRANSLATION_FAILED");
   }
 }
@@ -608,7 +673,7 @@ export const transcribeAudio = async (
 5. 只输出转录的文字内容，不要添加任何解释或说明`;
 
     const response = await generateContentStreamWithRetry(client, {
-      model: "gemini-2.0-flash",
+      model: MODEL_PRIMARY_FILE_MULTIMODAL,
       contents: [{
         parts: [
           {
@@ -638,7 +703,7 @@ export const transcribeAudio = async (
     callbacks.onComplete(fullText);
     return fullText;
   } catch (error: any) {
-    console.error("Audio Transcription Error:", error);
+    devWarn("Audio Transcription Error:", error);
     const errorMsg = handleApiError(error);
     callbacks.onError(errorMsg);
     throw new Error(errorMsg);
@@ -655,7 +720,7 @@ export const extractTextFromFile = async (
 
   try {
     const response = await generateContentWithRetry(client, {
-      model: "gemini-2.0-flash",
+      model: MODEL_PRIMARY_FILE_MULTIMODAL,
       contents: [{
         parts: [
           { inlineData: { data: fileData.data, mimeType: fileData.mimeType } },
@@ -675,7 +740,7 @@ export const extractTextFromFile = async (
 
     return response.text || '';
   } catch (error: any) {
-    console.error("Text Extraction Error:", error);
+    devWarn("Text Extraction Error:", error);
     throw new Error(handleApiError(error));
   }
 };
@@ -696,7 +761,7 @@ export const condenseResume = async (
   const prompt = `你是一位**资深简历顾问**，擅长在保持核心竞争力的前提下精简简历篇幅。
 
 ## 任务
-当前简历占用页面 **${currentPercentage}%**，需要精简到 **${safeTarget}%** 左右（需削减约 **${reductionNeeded}%** 的内容）。
+当前简历占用页面 **${currentPercentage}%**，需要精简到 **${safeTarget}%** 左右（需削减约 **${reductionNeeded}%** 的内容）。本功能的「精简」指删繁就简、合并重复表述、压缩 bullet，**不是**整节删除已有板块（下列「绝对禁止」另有说明）。
 
 ⚠️ **极其重要：精简幅度必须精确控制！**
 - 目标是 **${safeTarget}%**，允许误差 ±3%（即 ${safeTarget - 3}%~${safeTarget + 3}%）
@@ -727,9 +792,9 @@ export const condenseResume = async (
 **注意**：执行完第一步后检查进度，如果已经接近目标（${safeTarget}%），就停止，不要继续执行后续步骤！
 
 ## ❌ 绝对禁止
-- 虚构任何不存在的内容
+- 虚构任何不存在的内容；无依据需数字占位时**仅**使用「X%」，禁止编造其他具体数字或「若干」「约」等模糊量
 - 添加"核心加分项"、"亮点"、"总结"等新标题
-- 改变原有的 Markdown 章节结构和层级
+- 改变原有的 Markdown 章节结构和层级；不得把原简历中独立的「个人项目/个人作品/核心项目」等板块合并进「工作经历」，也**不得为省篇幅整节删除**这些板块（仅允许板块内删繁就简、合并重复表述）
 - 删除量化数据（如提升X%、MAU达到X）
 - 删除联系方式和基本信息
 - 整段删除某段工作经历（可以大幅压缩但条目必须保留）
@@ -746,10 +811,11 @@ ${resumeMarkdown}
 4. 精简幅度精确控制在 ${reductionNeeded}% 左右，**不要过度删除**`;
 
   try {
-    console.log(`[精简简历] 当前 ${currentPercentage}%，目标 ${targetPercentage}%，需删减 ${reductionNeeded}%`);
+    devLog(`[精简简历] 当前 ${currentPercentage}%，目标 ${targetPercentage}%，需删减 ${reductionNeeded}%`);
     
     const response = await generateContentWithRetry(client, {
-      model: "gemini-3.1-pro-preview",
+      model: MODEL_PRIMARY_RESUME_EDIT,
+      fallbackModels: [...FALLBACK_RESUME_EDIT],
       contents: [{ parts: [{ text: prompt }] }],
       config: {
         temperature: 0.2, // 降低温度，让输出更稳定
@@ -773,15 +839,15 @@ ${resumeMarkdown}
     const resultLength = result.length;
     const actualReduction = Math.round((1 - resultLength / originalLength) * 100);
     
-    console.log(`[精简完成] 原始 ${originalLength} 字符 → 精简后 ${resultLength} 字符，实际减少 ${actualReduction}%`);
+    devLog(`[精简完成] 原始 ${originalLength} 字符 → 精简后 ${resultLength} 字符，实际减少 ${actualReduction}%`);
     
     if (resultLength >= originalLength) {
-      console.warn('[警告] 精简后内容没有变短，可能需要重试');
+      devWarn('[警告] 精简后内容没有变短，可能需要重试');
     }
     
     return result;
   } catch (error: any) {
-    console.error("Resume Condense Error:", error);
+    devWarn("Resume Condense Error:", error);
     throw new Error(handleApiError(error));
   }
 };
@@ -812,11 +878,16 @@ export const rewriteSelectedText = async (
 
   const actionPrompts: Record<RewriteAction, string> = {
     concise: '精简整段内容，删除冗余词汇，保持核心信息和量化数据，使表达更简洁有力。',
-    quantify: '为这段内容补充量化数据（如百分比、用户数、金额等）。如原文已有数据则强化，没有则根据上下文合理推测并用"X%"等占位。',
+    quantify: '为这段内容补充量化表达：若原文或上下文中已有明确数据则保留并强化。若无依据，**仅**使用「X%」作为占位符表示待补充指标；禁止编造具体数字、金额或比例，禁止使用「X」「N」「若干」「约」等除「X%」以外的任何占位或模糊写法。',
     match_jd: `根据以下JD要求，调整这段内容的关键词和表述方式，使其更匹配目标岗位：\n\n${context.jd || '（未提供JD）'}`,
     rewrite: '用更专业、有力的方式重写这段内容。动词开头，突出成果，保持简洁。',
     custom: customInstruction || '请优化这段内容。',
   };
+
+  const quantifyExtra =
+    action === 'quantify'
+      ? `\n8. 【量化专项】需要数字但简历无依据时，**只**允许用「X%」占位，不得使用其他字符或文字作占位。`
+      : '';
 
   const systemPrompt = `你是一位资深简历优化专家。用户正在逐段优化简历，你的任务是**只重写用户选中的部分**。
 
@@ -827,7 +898,7 @@ export const rewriteSelectedText = async (
 4. 保留所有真实的量化数据
 5. 禁止虚构不存在的项目、数据或经历
 6. 输出长度应与原文相近（除非用户要求精简）
-7. 如果选中内容包含多个 bullet points，保持相同数量（除非要求精简）`;
+7. 如果选中内容包含多个 bullet points，保持相同数量（除非要求精简）${quantifyExtra}`;
 
   const userPrompt = `【用户的操作指令】
 ${actionPrompts[action]}
@@ -843,7 +914,8 @@ ${context.diagnosis ? `\n【诊断报告参考】\n${context.diagnosis}` : ''}
 
   try {
     const stream = await generateContentStreamWithRetry(client, {
-      model: "gemini-3.1-pro-preview",
+      model: MODEL_PRIMARY_RESUME_EDIT,
+      fallbackModels: [...FALLBACK_RESUME_EDIT],
       contents: [{ parts: [{ text: userPrompt }] }],
       config: {
         systemInstruction: systemPrompt,
@@ -868,7 +940,7 @@ ${context.diagnosis ? `\n【诊断报告参考】\n${context.diagnosis}` : ''}
     callbacks.onComplete(fullContent);
     return fullContent;
   } catch (error: any) {
-    console.error("Rewrite Selected Error:", error);
+    devWarn("Rewrite Selected Error:", error);
     const errMsg = handleApiError(error);
     callbacks.onError(errMsg);
     throw new Error(errMsg);

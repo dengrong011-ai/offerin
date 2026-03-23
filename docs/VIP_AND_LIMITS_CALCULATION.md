@@ -16,15 +16,21 @@
 
 ---
 
-## 二、月度（月）次数统计
+## 二、月度（月）次数统计（老 VIP `vip`）
+
+| 配置项 | 数值 | 说明 |
+|--------|------|------|
+| `monthly_diagnosis` | **200** | 简历侧月硬上限：统计 `usage_logs` 中 `diagnosis` / `resume_edit`（`auto_rewrite` 请求在 proxy 中早退且不写入日志，不计入） |
+| `monthly_interview` | **300** | 模拟面试请求条数月硬上限（按 `usage_logs.action_type = interview` 计数） |
+| `diagnosis_warning_threshold` | **100** | 仅 **控制台预警**，不拦截 |
+| `interview_warning_threshold` | **240** | 仅 **控制台预警**，不拦截 |
 
 | 位置 | 说明 |
 |------|------|
-| **api/gemini/proxy.ts** | VIP 诊断：`monthly_diagnosis: 200`；面试：`monthly_interview: 100`。`monthStart` = 当月 1 日 00:00（服务器本地时区），`monthEnd` = 当月最后一日 23:59:59.999。查询 `usage_logs` 的 `created_at` 在该区间内计数。 |
-| **时区** | `new Date(now.getFullYear(), now.getMonth(), 1)` 使用**服务器本地时区**（Vercel 上一般为 UTC）。即「本月」= 服务器所在时区的自然月；`usage_logs.created_at` 为 timestamptz，比较一致。 |
-| **前端 supabaseClient.MEMBERSHIP_LIMITS** | vip.monthly_diagnosis: 200，monthly_interview: 100，与 proxy 一致。 |
+| **api/gemini/proxy.ts** | 上述数字以服务端 `MEMBERSHIP_LIMITS.vip` 为准；`monthStart` / `monthEnd` 使用 **`Date.UTC` 的 UTC 自然月**（当月 1 日 00:00:00.000Z 至当月最后一日 23:59:59.999Z）。 |
+| **前端 services/supabaseClient.ts** | `MEMBERSHIP_LIMITS.vip` 与 proxy 保持一致（200 / 300 / 预警 100 & 240）。 |
 
-结论：**月的计算** 按当月 1 日 0 点到当月最后一日 23:59:59.999（服务器本地时区）统计，**逻辑正确**。若需与中国自然月严格一致，可后续改为按 `Asia/Shanghai` 计算当月区间。
+结论：**月区间按 UTC 自然月** 统计；若需与中国（东八区）自然月一致，需单独改区间计算。
 
 ---
 

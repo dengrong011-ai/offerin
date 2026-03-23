@@ -1,19 +1,41 @@
 /**
  * XorPay 订单状态查询接口（服务端）
- * 将 APP_SECRET 保留在服务端，前端不再暴露支付密钥
+ * 需携带 JWT，且仅能查询当前用户自己的订单
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { createClient } from '@supabase/supabase-js';
 
 const CORS_ORIGINS = ['https://offerin.co', 'https://www.offerin.co', 'http://localhost:3000', 'http://localhost:5173', 'http://localhost:5174'];
 
+const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || '';
+const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+
+function getSupabaseAuth(jwt: string) {
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    global: { headers: { Authorization: `Bearer ${jwt}` } },
+  });
+}
+
+async function getAuthenticatedUserId(req: VercelRequest): Promise<string | null> {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+  const jwt = authHeader.slice(7).trim();
+  if (!jwt) return null;
+  try {
+    const { data: { user }, error } = await getSupabaseAuth(jwt).auth.getUser();
+    return error || !user ? null : user.id;
+  } catch {
+    return null;
+  }
+}
+
 const XORPAY_APP_ID = (process.env.XORPAY_APP_ID || process.env.VITE_XORPAY_APP_ID || '').trim();
-const XORPAY_APP_SECRET = process.env.XORPAY_APP_SECRET || process.env.VITE_XORPAY_APP_SECRET || '';
+const XORPAY_APP_SECRET = process.env.XORPAY_APP_SECRET || '';
 const XORPAY_API_BASE = 'https://xorpay.com/api';
 
-/**
- * MD5 签名算法
- */
 const md5Simple = (string: string): string => {
   function md5cycle(x: number[], k: number[]) {
     let a = x[0], b = x[1], c = x[2], d = x[3];
@@ -86,9 +108,7 @@ const md5Simple = (string: string): string => {
   return hex(md51(utf8Encode(string)));
 };
 
-const generateSign = (...params: string[]): string => {
-  return md5Simple(params.join(''));
-};
+const generateSign = (...params: string[]): string => md5Simple(params.join(''));
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const origin = req.headers.origin || '';
@@ -99,11 +119,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
+  const userId = await getAuthenticatedUserId(req);
+  if (!userId) {
+    return res.status(401).json({ success: false, error: '请先登录' });
+  }
+
   try {
     const { orderId } = req.body;
     if (!orderId) return res.status(400).json({ success: false, error: '缺少 orderId' });
     if (!XORPAY_APP_ID || !XORPAY_APP_SECRET) {
       return res.status(500).json({ success: false, error: 'XorPay 未配置' });
+    }
+
+    const { data: order, error: orderError } = await supabaseAdmin
+      .from('payment_orders')
+      .select('id, user_id')
+      .eq('id', orderId)
+      .single();
+
+    if (orderError || !order || order.user_id !== userId) {
+      return res.status(403).json({ success: false, error: '无权查询该订单' });
     }
 
     const sign = generateSign(orderId, XORPAY_APP_SECRET);

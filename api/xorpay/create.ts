@@ -36,20 +36,30 @@ async function getAuthenticatedUserId(req: VercelRequest): Promise<string | null
 
 // XorPay 配置
 const XORPAY_APP_ID = (process.env.XORPAY_APP_ID || process.env.VITE_XORPAY_APP_ID || '').trim();
-const XORPAY_APP_SECRET = process.env.XORPAY_APP_SECRET || process.env.VITE_XORPAY_APP_SECRET || '';
+const XORPAY_APP_SECRET = process.env.XORPAY_APP_SECRET || '';
 const XORPAY_API_BASE = 'https://xorpay.com/api';
 
 // 产品配置
 const PRODUCTS: Record<string, { name: string; price: string; priceInCents: number }> = {
   vip_sprint: {
-    name: '冲刺计划',
+    name: '冲刺计划（老用户）',
     price: '19.90',
     priceInCents: 1990,
   },
   vip_monthly: {
-    name: 'VIP月度会员',
+    name: 'VIP月度会员（老用户）',
     price: '29.90',
     priceInCents: 2990,
+  },
+  resume_pass_10d: {
+    name: '简历畅改·10天',
+    price: '9.90',
+    priceInCents: 990,
+  },
+  full_monthly: {
+    name: '全局畅享·月度',
+    price: '39.90',
+    priceInCents: 3990,
   },
   resume_download: {
     name: '简历下载',
@@ -271,7 +281,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { userId, productId, notifyUrl } = req.body;
+    const { userId, productId } = req.body;
 
     // 验证参数
     if (!userId || !productId) {
@@ -294,7 +304,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // 1. 创建本地订单
-    const productType = (productId === 'vip_monthly' || productId === 'vip_sprint') ? 'vip' : 'single';
+    const productType =
+      productId === 'vip_monthly' ||
+      productId === 'vip_sprint' ||
+      productId === 'resume_pass_10d' ||
+      productId === 'full_monthly'
+        ? 'vip'
+        : 'single';
     const { data: orderData, error: orderError } = await supabase
       .from('payment_orders')
       .insert({
@@ -316,7 +332,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const orderId = orderData.id;
 
     // 2. 生成签名
-    const finalNotifyUrl = notifyUrl || `${req.headers.origin}/api/xorpay/notify`;
+    // 忽略客户端传入的 notifyUrl，避免被篡改为第三方地址导致支付成功但业务未履约
+    const finalNotifyUrl =
+      (process.env.XORPAY_NOTIFY_URL || '').trim() ||
+      'https://offerin.co/api/xorpay/notify';
     const sign = generateSign(
       product.name,
       'alipay',

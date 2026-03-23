@@ -77,11 +77,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ]);
 
     let membershipType = profileResult.data?.membership_type || 'free';
-
-    if (membershipType === 'vip' && profileResult.data?.vip_expires_at) {
-      if (new Date(profileResult.data.vip_expires_at) < new Date()) {
-        membershipType = 'free';
-      }
+    const exp = profileResult.data?.vip_expires_at;
+    if (
+      (membershipType === 'vip' || membershipType === 'resume_pass' || membershipType === 'full_monthly') &&
+      exp &&
+      new Date(exp) < new Date()
+    ) {
+      membershipType = 'free';
     }
 
     if (whitelistEntry) {

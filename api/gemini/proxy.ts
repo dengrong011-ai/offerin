@@ -2,6 +2,16 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
+/**
+ * 服务端默认 fallback 链（与 services/geminiModelRouting.ts 中 PROXY_DEFAULT_FALLBACK_CHAIN 保持一致）
+ * ⚠️ 不要用 import 引入 ../../services/*，Vercel @vercel/node 打包 api/ 时无法解析外部路径
+ */
+const PROXY_DEFAULT_FALLBACK_CHAIN: readonly string[] = [
+  'gemini-2.5-pro',
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
+  'gemini-2.0-flash-lite',
+];
 
 const CORS_ORIGINS = ['https://offerin.co', 'https://www.offerin.co', 'http://localhost:3000', 'http://localhost:5173', 'http://localhost:5174'];
 
@@ -15,9 +25,82 @@ const CORS_ORIGINS = ['https://offerin.co', 'https://www.offerin.co', 'http://lo
  * 4. VIP 白名单从数据库读取：不硬编码在代码中
  */
 
+/** Pro：单函数最长 300s，适合 Gemini 流式诊断/面试。若降回 Hobby 请改为 60 并同步 vercel.json */
 export const maxDuration = 300;
 
 const GOOGLE_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
+
+/** 非流式 generateContent 单次上游超时，避免 Google 无响应时前端一直转圈 */
+const GOOGLE_GENERATE_FETCH_TIMEOUT_MS = 120_000;
+/**
+ * 职业探索：主请求已是 gemini-3.1-pro-preview；若 200 但 JSON 不可用，按质量→速度短链重试（勿遍历冗长 Pro 链）。
+ * 顺序：2.5-pro → 2.5-flash → 2.0-flash；各次受 GOOGLE_GENERATE_FETCH_TIMEOUT_MS 约束。
+ */
+const CAREER_JSON_RECOVERY_MODELS: readonly string[] = [
+  'gemini-2.5-pro',
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
+];
+
+/** 客户端为整场面试生成的场次 ID；与 usage_logs.interview_session_id 对应 */
+const INTERVIEW_SESSION_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function parseInterviewSessionId(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim();
+  return INTERVIEW_SESSION_UUID_RE.test(s) ? s : null;
+}
+
+/** 免费试用按「场次」计：distinct interview_session_id；无 session 的旧记录整体算 1 场 */
+async function countInterviewTrialSessionsUsed(
+  supabaseAdmin: SupabaseClient,
+  userId: string
+): Promise<number> {
+  const { data, error } = await supabaseAdmin
+    .from('usage_logs')
+    .select('interview_session_id')
+    .eq('user_id', userId)
+    .eq('action_type', 'interview');
+
+  if (error || !data?.length) return 0;
+
+  const distinct = new Set(
+    data.map((r: { interview_session_id: string | null }) => r.interview_session_id).filter(Boolean)
+  );
+  const hasLegacy = data.some((r: { interview_session_id: string | null }) => !r.interview_session_id);
+  return distinct.size + (hasLegacy ? 1 : 0);
+}
+
+function utcMonthRange(): { monthStart: string; monthEnd: string } {
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+  const monthEnd = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999)
+  ).toISOString();
+  return { monthStart, monthEnd };
+}
+
+/** 全局畅享：当月 distinct 面试场次（有 session_id 按 distinct；无则每行算一场） */
+async function countInterviewSessionsInMonth(
+  supabaseAdmin: SupabaseClient,
+  userId: string,
+  monthStart: string,
+  monthEnd: string
+): Promise<number> {
+  const { data, error } = await supabaseAdmin
+    .from('usage_logs')
+    .select('interview_session_id')
+    .eq('user_id', userId)
+    .eq('action_type', 'interview')
+    .gte('created_at', monthStart)
+    .lte('created_at', monthEnd);
+
+  if (error || !data?.length) return 0;
+  const distinct = new Set(data.map((r) => r.interview_session_id).filter(Boolean));
+  const nullRows = data.filter((r) => !r.interview_session_id).length;
+  return distinct.size + nullRows;
+}
 
 // ============ Upstash Redis Rate Limiting ============
 
@@ -44,7 +127,7 @@ function getRedisRatelimit(): Ratelimit | null {
     ratelimit = new Ratelimit({
       redis,
       limiter: Ratelimit.slidingWindow(150, '1 m'),
-      analytics: true,
+      analytics: false,
       prefix: 'offerin:ratelimit:',
     });
   }
@@ -134,6 +217,9 @@ const MEMBERSHIP_LIMITS: Record<string, {
   daily_diagnosis: number;
   daily_interview: number;
   monthly_interview: number;
+  monthly_diagnosis?: number;
+  diagnosis_warning_threshold?: number;
+  interview_warning_threshold?: number;
 }> = {
   free: {
     diagnosis_trial_count: 3,    // 简历诊断+全局重构 独立3次
@@ -175,10 +261,166 @@ const MEMBERSHIP_LIMITS: Record<string, {
 // 允许的 actionType 白名单（防止前端传入非法值绕过配额）
 const ALLOWED_ACTION_TYPES = new Set(['diagnosis', 'interview', 'translation', 'resume_edit', 'auto_rewrite', 'file_extract', 'transcribe', 'career_explore']);
 
+// 职业探索：仅成功返回后写入 usage_logs；日上限默认 50（仅统计 career_explore_*）；免费用户另享 3 次「计费」体验池（画像/方向/计划每次成功调用各可占 1 格，计划多次生成多次占格），同一步 24h 内第 2 次成功为免费重试不计入体验池
+const CAREER_LOG_PROFILE = 'career_explore_profile';
+const CAREER_LOG_DIRECTIONS = 'career_explore_directions';
+const CAREER_LOG_PLAN = 'career_explore_plan';
+const CAREER_LOG_JD_DEMO = 'career_explore_jd_demo';
+const CAREER_LOG_RETRY_SUFFIX = '_retry';
+const CAREER_BILLABLE_TYPES = [CAREER_LOG_PROFILE, CAREER_LOG_DIRECTIONS, CAREER_LOG_PLAN, CAREER_LOG_JD_DEMO];
+const CAREER_FREE_TRIAL_BILLABLE = 3;
+
+function careerStepToBaseLogType(step: string): string {
+  if (step === 'profile') return CAREER_LOG_PROFILE;
+  if (step === 'directions') return CAREER_LOG_DIRECTIONS;
+  if (step === 'plan') return CAREER_LOG_PLAN;
+  if (step === 'jd_demo') return CAREER_LOG_JD_DEMO;
+  return CAREER_LOG_PLAN;
+}
+
+async function countCareerBillableInMonth(
+  supabaseAdmin: SupabaseClient,
+  userId: string,
+  monthStart: string,
+  monthEnd: string
+): Promise<number> {
+  const { count, error } = await supabaseAdmin
+    .from('usage_logs')
+    .select('*', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .in('action_type', CAREER_BILLABLE_TYPES)
+    .gte('created_at', monthStart)
+    .lte('created_at', monthEnd);
+
+  if (error) return 0;
+  return count || 0;
+}
+
+function getCareerExploreDailyMax(): number {
+  const n = parseInt(process.env.CAREER_EXPLORE_DAILY_MAX || '50', 10);
+  return Number.isFinite(n) && n > 0 ? n : 50;
+}
+
+async function countCareerExploreCallsToday(supabaseAdmin: SupabaseClient, userId: string): Promise<number> {
+  const today = new Date().toISOString().split('T')[0];
+  const { count } = await supabaseAdmin
+    .from('usage_logs')
+    .select('*', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .like('action_type', 'career_explore%')
+    .gte('created_at', `${today}T00:00:00.000Z`)
+    .lte('created_at', `${today}T23:59:59.999Z`);
+  return count || 0;
+}
+
+async function countCareerStepCallsSince(
+  supabaseAdmin: SupabaseClient,
+  userId: string,
+  step: string,
+  sinceIso: string,
+): Promise<number> {
+  const base = careerStepToBaseLogType(step);
+  const { count } = await supabaseAdmin
+    .from('usage_logs')
+    .select('*', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .in('action_type', [base, base + CAREER_LOG_RETRY_SUFFIX])
+    .gte('created_at', sinceIso);
+  return count || 0;
+}
+
+async function countCareerBillableLifetime(supabaseAdmin: SupabaseClient, userId: string): Promise<number> {
+  const { count } = await supabaseAdmin
+    .from('usage_logs')
+    .select('*', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .in('action_type', CAREER_BILLABLE_TYPES);
+  return count || 0;
+}
+
+async function checkCareerExplorePrecheck(
+  userId: string,
+  membershipType: string,
+  step: 'profile' | 'directions' | 'plan' | 'jd_demo',
+): Promise<{ allowed: boolean; reason?: string }> {
+  const supabaseAdmin = getSupabaseAdmin();
+
+  // pro：不限
+  if (membershipType === 'pro') {
+    return { allowed: true };
+  }
+
+  // special 白名单：日 20 次总上限（与 checkUsageEligibility 中 special 逻辑一致）
+  if (membershipType === 'special') {
+    const today = new Date().toISOString().split('T')[0];
+    const { count } = await supabaseAdmin
+      .from('usage_logs')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .gte('created_at', `${today}T00:00:00.000Z`)
+      .lte('created_at', `${today}T23:59:59.999Z`);
+    if ((count || 0) >= (MEMBERSHIP_LIMITS.special.daily_diagnosis || 20)) {
+      return { allowed: false, reason: 'DAILY_LIMIT_EXCEEDED' };
+    }
+    return { allowed: true };
+  }
+
+  // 老 VIP：保留「当日 career_explore* 总次数」上限（默认 50）
+  if (membershipType === 'vip') {
+    const dailyMax = getCareerExploreDailyMax();
+    const todayCount = await countCareerExploreCallsToday(supabaseAdmin, userId);
+    if (todayCount >= dailyMax) {
+      return { allowed: false, reason: 'CAREER_EXPLORE_DAILY_LIMIT_EXCEEDED' };
+    }
+    return { allowed: true };
+  }
+
+  // 全局畅享：职业探索按自然月（UTC）50 次成功（分步计，仅 base 类型）
+  if (membershipType === 'full_monthly') {
+    const { monthStart, monthEnd } = utcMonthRange();
+    const used = await countCareerBillableInMonth(supabaseAdmin, userId, monthStart, monthEnd);
+    if (used >= 50) {
+      return { allowed: false, reason: 'CAREER_EXPLORE_MONTHLY_LIMIT_EXCEEDED' };
+    }
+    return { allowed: true };
+  }
+
+  // 免费 / 简历畅改 / 未知类型：共 3 次计费成功（24h 内第 2 次同一步为免费重试）
+  // ⚠️ 兜底走 free 限制，防止未知 membershipType 绕过配额
+  {
+    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const n24 = await countCareerStepCallsSince(supabaseAdmin, userId, step, since24h);
+    const nextIsBillable = n24 % 2 === 0;
+    if (nextIsBillable) {
+      const lifetime = await countCareerBillableLifetime(supabaseAdmin, userId);
+      if (lifetime >= CAREER_FREE_TRIAL_BILLABLE) {
+        return { allowed: false, reason: 'CAREER_EXPLORE_TRIAL_EXCEEDED' };
+      }
+    }
+    return { allowed: true };
+  }
+}
+
+async function recordCareerExploreSuccess(
+  userId: string,
+  step: 'profile' | 'directions' | 'plan' | 'jd_demo',
+): Promise<void> {
+  const supabaseAdmin = getSupabaseAdmin();
+  const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const n24 = await countCareerStepCallsSince(supabaseAdmin, userId, step, since24h);
+  const isRetrySlot = n24 % 2 === 1;
+  const base = careerStepToBaseLogType(step);
+  const actionType = isRetrySlot ? base + CAREER_LOG_RETRY_SUFFIX : base;
+  const { error } = await supabaseAdmin.from('usage_logs').insert({ user_id: userId, action_type: actionType });
+  if (error) {
+    console.error('recordCareerExploreSuccess insert failed', actionType, userId, error);
+    throw error;
+  }
+}
+
 // 允许的模型白名单（防止调用非预期的昂贵模型）
 const ALLOWED_MODELS = new Set([
   'gemini-3.1-pro-preview',
-  'gemini-3-pro-preview',
   'gemini-2.5-pro',
   'gemini-2.5-flash',
   // 旧 preview ID（部分项目仍可用，保留白名单以免历史客户端 400）
@@ -222,19 +464,13 @@ function getSupabaseAdmin(): SupabaseClient {
   return _supabaseAdmin;
 }
 
-let _lastAuthJwt = '';
-let _supabaseAuth: SupabaseClient | null = null;
-
-function getSupabaseAuth(jwt: string): SupabaseClient {
-  if (!_supabaseAuth || _lastAuthJwt !== jwt) {
-    const url = process.env.VITE_SUPABASE_URL || '';
-    const anonKey = process.env.VITE_SUPABASE_ANON_KEY || '';
-    _supabaseAuth = createClient(url, anonKey, {
-      global: { headers: { Authorization: `Bearer ${jwt}` } }
-    });
-    _lastAuthJwt = jwt;
-  }
-  return _supabaseAuth;
+/** 每请求独立 client，避免 Serverless 并发下复用单例导致 JWT 串用户 */
+function createSupabaseAuthClient(jwt: string): SupabaseClient {
+  const url = process.env.VITE_SUPABASE_URL || '';
+  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || '';
+  return createClient(url, anonKey, {
+    global: { headers: { Authorization: `Bearer ${jwt}` } },
+  });
 }
 
 // ============ 核心鉴权 + 配额校验 ============
@@ -243,7 +479,11 @@ interface AuthResult {
   userId: string;
   email: string;
   membershipType: string;
+  /** 付费档位到期时间；内存中已降级为 free 时为 null */
+  vipExpiresAt: string | null;
 }
+
+const PAID_MEMBERSHIP_TIERS = new Set(['vip', 'resume_pass', 'full_monthly']);
 
 async function authenticateUser(authHeader: string | undefined): Promise<AuthResult | null> {
   if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
@@ -252,7 +492,7 @@ async function authenticateUser(authHeader: string | undefined): Promise<AuthRes
   if (!jwt) return null;
 
   try {
-    const supabaseAuth = getSupabaseAuth(jwt);
+    const supabaseAuth = createSupabaseAuthClient(jwt);
     const { data: { user }, error } = await supabaseAuth.auth.getUser();
     if (error || !user) return null;
 
@@ -268,12 +508,13 @@ async function authenticateUser(authHeader: string | undefined): Promise<AuthRes
     ]);
 
     let membershipType = profileResult.data?.membership_type || 'free';
+    let vipExpiresAt: string | null = profileResult.data?.vip_expires_at ?? null;
 
-    // 检查 VIP 是否过期（不阻塞主流程，异步降级）
-    if (membershipType === 'vip' && profileResult.data?.vip_expires_at) {
-      if (new Date(profileResult.data.vip_expires_at) < new Date()) {
+    // 付费档位过期 → 视为 free（老 VIP 与新档位共用 vip_expires_at）
+    if (PAID_MEMBERSHIP_TIERS.has(membershipType) && vipExpiresAt) {
+      if (new Date(vipExpiresAt) < new Date()) {
         membershipType = 'free';
-        // 异步更新，不等待
+        vipExpiresAt = null;
         Promise.resolve(
           supabaseAdmin
             .from('profiles')
@@ -286,12 +527,14 @@ async function authenticateUser(authHeader: string | undefined): Promise<AuthRes
     // 白名单优先级最高
     if (whitelistEntry) {
       membershipType = whitelistEntry.whitelist_type;
+      vipExpiresAt = null;
     }
 
     return {
       userId: user.id,
       email: user.email || '',
       membershipType,
+      vipExpiresAt,
     };
   } catch {
     return null;
@@ -323,40 +566,29 @@ function setCachedUsage(userId: string, actionType: string, allowed: boolean) {
   }
 }
 
-async function checkAndLogUsage(
+/** 仅校验配额，不写入 usage_logs；成功调用 Google 后再 recordUsageSuccess */
+async function checkUsageEligibility(
   userId: string,
   membershipType: string,
-  actionType: string
+  actionType: string,
+  interviewSessionId: string | null = null,
+  vipExpiresAt: string | null = null
 ): Promise<{ allowed: boolean; reason?: string }> {
   const supabaseAdmin = getSupabaseAdmin();
   const limits = MEMBERSHIP_LIMITS[membershipType] || MEMBERSHIP_LIMITS.free;
 
-  // Pro 用户无限制（异步记录，不阻塞）
   if (membershipType === 'pro') {
-    supabaseAdmin.from('usage_logs').insert({ user_id: userId, action_type: actionType }).then(() => {}).catch(() => {});
     return { allowed: true };
   }
 
-  // auto_rewrite: 诊断后自动触发的重构，不单独计配额（诊断时已记录）
-  // file_extract / transcribe: 辅助类操作（OCR提取文字、音频转文字），不消耗使用配额
   if (actionType === 'auto_rewrite' || actionType === 'file_extract' || actionType === 'transcribe') {
     return { allowed: true };
   }
 
-  // VIP 用户：大多数场景直接放行（月限额很高），用缓存跳过 DB
-  if (membershipType === 'vip') {
-    const cached = getCachedUsage(userId, actionType);
-    if (cached?.allowed) {
-      supabaseAdmin.from('usage_logs').insert({ user_id: userId, action_type: actionType }).then(() => {}).catch(() => {});
-      return { allowed: true };
-    }
-  }
-
-  // Special 白名单用户：所有操作共享每日限额
   if (membershipType === 'special') {
     const today = new Date().toISOString().split('T')[0];
-    const dailyLimit = limits.daily_diagnosis; // 20
-    
+    const dailyLimit = limits.daily_diagnosis;
+
     const { count } = await supabaseAdmin
       .from('usage_logs')
       .select('*', { count: 'exact', head: true })
@@ -368,27 +600,228 @@ async function checkAndLogUsage(
       return { allowed: false, reason: 'DAILY_LIMIT_EXCEEDED' };
     }
 
-    supabaseAdmin.from('usage_logs').insert({ user_id: userId, action_type: actionType }).then(() => {}).catch(() => {});
+    return { allowed: true };
+  }
+
+  // —— 老 VIP：逻辑不变（月 300 次面试请求、月 200 次诊断链路等）——
+  if (membershipType === 'vip') {
+    const cached = getCachedUsage(userId, actionType);
+    if (cached?.allowed) {
+      return { allowed: true };
+    }
+
+    if (actionType === 'interview') {
+      const monthlyLimit = limits.monthly_interview;
+      const warningThreshold = (limits as any).interview_warning_threshold || 80;
+
+      if (monthlyLimit > 0) {
+        const now = new Date();
+        const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+        const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999)).toISOString();
+
+        const { count } = await supabaseAdmin
+          .from('usage_logs')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', userId)
+          .eq('action_type', 'interview')
+          .gte('created_at', monthStart)
+          .lte('created_at', monthEnd);
+
+        const currentCount = count || 0;
+
+        if (currentCount >= warningThreshold && currentCount < monthlyLimit) {
+          console.warn(`⚠️ VIP 用户高频使用预警: userId=${userId}, 本月面试次数=${currentCount + 1}/${monthlyLimit}`);
+        }
+
+        if (currentCount >= monthlyLimit) {
+          console.error(`🚫 VIP 用户月度面试超限: userId=${userId}, 本月面试次数=${currentCount}/${monthlyLimit}`);
+          return { allowed: false, reason: 'MONTHLY_INTERVIEW_LIMIT_EXCEEDED' };
+        }
+      }
+    } else if (actionType === 'diagnosis' || actionType === 'resume_edit' || actionType === 'auto_rewrite') {
+      const monthlyLimit = (limits as any).monthly_diagnosis || -1;
+      const warningThreshold = (limits as any).diagnosis_warning_threshold || 100;
+
+      if (monthlyLimit > 0) {
+        const now = new Date();
+        const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+        const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999)).toISOString();
+
+        const { count } = await supabaseAdmin
+          .from('usage_logs')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', userId)
+          .in('action_type', ['diagnosis', 'resume_edit', 'auto_rewrite'])
+          .gte('created_at', monthStart)
+          .lte('created_at', monthEnd);
+
+        const currentCount = count || 0;
+
+        if (currentCount >= warningThreshold && currentCount < monthlyLimit) {
+          console.warn(`⚠️ VIP 用户高频使用预警: userId=${userId}, 本月诊断次数=${currentCount + 1}/${monthlyLimit}`);
+        }
+
+        if (currentCount >= monthlyLimit) {
+          console.error(`🚫 VIP 用户月度诊断超限: userId=${userId}, 本月诊断次数=${currentCount}/${monthlyLimit}`);
+          return { allowed: false, reason: 'MONTHLY_DIAGNOSIS_LIMIT_EXCEEDED' };
+        }
+      }
+    }
+
+    return { allowed: true };
+  }
+
+  // —— 全局畅享（新）：月 30 场面试、月 50 次简历侧（诊断+划选+全局重构）、职业探索另计 ——
+  if (membershipType === 'full_monthly') {
+    const cached = getCachedUsage(userId, actionType);
+    if (cached?.allowed) {
+      return { allowed: true };
+    }
+
+    const { monthStart, monthEnd } = utcMonthRange();
+
+    if (actionType === 'interview') {
+      if (interviewSessionId) {
+        const { count: inSessionCount } = await supabaseAdmin
+          .from('usage_logs')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', userId)
+          .eq('action_type', 'interview')
+          .eq('interview_session_id', interviewSessionId);
+
+        if ((inSessionCount || 0) > 0) {
+          return { allowed: true };
+        }
+      }
+
+      const sessionsUsed = await countInterviewSessionsInMonth(supabaseAdmin, userId, monthStart, monthEnd);
+      if (sessionsUsed >= 30) {
+        return { allowed: false, reason: 'MONTHLY_INTERVIEW_SESSION_LIMIT_EXCEEDED' };
+      }
+      return { allowed: true };
+    }
+
+    if (actionType === 'diagnosis' || actionType === 'resume_edit' || actionType === 'auto_rewrite') {
+      const { count } = await supabaseAdmin
+        .from('usage_logs')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .in('action_type', ['diagnosis', 'resume_edit', 'auto_rewrite'])
+        .gte('created_at', monthStart)
+        .lte('created_at', monthEnd);
+
+      if ((count || 0) >= 50) {
+        return { allowed: false, reason: 'MONTHLY_DIAGNOSIS_LIMIT_EXCEEDED' };
+      }
+      return { allowed: true };
+    }
+
+    return { allowed: true };
+  }
+
+  // —— 简历畅改（新）：10 天内 50 次诊断；划选 resume_edit 不限；面试/翻译同免费 ——
+  if (membershipType === 'resume_pass') {
+    if (actionType === 'resume_edit') {
+      return { allowed: true };
+    }
+
+    if (actionType === 'interview') {
+      const trialLimit = MEMBERSHIP_LIMITS.free.interview_trial_count;
+      if (interviewSessionId) {
+        const { count: inSessionCount } = await supabaseAdmin
+          .from('usage_logs')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', userId)
+          .eq('action_type', 'interview')
+          .eq('interview_session_id', interviewSessionId);
+
+        if ((inSessionCount || 0) > 0) {
+          return { allowed: true };
+        }
+
+        const usedSessions = await countInterviewTrialSessionsUsed(supabaseAdmin, userId);
+        if (usedSessions >= trialLimit) {
+          return { allowed: false, reason: 'INTERVIEW_TRIAL_LIMIT_EXCEEDED' };
+        }
+      } else {
+        const usedSessions = await countInterviewTrialSessionsUsed(supabaseAdmin, userId);
+        if (usedSessions >= trialLimit) {
+          return { allowed: false, reason: 'INTERVIEW_TRIAL_LIMIT_EXCEEDED' };
+        }
+      }
+      return { allowed: true };
+    }
+
+    if (actionType === 'diagnosis') {
+      if (!vipExpiresAt) {
+        return { allowed: false, reason: 'SUBSCRIPTION_EXPIRED' };
+      }
+      const exp = new Date(vipExpiresAt);
+      const now = new Date();
+      if (exp < now) {
+        return { allowed: false, reason: 'SUBSCRIPTION_EXPIRED' };
+      }
+      const windowStart = new Date(exp.getTime() - 10 * 24 * 60 * 60 * 1000).toISOString();
+      const endIso = now < exp ? now.toISOString() : exp.toISOString();
+      const { count } = await supabaseAdmin
+        .from('usage_logs')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .eq('action_type', 'diagnosis')
+        .gte('created_at', windowStart)
+        .lte('created_at', endIso);
+
+      if ((count || 0) >= 50) {
+        return { allowed: false, reason: 'RESUME_PASS_DIAGNOSIS_LIMIT_EXCEEDED' };
+      }
+      return { allowed: true };
+    }
+
+    if (actionType === 'translation') {
+      const tlim = MEMBERSHIP_LIMITS.free.translation_trial_count;
+      const { count } = await supabaseAdmin
+        .from('usage_logs')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .eq('action_type', 'translation');
+
+      if ((count || 0) >= tlim) {
+        return { allowed: false, reason: 'TRANSLATION_LIMIT_EXCEEDED' };
+      }
+      return { allowed: true };
+    }
+
     return { allowed: true };
   }
 
   if (membershipType === 'free') {
-    // 免费用户：诊断(含全局重构)3次 和 面试1次，分开计算
-    
-    // 面试独立限额（1次）
     if (actionType === 'interview') {
-      const { count: interviewCount } = await supabaseAdmin
-        .from('usage_logs')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', userId)
-        .eq('action_type', 'interview');
-      
-      if ((interviewCount || 0) >= limits.interview_trial_count) {
-        return { allowed: false, reason: 'INTERVIEW_TRIAL_LIMIT_EXCEEDED' };
+      const trialLimit = limits.interview_trial_count;
+
+      if (interviewSessionId) {
+        const { count: inSessionCount } = await supabaseAdmin
+          .from('usage_logs')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', userId)
+          .eq('action_type', 'interview')
+          .eq('interview_session_id', interviewSessionId);
+
+        if ((inSessionCount || 0) > 0) {
+          return { allowed: true };
+        }
+
+        const usedSessions = await countInterviewTrialSessionsUsed(supabaseAdmin, userId);
+        if (usedSessions >= trialLimit) {
+          return { allowed: false, reason: 'INTERVIEW_TRIAL_LIMIT_EXCEEDED' };
+        }
+      } else {
+        const usedSessions = await countInterviewTrialSessionsUsed(supabaseAdmin, userId);
+        if (usedSessions >= trialLimit) {
+          return { allowed: false, reason: 'INTERVIEW_TRIAL_LIMIT_EXCEEDED' };
+        }
       }
     }
-    
-    // 诊断(含全局重构/resume_edit) 独立限额（3次）
+
     if (actionType === 'diagnosis' || actionType === 'resume_edit') {
       const { count } = await supabaseAdmin
         .from('usage_logs')
@@ -412,79 +845,151 @@ async function checkAndLogUsage(
         return { allowed: false, reason: 'TRANSLATION_LIMIT_EXCEEDED' };
       }
     }
-
   }
 
-  if (membershipType === 'vip') {
-    // VIP 用户：面试按月限制（300次/月），使用 UTC 月份边界与前端一致
-    if (actionType === 'interview') {
-      const monthlyLimit = limits.monthly_interview;
-      const warningThreshold = (limits as any).interview_warning_threshold || 80;
-      
-      if (monthlyLimit > 0) {
-        const now = new Date();
-        const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
-        const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999)).toISOString();
-        
-        const { count } = await supabaseAdmin
-          .from('usage_logs')
-          .select('*', { count: 'exact', head: true })
-          .eq('user_id', userId)
-          .eq('action_type', 'interview')
-          .gte('created_at', monthStart)
-          .lte('created_at', monthEnd);
+  return { allowed: true };
+}
 
-        const currentCount = count || 0;
+/** 非流式 JSON：存在有效正文且未被安全拦截时才计次 */
+function shouldBillGeminiRestResponse(data: unknown): boolean {
+  if (!data || typeof data !== 'object') return false;
+  const d = data as Record<string, unknown>;
+  if (d.error) return false;
+  const pf = d.promptFeedback as { blockReason?: string } | undefined;
+  if (pf?.blockReason) return false;
+  const candidates = d.candidates as Array<Record<string, unknown>> | undefined;
+  if (!Array.isArray(candidates) || candidates.length === 0) return false;
+  const c0 = candidates[0];
+  const fr = c0?.finishReason as string | undefined;
+  if (fr === 'SAFETY' || fr === 'RECITATION' || fr === 'BLOCKLIST' || fr === 'PROHIBITED_CONTENT') {
+    return false;
+  }
+  const content = c0?.content as { parts?: Array<{ text?: string }> } | undefined;
+  const parts = content?.parts;
+  if (!Array.isArray(parts)) return false;
+  return parts.some((p) => typeof p.text === 'string' && p.text.length > 0);
+}
 
-        // 预警：使用次数超过阈值时记录日志
-        if (currentCount >= warningThreshold && currentCount < monthlyLimit) {
-          console.warn(`⚠️ VIP 用户高频使用预警: userId=${userId}, 本月面试次数=${currentCount + 1}/${monthlyLimit}`);
-        }
+/** 拼接首条候选中的全部文本（多 part 时合并） */
+function extractFirstCandidateTextConcat(data: unknown): string {
+  if (!data || typeof data !== 'object') return '';
+  const d = data as Record<string, unknown>;
+  const candidates = d.candidates as Array<Record<string, unknown>> | undefined;
+  const c0 = candidates?.[0];
+  const parts = (c0?.content as { parts?: Array<{ text?: string }> } | undefined)?.parts;
+  if (!Array.isArray(parts)) return '';
+  return parts.map((p) => (typeof p.text === 'string' ? p.text : '')).join('');
+}
 
-        if (currentCount >= monthlyLimit) {
-          console.error(`🚫 VIP 用户月度面试超限: userId=${userId}, 本月面试次数=${currentCount}/${monthlyLimit}`);
-          return { allowed: false, reason: 'MONTHLY_INTERVIEW_LIMIT_EXCEEDED' };
+/** 与 careerService.repairTruncatedJson 前段一致：去围栏、去前言后再 parse */
+function tryParseStructuredJson(text: string): boolean {
+  let s = text.trim();
+  if (!s) return false;
+  s = s.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+  const jsonStart = s.search(/[\[{]/);
+  if (jsonStart > 0) s = s.slice(jsonStart);
+  try {
+    JSON.parse(s);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 职业探索 + JSON：正文必须可解析为 JSON，否则换模型重试 */
+function careerExploreJsonResponseOk(data: unknown): boolean {
+  if (!shouldBillGeminiRestResponse(data)) return false;
+  const text = extractFirstCandidateTextConcat(data);
+  if (tryParseStructuredJson(text)) return true;
+  const d = data as Record<string, unknown>;
+  const fr = (d.candidates as Array<{ finishReason?: string }> | undefined)?.[0]?.finishReason;
+  if (fr) {
+    console.warn(`[gemini proxy] career JSON parse failed, finishReason=${fr}`);
+  }
+  return false;
+}
+
+type SseUsageAcc = { sawModelText: boolean; blocked: boolean; carry: string; bytesIn: number };
+
+/** 解析流式 SSE 片段，判断是否出现模型正文 / 安全拦截 */
+function feedGeminiSseUsageAcc(acc: SseUsageAcc, chunkStr: string): void {
+  acc.bytesIn += chunkStr.length;
+  acc.carry += chunkStr;
+  acc.carry = acc.carry.replace(/\r\n/g, '\n');
+  let sep: number;
+  while ((sep = acc.carry.indexOf('\n\n')) !== -1) {
+    const event = acc.carry.slice(0, sep);
+    acc.carry = acc.carry.slice(sep + 2);
+    const dataLines = event.split('\n').filter((l) => l.startsWith('data:'));
+    if (dataLines.length === 0) continue;
+    const payload = dataLines.map((l) => l.slice(5).trim()).join('');
+    if (payload === '' || payload === '[DONE]') continue;
+    try {
+      const j = JSON.parse(payload) as Record<string, unknown>;
+      if (j.error) acc.blocked = true;
+      const pff = j.promptFeedback as { blockReason?: string } | undefined;
+      if (pff?.blockReason) acc.blocked = true;
+      const cand = j.candidates as Array<Record<string, unknown>> | undefined;
+      const c0 = cand?.[0];
+      const fr = c0?.finishReason as string | undefined;
+      if (fr === 'SAFETY' || fr === 'RECITATION' || fr === 'BLOCKLIST' || fr === 'PROHIBITED_CONTENT') {
+        acc.blocked = true;
+      }
+      const parts = (c0?.content as { parts?: Array<{ text?: string }> } | undefined)?.parts;
+      if (Array.isArray(parts)) {
+        for (const p of parts) {
+          if (typeof p?.text === 'string' && p.text.length > 0) acc.sawModelText = true;
         }
       }
-    } else if (actionType === 'diagnosis' || actionType === 'resume_edit' || actionType === 'auto_rewrite') {
-      // 诊断/编辑 按月限制（200次/月），使用 UTC 月份边界与前端一致
-      const monthlyLimit = (limits as any).monthly_diagnosis || -1;
-      const warningThreshold = (limits as any).diagnosis_warning_threshold || 100;
-      
-      if (monthlyLimit > 0) {
-        const now = new Date();
-        const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
-        const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999)).toISOString();
-        
-        // 统计诊断相关的所有操作
-        const { count } = await supabaseAdmin
-          .from('usage_logs')
-          .select('*', { count: 'exact', head: true })
-          .eq('user_id', userId)
-          .in('action_type', ['diagnosis', 'resume_edit', 'auto_rewrite'])
-          .gte('created_at', monthStart)
-          .lte('created_at', monthEnd);
-
-        const currentCount = count || 0;
-
-        // 预警：使用次数超过阈值时记录日志
-        if (currentCount >= warningThreshold && currentCount < monthlyLimit) {
-          console.warn(`⚠️ VIP 用户高频使用预警: userId=${userId}, 本月诊断次数=${currentCount + 1}/${monthlyLimit}`);
-        }
-
-        if (currentCount >= monthlyLimit) {
-          console.error(`🚫 VIP 用户月度诊断超限: userId=${userId}, 本月诊断次数=${currentCount}/${monthlyLimit}`);
-          return { allowed: false, reason: 'MONTHLY_DIAGNOSIS_LIMIT_EXCEEDED' };
-        }
+    } catch {
+      /* 分片/非完整 JSON：仍可能已含 text 片段（职业探索流式常见） */
+      if (payload.length > 12 && /"text"\s*:\s*"[^"]{1,}/.test(payload)) {
+        acc.sawModelText = true;
       }
     }
-    // 翻译暂不限制
   }
+}
 
-  // 记录使用（异步，不阻塞响应）+ 缓存结果
-  setCachedUsage(userId, actionType, true);
-  supabaseAdmin.from('usage_logs').insert({ user_id: userId, action_type: actionType }).then(() => {}).catch(() => {});
-  return { allowed: true };
+/**
+ * 职业探索等流式 JSON：整段 carry 上再扫一遍，避免 SSE 分片导致从未成功 JSON.parse 而 sawModelText 恒为 false、usage_logs 不写入。
+ */
+function finalizeCareerExploreStreamUsageAcc(acc: SseUsageAcc, forCareerStep: boolean): void {
+  if (!forCareerStep || acc.blocked || acc.sawModelText) return;
+  const tail = acc.carry.length > 900_000 ? acc.carry.slice(-900_000) : acc.carry;
+  if (tail.length < 24) return;
+  if (/"text"\s*:\s*"[^"]{1,}/.test(tail) || /"text"\s*:\s*"([^"\\]|\\.){1,}/.test(tail)) {
+    acc.sawModelText = true;
+  }
+}
+
+/** Google 调用成功后再记账，避免失败仍扣次 */
+function recordUsageSuccess(
+  userId: string,
+  membershipType: string,
+  actionType: string,
+  interviewSessionId: string | null = null
+): void {
+  if (actionType === 'auto_rewrite' || actionType === 'file_extract' || actionType === 'transcribe') {
+    return;
+  }
+  const supabaseAdmin = getSupabaseAdmin();
+  if (membershipType === 'vip' || membershipType === 'full_monthly') {
+    setCachedUsage(userId, actionType, true);
+  }
+  const row: { user_id: string; action_type: string; interview_session_id?: string | null } = {
+    user_id: userId,
+    action_type: actionType,
+  };
+  if (actionType === 'interview' && interviewSessionId) {
+    row.interview_session_id = interviewSessionId;
+  }
+  void supabaseAdmin
+    .from('usage_logs')
+    .insert(row)
+    .then(
+      () => {},
+      () => {},
+    );
 }
 
 // ============ 主处理函数 ============
@@ -538,10 +1043,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { model, contents, config, mode, actionType } = req.body;
+    let bodyRaw: unknown = req.body;
+    if (typeof bodyRaw === 'string') {
+      try {
+        bodyRaw = JSON.parse(bodyRaw);
+      } catch {
+        return res.status(400).json({ error: 'Invalid JSON body' });
+      }
+    }
+    const body = bodyRaw as Record<string, unknown>;
+    if (body == null || typeof body !== 'object' || Array.isArray(body)) {
+      return res.status(400).json({ error: 'Missing or invalid JSON body' });
+    }
 
-    if (!model || !contents) {
+    const {
+      model,
+      contents,
+      config,
+      mode,
+      actionType,
+      careerExploreStep,
+      fallbackModels: rawFallbackModels,
+      interviewSessionId: rawInterviewSessionId,
+    } = body as {
+      model?: string;
+      contents?: unknown;
+      config?: unknown;
+      mode?: string;
+      actionType?: string;
+      careerExploreStep?: string;
+      fallbackModels?: unknown;
+      interviewSessionId?: unknown;
+    };
+
+    if (!model || typeof model !== 'string' || !contents) {
       return res.status(400).json({ error: 'Missing required fields: model, contents' });
+    }
+    if (!Array.isArray(contents)) {
+      return res.status(400).json({ error: 'contents must be an array' });
     }
 
     // ---- 模型白名单校验 ----
@@ -549,12 +1088,50 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'INVALID_MODEL' });
     }
 
-    // ---- 服务端使用量校验 ----
-    // actionType 由前端传入，用于区分操作类型；白名单校验防止绕过配额
+    // ---- 服务端使用量校验（仅检查，成功响应后再写入 usage_logs）----
+    // career_explore：成功返回后由 recordCareerExploreSuccess 记账
     const normalizedAction = (actionType && ALLOWED_ACTION_TYPES.has(actionType)) ? actionType : 'diagnosis';
-    const usageCheck = await checkAndLogUsage(authUser.userId, authUser.membershipType, normalizedAction);
-    if (!usageCheck.allowed) {
-      return res.status(403).json({ error: usageCheck.reason || 'USAGE_LIMIT_EXCEEDED' });
+    const interviewSessionId =
+      normalizedAction === 'interview' ? parseInterviewSessionId(rawInterviewSessionId) : null;
+    let pendingCareerStep: 'profile' | 'directions' | 'plan' | 'jd_demo' | null = null;
+
+    if (normalizedAction === 'career_explore') {
+      const step = careerExploreStep;
+      if (step !== 'profile' && step !== 'directions' && step !== 'plan' && step !== 'jd_demo') {
+        return res.status(400).json({ error: 'INVALID_CAREER_EXPLORE_STEP' });
+      }
+      try {
+        const pre = await checkCareerExplorePrecheck(authUser.userId, authUser.membershipType, step);
+        if (!pre.allowed) {
+          return res.status(403).json({ error: pre.reason || 'CAREER_EXPLORE_LIMIT_EXCEEDED' });
+        }
+      } catch (preErr) {
+        console.error('checkCareerExplorePrecheck failed:', preErr);
+        return res.status(503).json({
+          error: 'QUOTA_CHECK_FAILED',
+          message: 'Unable to verify quota. Check Supabase and retry.',
+        });
+      }
+      pendingCareerStep = step;
+    } else {
+      try {
+        const usageCheck = await checkUsageEligibility(
+          authUser.userId,
+          authUser.membershipType,
+          normalizedAction,
+          interviewSessionId,
+          authUser.vipExpiresAt
+        );
+        if (!usageCheck.allowed) {
+          return res.status(403).json({ error: usageCheck.reason || 'USAGE_LIMIT_EXCEEDED' });
+        }
+      } catch (usageErr) {
+        console.error('checkUsageEligibility failed:', usageErr);
+        return res.status(503).json({
+          error: 'QUOTA_CHECK_FAILED',
+          message: 'Unable to verify quota. Check Supabase and retry.',
+        });
+      }
     }
 
     // ---- 转发到 Google API ----
@@ -565,45 +1142,77 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const requestBody: any = { contents: normalizedContents };
 
-    if (config) {
-      if (config.systemInstruction) {
+    if (config && typeof config === 'object') {
+      const cfg = config as Record<string, any>;
+      if (cfg.systemInstruction) {
         requestBody.systemInstruction = {
-          parts: [{ text: config.systemInstruction }]
+          parts: [{ text: cfg.systemInstruction }]
         };
       }
       const genConfig: any = {};
-      if (config.temperature !== undefined) genConfig.temperature = config.temperature;
-      if (config.maxOutputTokens !== undefined) genConfig.maxOutputTokens = config.maxOutputTokens;
-      if (config.topP !== undefined) genConfig.topP = config.topP;
-      if (config.topK !== undefined) genConfig.topK = config.topK;
-      if (config.responseMimeType) genConfig.responseMimeType = config.responseMimeType;
+      if (cfg.temperature !== undefined) genConfig.temperature = cfg.temperature;
+      if (cfg.maxOutputTokens !== undefined) genConfig.maxOutputTokens = cfg.maxOutputTokens;
+      if (cfg.topP !== undefined) genConfig.topP = cfg.topP;
+      if (cfg.topK !== undefined) genConfig.topK = cfg.topK;
+      if (cfg.responseMimeType) genConfig.responseMimeType = cfg.responseMimeType;
       if (Object.keys(genConfig).length > 0) {
         requestBody.generationConfig = genConfig;
       }
-      if (config.safetySettings) {
-        requestBody.safetySettings = config.safetySettings;
+      if (cfg.safetySettings) {
+        requestBody.safetySettings = cfg.safetySettings;
       }
     }
 
     const isStream = mode === 'stream';
     const action = isStream ? 'streamGenerateContent' : 'generateContent';
     const streamParam = isStream ? '&alt=sse' : '';
-    /** 命中这些「主模型」且 Google 返回 429/404 时，在同一请求内按 FALLBACK_MODELS 顺序再试（不重复请求已成功的主模型名） */
+    /** 命中这些模型且 Google 返回 429/404 时，在同一请求内按自定义或默认顺序再试 */
     const PRO_MODELS_429_FALLBACK = new Set([
-      'gemini-3.1-pro-preview', 'gemini-3-pro-preview',
+      'gemini-3.1-pro-preview',
       'gemini-2.5-pro', 'gemini-2.5-flash',
       'gemini-2.5-pro-preview-05-06', 'gemini-2.5-flash-preview-05-20',
+      'gemini-2.0-flash', 'gemini-2.0-flash-lite',
     ]);
-    /** 服务端兜底：稳定 ID（与 Google 文档 Model code 一致） */
-    const FALLBACK_MODELS = ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash'];
+    /** 未传或传入无效/空 fallbackModels 时与 geminiModelRouting 一致（避免空数组导致完全不 fallback） */
+    const DEFAULT_GOOGLE_FALLBACKS = [...PROXY_DEFAULT_FALLBACK_CHAIN];
 
-    const doFetch = (targetModel: string) => {
+    let serverFallbackSequence: string[] = DEFAULT_GOOGLE_FALLBACKS;
+    if (rawFallbackModels !== undefined) {
+      if (Array.isArray(rawFallbackModels) && rawFallbackModels.length <= 8) {
+        const custom: string[] = [];
+        let allValid = true;
+        for (const m of rawFallbackModels) {
+          if (typeof m !== 'string' || !ALLOWED_MODELS.has(m)) {
+            allValid = false;
+            break;
+          }
+          if (!custom.includes(m)) custom.push(m);
+        }
+        // 仅当非空且全部在白名单内时采用客户端链；[] 或非法数组回退默认链
+        if (allValid && custom.length > 0) {
+          serverFallbackSequence = custom;
+        }
+      }
+    }
+
+    const doFetch = (targetModel: string, timeoutMs?: number) => {
       const url = `${GOOGLE_API_BASE}/models/${targetModel}:${action}?key=${apiKey}${streamParam}`;
+      if (isStream) {
+        return fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody),
+        });
+      }
+      const ms = timeoutMs ?? GOOGLE_GENERATE_FETCH_TIMEOUT_MS;
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), ms);
       return fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
-      });
+        signal: controller.signal,
+      }).finally(() => clearTimeout(t));
     };
 
     let googleResponse: Response;
@@ -612,13 +1221,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     try {
       googleResponse = await doFetch(model);
     } catch (fetchErr: any) {
+      const isAbort =
+        fetchErr?.name === 'AbortError' || String(fetchErr?.message || '').toLowerCase().includes('abort');
       console.error('Google API fetch error:', fetchErr?.message || fetchErr);
-      return res.status(502).json({ error: 'AI_SERVICE_ERROR', message: 'Model unavailable or network error' });
+      return res.status(isAbort ? 504 : 502).json({
+        error: isAbort ? 'AI_UPSTREAM_TIMEOUT' : 'AI_SERVICE_ERROR',
+        message: isAbort
+          ? '上游模型响应超时，请稍后重试或缩短简历正文'
+          : 'Model unavailable or network error',
+      });
     }
 
     // 主模型 429 时依次 fallback（不同配额池），尽量让用户能用上
     if (googleResponse.status === 429 && PRO_MODELS_429_FALLBACK.has(model)) {
-      for (const fallback of FALLBACK_MODELS) {
+      for (const fallback of serverFallbackSequence) {
         if (fallback === model) continue;
         console.warn(`主模型 ${model} 429，尝试 fallback: ${fallback}`);
         try {
@@ -634,7 +1250,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // 404 ENTITY_NOT_FOUND：主模型不可用（如 API Key 无权限）时尝试 fallback
     if (googleResponse.status === 404 && PRO_MODELS_429_FALLBACK.has(model)) {
-      for (const fallback of FALLBACK_MODELS) {
+      for (const fallback of serverFallbackSequence) {
         if (fallback === model) continue;
         console.warn(`主模型 ${model} 404，尝试 fallback: ${fallback}`);
         try {
@@ -684,29 +1300,122 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(500).json({ error: 'Failed to get response stream' });
       }
 
+      const sseAcc: SseUsageAcc = { sawModelText: false, blocked: false, carry: '', bytesIn: 0 };
+      let streamCompleted = false;
       try {
         for await (const chunk of body as any) {
           const text = typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf-8');
+          feedGeminiSseUsageAcc(sseAcc, text);
           res.write(text);
         }
+        streamCompleted = true;
+        feedGeminiSseUsageAcc(sseAcc, '\n\n');
+        finalizeCareerExploreStreamUsageAcc(sseAcc, !!pendingCareerStep);
       } catch (e) {
         console.error('Stream error:', e);
       } finally {
         res.end();
       }
+      /**
+       * 职业探索（pendingCareerStep）走流式时：前端已能完整消费 SSE 即视为成功。
+       * 注意：carry 是「未拼完的 SSE 缓冲区」，完整事件解析后会被从 carry 里摘掉，流正常结束时 carry 往往很短甚至空，
+       * 不能用 carry.length 判断是否有正文（否则会永远不记账）。用 sawModelText 或上游累计字节数 bytesIn。
+       * 非职业探索流（诊断等）仍要求 sawModelText。
+       */
+      const careerStreamLooksSuccessful =
+        sseAcc.sawModelText || sseAcc.bytesIn >= 64;
+      const shouldBill =
+        streamCompleted &&
+        !sseAcc.blocked &&
+        (pendingCareerStep ? careerStreamLooksSuccessful : sseAcc.sawModelText);
+      if (shouldBill) {
+        if (pendingCareerStep) {
+          try {
+            await recordCareerExploreSuccess(authUser.userId, pendingCareerStep);
+          } catch (e) {
+            console.error('recordCareerExploreSuccess failed:', e);
+          }
+        } else {
+          recordUsageSuccess(
+            authUser.userId,
+            authUser.membershipType,
+            normalizedAction,
+            interviewSessionId
+          );
+        }
+      }
+      return;
     } else {
-      const data = await googleResponse.json();
+      let data: unknown;
+      try {
+        data = await googleResponse.json();
+      } catch (parseErr) {
+        console.error('Gemini JSON parse error:', parseErr);
+        return res.status(502).json({ error: 'AI_SERVICE_ERROR' });
+      }
+
+      const reqMime = (requestBody as { generationConfig?: { responseMimeType?: string } })
+        .generationConfig?.responseMimeType;
+      const requireCareerStructuredJson =
+        normalizedAction === 'career_explore' &&
+        (reqMime === 'application/json' || reqMime === 'text/json');
+
+      if (requireCareerStructuredJson && !careerExploreJsonResponseOk(data)) {
+        const tried = new Set<string>([resolvedModel]);
+        let recovered: unknown | null = null;
+        let finalModel = resolvedModel;
+        for (const tryM of CAREER_JSON_RECOVERY_MODELS) {
+          if (tried.has(tryM) || !ALLOWED_MODELS.has(tryM)) continue;
+          tried.add(tryM);
+          try {
+            const r2 = await doFetch(tryM);
+            if (!r2.ok) continue;
+            const d2 = await r2.json();
+            if (!careerExploreJsonResponseOk(d2)) continue;
+            recovered = d2;
+            finalModel = tryM;
+            break;
+          } catch {
+            /* 超时或网络：试下一个 Flash */
+          }
+        }
+        if (recovered == null) {
+          return res.status(502).json({
+            error: 'AI_EMPTY_OR_UNPARSABLE',
+            message: '模型返回为空或无法解析为 JSON，已自动换模型重试仍失败，请稍后重试',
+          });
+        }
+        data = recovered;
+        resolvedModel = finalModel;
+      }
+
       res.setHeader('X-Gemini-Model', resolvedModel);
       res.setHeader('Access-Control-Expose-Headers', 'X-Gemini-Model');
+      if (shouldBillGeminiRestResponse(data)) {
+        if (pendingCareerStep) {
+          try {
+            await recordCareerExploreSuccess(authUser.userId, pendingCareerStep);
+          } catch (e) {
+            console.error('recordCareerExploreSuccess failed:', e);
+          }
+        } else {
+          recordUsageSuccess(
+            authUser.userId,
+            authUser.membershipType,
+            normalizedAction,
+            interviewSessionId
+          );
+        }
+      }
       return res.status(200).json(data);
     }
   } catch (error: any) {
     console.error('Proxy error:', error);
-    return res.status(500).json({ error: error.message || 'Internal proxy error' });
+    return res.status(500).json({ error: 'AI_SERVICE_ERROR' });
   }
 
   } catch (err: any) {
     console.error('Handler error:', err);
-    return res.status(500).json({ error: 'AI_SERVICE_ERROR', message: err?.message || 'Service temporarily unavailable' });
+    return res.status(500).json({ error: 'AI_SERVICE_ERROR' });
   }
 }

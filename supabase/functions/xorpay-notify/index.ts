@@ -241,8 +241,8 @@ serve(async (req) => {
       return new Response('ok', { status: 200 })
     }
 
-    // 5. 更新订单状态
-    const { error: updateError } = await supabase
+    // 5. 仅将 pending → paid（幂等：并发回调只一方执行业务）
+    const { data: updatedRows, error: updateError } = await supabase
       .from('payment_orders')
       .update({
         status: 'paid',
@@ -251,10 +251,24 @@ serve(async (req) => {
         payment_detail: detail,
       })
       .eq('id', orderId)
+      .eq('status', 'pending')
+      .select('id')
 
     if (updateError) {
       console.error('更新订单失败:', updateError)
       return new Response('Update Error', { status: 500 })
+    }
+
+    if (!updatedRows || updatedRows.length === 0) {
+      const { data: recheck } = await supabase
+        .from('payment_orders')
+        .select('status')
+        .eq('id', orderId)
+        .single()
+      if (recheck?.status === 'paid') {
+        return new Response('ok', { status: 200 })
+      }
+      return new Response('Conflict', { status: 409 })
     }
 
     // 6. 根据产品类型处理业务逻辑
@@ -262,10 +276,16 @@ serve(async (req) => {
     const productId = order.product_id
     const productType = order.product_type
 
-    if (productType === 'vip') {
-      // VIP 会员：更新会员状态，根据 productId 区分时长
-      const duration = productId === 'vip_sprint' ? 10 : 30
-      // 如果当前仍在 VIP 有效期内，从现有到期时间叠加；否则从当前时间开始
+    // 与 api/xorpay/notify.ts 一致：按 product_id 区分老 VIP 与两档新会员；同档续费从到期日叠加
+    const subProducts = ['vip_sprint', 'vip_monthly', 'resume_pass_10d', 'full_monthly'] as const
+    if ((subProducts as readonly string[]).includes(productId)) {
+      const cfg: Record<string, { membership: string; days: number }> = {
+        vip_sprint: { membership: 'vip', days: 10 },
+        vip_monthly: { membership: 'vip', days: 30 },
+        resume_pass_10d: { membership: 'resume_pass', days: 10 },
+        full_monthly: { membership: 'full_monthly', days: 30 },
+      }
+      const { membership, days } = cfg[productId as keyof typeof cfg]
       const now = new Date()
       let baseDate = now
       const { data: profileData } = await supabase
@@ -273,18 +293,18 @@ serve(async (req) => {
         .select('vip_expires_at, membership_type')
         .eq('id', userId)
         .single()
-      if (profileData?.membership_type === 'vip' && profileData?.vip_expires_at) {
+      if (profileData?.membership_type === membership && profileData?.vip_expires_at) {
         const existingExpiry = new Date(profileData.vip_expires_at)
         if (existingExpiry > now) {
           baseDate = existingExpiry
         }
       }
-      const expiresAt = new Date(baseDate.getTime() + duration * 24 * 60 * 60 * 1000)
+      const expiresAt = new Date(baseDate.getTime() + days * 24 * 60 * 60 * 1000)
 
       const { error: profileError } = await supabase
         .from('profiles')
         .update({
-          membership_type: 'vip',
+          membership_type: membership,
           vip_expires_at: expiresAt.toISOString(),
           updated_at: new Date().toISOString(),
         })

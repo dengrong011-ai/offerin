@@ -1,5 +1,5 @@
-
 import React from 'react';
+import DOMPurify from 'dompurify';
 
 export type ResumeTemplate = 'classic' | 'tech' | 'academic';
 
@@ -136,12 +136,12 @@ const MarkdownRenderer: React.FC<Props> = ({
       const headerHtml = `
         <div style="display:flex;align-items:flex-start;gap:12px;margin-top:0;margin-bottom:8px;width:100%;padding-top:2px;">
           <div style="flex:1;min-width:0;">
-            <h1 class="font-bold text-slate-900 uppercase" style="font-size: 24pt; margin: 0 0 6px 0; padding: 0; font-family: ${s.fontFamily}; letter-spacing: 0.5px; line-height: 1;">${headerName}</h1>
+            <h1 style="font-weight:700;color:#0f172a;text-transform:uppercase;font-size:24pt;margin:0 0 6px 0;padding:0;font-family:${s.fontFamily};letter-spacing:0.5px;line-height:1;">${headerName}</h1>
             ${contactLines.map((line: string) => 
-              `<div style="font-size: 10.5pt; line-height: ${s.lineHeightPx}; margin-top: 2px;" class="text-slate-700 break-words font-serif italic">${processCommonMarkdown(line)}</div>`
+              `<div style="font-size:10.5pt;line-height:${s.lineHeightPx};margin-top:2px;color:#334155;word-break:break-word;font-family:Georgia,'Times New Roman',serif;font-style:italic;">${processCommonMarkdown(line)}</div>`
             ).join('\n')}
             ${summaryLines.length ? summaryLines.map((line: string) => 
-              `<div style="font-size: ${s.baseTextSize}; line-height: ${s.lineHeightPx}; margin-top: 4px; font-family: ${s.fontFamily};" class="text-slate-900 break-words">${processCommonMarkdown(line)}</div>`
+              `<div style="font-size:${s.baseTextSize};line-height:${s.lineHeightPx};margin-top:4px;font-family:${s.fontFamily};color:#0f172a;word-break:break-word;">${processCommonMarkdown(line)}</div>`
             ).join('\n') : ''}
           </div>
           ${imgUrl ? `<div style="flex-shrink:0;width:80px;height:107px;overflow:hidden;"><img src="${imgUrl}" style="width:80px;height:107px;object-fit:cover;border:1px solid #ddd;border-radius:2px;display:block;" alt="" onerror="this.style.display='none';this.parentElement.style.background='#f1f5f9';" /></div>` : ''}
@@ -150,53 +150,53 @@ const MarkdownRenderer: React.FC<Props> = ({
       html = html.replace(headerMatchStr, headerHtml);
     } else {
       html = html
-        .replace(/^# (.*$)/gm, `<h1 class="font-bold text-slate-900 uppercase" style="font-size: 24pt; margin-top: 0; margin-bottom: 6px; font-family: ${s.fontFamily}; border-bottom: 2px solid #000; padding-bottom: 8px; line-height: 1.2;">$1</h1>`)
-        .replace(/^> (.*$)/gm, `<div style="font-size: 10pt; margin-bottom: 12px; line-height: 1.4;" class="text-slate-700 italic font-serif break-words">$1</div>`);
+        .replace(/^# (.*$)/gm, `<h1 style="font-weight:700;color:#0f172a;text-transform:uppercase;font-size:24pt;margin-top:0;margin-bottom:6px;font-family:${s.fontFamily};border-bottom:2px solid #000;padding-bottom:8px;line-height:1.2;">$1</h1>`)
+        .replace(/^> (.*$)/gm, `<div style="font-size:10pt;margin-bottom:12px;line-height:1.4;color:#334155;font-style:italic;font-family:Georgia,'Times New Roman',serif;word-break:break-word;">$1</div>`);
     }
 
     html = html
       .replace(/^## (.*$)/gm, `
         <div style="margin-top: ${s.h2Top}; margin-bottom: ${s.h2Bottom}; border-bottom: 1.5px solid #18181b; width: 100%;">
-          <h2 class="font-bold text-slate-900 uppercase" style="font-size: 11pt; font-family: ${s.fontFamily}; letter-spacing: 1px; line-height: 1.4; margin: 0;">$1</h2>
+          <h2 style="font-weight:700;color:#0f172a;text-transform:uppercase;font-size:11pt;font-family:${s.fontFamily};letter-spacing:1px;line-height:1.4;margin:0;">$1</h2>
           <div style="height: 8px; background: transparent;"></div>
         </div>
       `)
       
       .replace(/^###\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*$/gm, `
-        <div class="flex justify-between items-baseline w-full gap-4" style="margin-top: ${s.h3Top}; margin-bottom: ${s.h3Bottom};">
-          <div class="flex flex-wrap items-baseline gap-x-2 flex-1 min-w-0">
-            <strong class="font-bold text-slate-900 leading-snug" style="font-size: 11pt; font-family: ${s.fontFamily};">$1</strong>
-            <span class="text-slate-900" style="font-size: 11pt;">,</span>
-            <span class="italic text-slate-800 leading-snug" style="font-size: 11pt; font-family: ${s.fontFamily};">$2</span>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;width:100%;gap:8px;margin-top: ${s.h3Top}; margin-bottom: ${s.h3Bottom};">
+          <div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:0 6px;flex:1;min-width:0;">
+            <strong style="font-size:11pt;font-family:${s.fontFamily};font-weight:700;color:#0f172a;line-height:1.375;">$1</strong>
+            <span style="font-size:11pt;color:#0f172a;">,</span>
+            <span style="font-size:11pt;font-style:italic;color:#1e293b;font-family:${s.fontFamily};line-height:1.375;">$2</span>
           </div>
-          <div class="font-bold text-slate-900 shrink-0 whitespace-nowrap" style="font-size: 11pt; font-family: ${s.fontFamily};">$3</div>
+          <div style="font-size:11pt;font-family:${s.fontFamily};font-weight:700;color:#0f172a;flex-shrink:0;white-space:nowrap;">$3</div>
         </div>
       `)
       .replace(/^###\s*(.*?)\s*\|\s*(.*?)\s*$/gm, `
-        <div class="flex justify-between items-baseline w-full gap-4" style="margin-top: ${s.h3Top}; margin-bottom: ${s.h3Bottom};">
-          <strong class="font-bold text-slate-900 flex-1 min-w-0 leading-snug" style="font-size: 11pt; font-family: ${s.fontFamily};">$1</strong>
-          <div class="font-bold text-slate-900 shrink-0 whitespace-nowrap" style="font-size: 11pt; font-family: ${s.fontFamily};">$2</div>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;width:100%;gap:8px;margin-top: ${s.h3Top}; margin-bottom: ${s.h3Bottom};">
+          <strong style="font-size:11pt;font-family:${s.fontFamily};font-weight:700;color:#0f172a;flex:1;min-width:0;line-height:1.375;">$1</strong>
+          <div style="font-size:11pt;font-family:${s.fontFamily};font-weight:700;color:#0f172a;flex-shrink:0;white-space:nowrap;">$2</div>
         </div>
       `)
-      .replace(/^### (.*$)/gm, `<h3 class="font-bold text-slate-900" style="font-size: 11pt; margin-top: ${s.h3Top}; margin-bottom: ${s.h3Bottom}; font-family: ${s.fontFamily};">$1</h3>`)
+      .replace(/^### (.*$)/gm, `<h3 style="font-weight:700;color:#0f172a;font-size:11pt;margin-top: ${s.h3Top}; margin-bottom: ${s.h3Bottom}; font-family: ${s.fontFamily};">$1</h3>`)
 
       .replace(/^\s*\*\*(.*?)\*\*\s*\|\s*(.*?)\s*\|\s*(.*?)\s*$/gm, `
-        <div class="flex justify-between items-baseline w-full gap-4" style="margin-top: ${s.eduMargin}; margin-bottom: ${s.eduMargin};">
-           <div class="flex flex-wrap items-baseline gap-x-2 flex-1 min-w-0">
-             <strong style="font-size: 11pt;" class="font-bold text-slate-900" style="font-family: ${s.fontFamily};">$1</strong>
-             <span style="font-size: 11pt;" class="text-slate-900">,</span>
-             <span style="font-size: 11pt;" class="italic text-slate-800">$2</span>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;width:100%;gap:8px;margin-top: ${s.eduMargin}; margin-bottom: ${s.eduMargin};">
+           <div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:0 6px;flex:1;min-width:0;">
+             <strong style="font-size:11pt;font-family:${s.fontFamily};font-weight:700;color:#0f172a;">$1</strong>
+             <span style="font-size:11pt;color:#0f172a;">,</span>
+             <span style="font-size:11pt;font-style:italic;color:#1e293b;">$2</span>
            </div>
-           <div style="font-size: 11pt;" class="font-bold text-slate-900 shrink-0 whitespace-nowrap">$3</div>
+           <div style="font-size:11pt;font-family:${s.fontFamily};font-weight:700;color:#0f172a;flex-shrink:0;white-space:nowrap;">$3</div>
         </div>
       `);
 
     html = processCommonMarkdown(html);
 
     html = html.replace(/^\s*[\-\*] (.*$)/gm, `
-      <div class="flex items-start relative pl-4" style="margin-bottom: ${s.listMb}; line-height: ${s.lineHeightPx};">
-         <span class="absolute left-0 top-0 text-slate-900" style="font-size: 12px; line-height: ${s.lineHeightPx};">▪</span>
-         <span class="flex-1 text-justify text-slate-900" style="line-height: ${s.lineHeightPx};">$1</span>
+      <div style="display:flex;align-items:flex-start;position:relative;padding-left:16px;margin-bottom: ${s.listMb}; line-height: ${s.lineHeightPx};">
+         <span style="position:absolute;left:0;top:0;font-size:12px;line-height: ${s.lineHeightPx};color:#0f172a;">▪</span>
+         <span style="flex:1;text-align:justify;color:#0f172a;line-height: ${s.lineHeightPx};">$1</span>
       </div>
     `);
       
@@ -659,6 +659,29 @@ const MarkdownRenderer: React.FC<Props> = ({
     }
   };
   const finalHtml = getResumeHtml();
+  // 简历大量用 Tailwind class（flex / justify-between / whitespace-nowrap）做标题+日期同行，须保留 class
+  const safeHtml = DOMPurify.sanitize(finalHtml, {
+    ALLOWED_TAGS: [
+      'a',
+      'br',
+      'code',
+      'div',
+      'em',
+      'h1',
+      'h2',
+      'h3',
+      'h4',
+      'img',
+      'li',
+      'ol',
+      'p',
+      'span',
+      'strong',
+      'ul',
+    ],
+    ALLOWED_ATTR: ['href', 'target', 'rel', 'src', 'alt', 'style', 'class'],
+    ALLOW_DATA_ATTR: false,
+  });
 
   return (
     <div 
@@ -669,7 +692,7 @@ const MarkdownRenderer: React.FC<Props> = ({
         lineHeight: mode === 'resume' ? 1.5 : 1.6,
         fontVariantLigatures: 'none'
       }}
-      dangerouslySetInnerHTML={{ __html: finalHtml }}
+      dangerouslySetInnerHTML={{ __html: safeHtml }}
     />
   );
 };

@@ -13,6 +13,8 @@
 import { GoogleGenAI } from "@google/genai";
 import { supabase } from "./supabaseClient";
 
+export type CareerExploreStep = 'profile' | 'directions' | 'plan' | 'jd_demo';
+
 /** 本地开发时在控制台打印本次实际使用的模型（代理从响应头读，含服务端 fallback） */
 function logDevGeminiModel(requestedModel: string, actualModel: string | null) {
   if (!import.meta.env.DEV) return;
@@ -79,19 +81,36 @@ async function buildAuthHeaders(): Promise<Record<string, string>> {
 /**
  * 通过代理发起流式请求，返回 AsyncIterable 兼容格式
  */
-async function proxyStreamRequest(options: {
+export type ProxyGeminiOptions = {
   model: string;
   contents: any[];
   config: any;
+  /** 传给代理：主模型 429/404 时按此顺序再试（须为白名单模型） */
+  fallbackModels?: string[];
+  /** 整场模拟面试共用；免费试用按场次计（见 proxy checkUsageEligibility） */
+  interviewSessionId?: string;
+};
+
+async function proxyStreamRequest(options: ProxyGeminiOptions & {
   actionType?: string;
+  careerExploreStep?: CareerExploreStep;
 }): Promise<AsyncIterable<{ text: string }>> {
-  const { model, contents, config, actionType } = options;
+  const { model, contents, config, actionType, careerExploreStep, fallbackModels, interviewSessionId } = options;
   const headers = await buildAuthHeaders();
 
   const response = await fetch(getProxyUrl(), {
     method: 'POST',
     headers,
-    body: JSON.stringify({ model, contents, config, mode: 'stream', actionType: actionType || 'diagnosis' }),
+    body: JSON.stringify({
+      model,
+      contents,
+      config,
+      mode: 'stream',
+      actionType: actionType || 'diagnosis',
+      ...(actionType === 'career_explore' && careerExploreStep ? { careerExploreStep } : {}),
+      ...(fallbackModels !== undefined ? { fallbackModels } : {}),
+      ...(interviewSessionId ? { interviewSessionId } : {}),
+    }),
   });
 
   if (!response.ok) {
@@ -115,8 +134,18 @@ async function proxyStreamRequest(options: {
       if (errorJson.error?.includes('LIMIT_EXCEEDED')) {
         throw new Error(errorJson.error);
       }
+      if (typeof errorJson.error === 'string' && errorJson.error.startsWith('CAREER_')) {
+        throw new Error(errorJson.error);
+      }
     } catch (e: any) {
-      if (e.message === 'UNAUTHORIZED' || e.message === 'RATE_LIMIT_EXCEEDED' || e.message === 'AI_RATE_LIMIT_EXCEEDED' || e.message === 'PAYLOAD_TOO_LARGE' || e.message?.includes('LIMIT_EXCEEDED')) {
+      if (
+        e.message === 'UNAUTHORIZED' ||
+        e.message === 'RATE_LIMIT_EXCEEDED' ||
+        e.message === 'AI_RATE_LIMIT_EXCEEDED' ||
+        e.message === 'PAYLOAD_TOO_LARGE' ||
+        e.message?.includes('LIMIT_EXCEEDED') ||
+        e.message?.startsWith('CAREER_')
+      ) {
         throw e;
       }
     }
@@ -149,9 +178,14 @@ async function proxyStreamRequest(options: {
       if (jsonStr.trim() === '[DONE]') continue;
       try {
         const parsed = JSON.parse(jsonStr);
-        const text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text) {
-          textQueue.push(text);
+        const parts = parsed?.candidates?.[0]?.content?.parts;
+        if (Array.isArray(parts)) {
+          for (const part of parts) {
+            const t = part?.text;
+            if (typeof t === 'string' && t.length > 0) {
+              textQueue.push(t);
+            }
+          }
         }
       } catch {
         // 跳过无法解析的事件
@@ -189,20 +223,44 @@ async function proxyStreamRequest(options: {
 /**
  * 通过代理发起普通（非流式）请求
  */
-async function proxyGenerateRequest(options: {
-  model: string;
-  contents: any[];
-  config: any;
+/** 浏览器侧等待代理整段响应的上限（略低于 Vercel 300s，避免永远挂起） */
+const PROXY_GENERATE_CLIENT_TIMEOUT_MS = 240_000;
+
+async function proxyGenerateRequest(options: ProxyGeminiOptions & {
   actionType?: string;
+  careerExploreStep?: CareerExploreStep;
 }): Promise<{ text: string }> {
-  const { model, contents, config, actionType } = options;
+  const { model, contents, config, actionType, careerExploreStep, fallbackModels, interviewSessionId } = options;
   const headers = await buildAuthHeaders();
 
-  const response = await fetch(getProxyUrl(), {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ model, contents, config, mode: 'generate', actionType: actionType || 'diagnosis' }),
+  const body = JSON.stringify({
+    model,
+    contents,
+    config,
+    mode: 'generate',
+    actionType: actionType || 'diagnosis',
+    ...(actionType === 'career_explore' && careerExploreStep ? { careerExploreStep } : {}),
+    ...(fallbackModels !== undefined ? { fallbackModels } : {}),
+    ...(interviewSessionId ? { interviewSessionId } : {}),
   });
+
+  let response: Response;
+  try {
+    const ac = new AbortController();
+    const tid = setTimeout(() => ac.abort(), PROXY_GENERATE_CLIENT_TIMEOUT_MS);
+    response = await fetch(getProxyUrl(), {
+      method: 'POST',
+      headers,
+      body,
+      signal: ac.signal,
+    }).finally(() => clearTimeout(tid));
+  } catch (err: unknown) {
+    const name = err && typeof err === 'object' && 'name' in err ? String((err as { name?: string }).name) : '';
+    if (name === 'AbortError') {
+      throw new Error('请求超时，请稍后重试（若简历很长可先精简再试）');
+    }
+    throw err;
+  }
 
   if (!response.ok) {
     const errorData = await response.text();
@@ -217,8 +275,24 @@ async function proxyGenerateRequest(options: {
       if (errorJson.error?.includes('LIMIT_EXCEEDED')) {
         throw new Error(errorJson.error);
       }
+      if (typeof errorJson.error === 'string' && errorJson.error.startsWith('CAREER_')) {
+        throw new Error(errorJson.error);
+      }
+      if (errorJson.error === 'AI_UPSTREAM_TIMEOUT') {
+        throw new Error(errorJson.message || '上游模型响应超时，请稍后重试或缩短简历正文');
+      }
+      if (errorJson.error === 'AI_EMPTY_OR_UNPARSABLE') {
+        throw new Error(errorJson.message || '模型返回异常，请稍后重试');
+      }
     } catch (e: any) {
-      if (e.message === 'UNAUTHORIZED' || e.message === 'AI_RATE_LIMIT_EXCEEDED' || e.message?.includes('LIMIT_EXCEEDED')) {
+      if (
+        e.message === 'UNAUTHORIZED' ||
+        e.message === 'AI_RATE_LIMIT_EXCEEDED' ||
+        e.message?.includes('LIMIT_EXCEEDED') ||
+        e.message?.startsWith('CAREER_') ||
+        e.message?.includes('上游模型响应超时') ||
+        e.message?.includes('模型返回为空或无法解析')
+      ) {
         throw e;
       }
     }
@@ -227,21 +301,32 @@ async function proxyGenerateRequest(options: {
 
   logDevGeminiModel(model, response.headers.get('X-Gemini-Model'));
 
-  const data = await response.json();
+  const raw = await response.text();
+  if (!raw.trim()) {
+    throw new Error('Gemini 代理返回空内容，请稍后重试');
+  }
+  let data: { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+  try {
+    data = JSON.parse(raw) as typeof data;
+  } catch (e: any) {
+    const hint = e?.message || 'parse error';
+    throw new Error(
+      raw.length > 200
+        ? `Proxy JSON 解析失败 (${hint}): ${raw.slice(0, 200)}…`
+        : `Proxy JSON 解析失败 (${hint}): ${raw}`
+    );
+  }
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
   return { text };
 }
 
 /**
  * 统一的 AI 客户端 — 自动选择代理或直连
- * 
- * actionType 参数用于服务端使用量计数：
- * - 'diagnosis': 简历诊断
- * - 'interview': 面试模拟
- * - 'translation': 翻译
- * - 'resume_edit': 局部重写/精简
+ *
+ * actionType 参数用于服务端使用量计数；
+ * careerExploreStep 仅在 actionType === 'career_explore' 时必填（走代理时由服务端计次）。
  */
-export function createAIClient(actionType?: string) {
+export function createAIClient(actionType?: string, careerExploreStep?: CareerExploreStep) {
   const useProxy = shouldUseProxy();
 
   if (!useProxy) {
@@ -253,13 +338,27 @@ export function createAIClient(actionType?: string) {
     } else {
       const ai = new GoogleGenAI({ apiKey });
       return {
-        generateContentStream: async (options: { model: string; contents: any[]; config: any }) => {
-          const stream = await ai.models.generateContentStream(options);
+        generateContentStream: async (options: ProxyGeminiOptions) => {
+          const { fallbackModels: _fb, interviewSessionId: _sid, ...geminiOpts } = options;
+          if (import.meta.env.DEV && _fb?.length) {
+            console.warn(
+              '[GeminiProxy] 本地直连忽略 fallbackModels；请配置 VITE_REMOTE_PROXY_URL 或 vercel dev 以走代理回退链'
+            );
+          }
+          void _sid;
+          const stream = await ai.models.generateContentStream(geminiOpts);
           logDevGeminiModel(options.model, options.model);
           return stream;
         },
-        generateContent: async (options: { model: string; contents: any[]; config: any }) => {
-          const out = await ai.models.generateContent(options);
+        generateContent: async (options: ProxyGeminiOptions) => {
+          const { fallbackModels: _fb, interviewSessionId: _sid, ...geminiOpts } = options;
+          if (import.meta.env.DEV && _fb?.length) {
+            console.warn(
+              '[GeminiProxy] 本地直连忽略 fallbackModels；请配置 VITE_REMOTE_PROXY_URL 或 vercel dev 以走代理回退链'
+            );
+          }
+          void _sid;
+          const out = await ai.models.generateContent(geminiOpts);
           logDevGeminiModel(options.model, options.model);
           return out;
         },
@@ -269,11 +368,11 @@ export function createAIClient(actionType?: string) {
 
   // 生产环境：通过代理（携带 JWT + actionType）
   return {
-    generateContentStream: async (options: { model: string; contents: any[]; config: any }) => {
-      return proxyStreamRequest({ ...options, actionType });
+    generateContentStream: async (options: ProxyGeminiOptions) => {
+      return proxyStreamRequest({ ...options, actionType, careerExploreStep });
     },
-    generateContent: async (options: { model: string; contents: any[]; config: any }) => {
-      return proxyGenerateRequest({ ...options, actionType });
+    generateContent: async (options: ProxyGeminiOptions) => {
+      return proxyGenerateRequest({ ...options, actionType, careerExploreStep });
     },
   };
 }

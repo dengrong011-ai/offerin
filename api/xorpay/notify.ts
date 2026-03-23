@@ -206,25 +206,47 @@ const handlePaymentSuccess = async (orderId: string): Promise<boolean> => {
       return true;
     }
 
-    // 3. 更新订单状态
-    const { error: updateError } = await supabase
+    // 3. 仅将 pending → paid（并发回调时只一方成功，避免重复开通）
+    const paidAt = new Date().toISOString();
+    const { data: updatedRows, error: updateError } = await supabase
       .from('payment_orders')
       .update({
         status: 'paid',
-        paid_at: new Date().toISOString(),
+        paid_at: paidAt,
       })
-      .eq('id', orderId);
+      .eq('id', orderId)
+      .eq('status', 'pending')
+      .select('id');
 
     if (updateError) {
       console.error('更新订单状态失败:', updateError);
       return false;
     }
 
-    // 4. 根据产品类型处理
-    if (order.product_id === 'vip_monthly' || order.product_id === 'vip_sprint') {
-      // VIP 会员：更新会员状态
-      const duration = order.product_id === 'vip_sprint' ? 10 : 30;
-      // 如果当前仍在 VIP 有效期内，从现有到期时间叠加；否则从当前时间开始
+    if (!updatedRows || updatedRows.length === 0) {
+      const { data: recheck } = await supabase
+        .from('payment_orders')
+        .select('status')
+        .eq('id', orderId)
+        .single();
+      if (recheck?.status === 'paid') {
+        console.log('订单已由并发请求标记为已支付:', orderId);
+        return true;
+      }
+      console.error('订单非 pending，无法标记已支付:', orderId);
+      return false;
+    }
+
+    // 4. 根据产品类型处理（老 VIP 与两档新会员：同档续费从到期日叠加，否则从当前时间起算）
+    const subProducts = ['vip_sprint', 'vip_monthly', 'resume_pass_10d', 'full_monthly'] as const;
+    if ((subProducts as readonly string[]).includes(order.product_id)) {
+      const cfg: Record<string, { membership: string; days: number }> = {
+        vip_sprint: { membership: 'vip', days: 10 },
+        vip_monthly: { membership: 'vip', days: 30 },
+        resume_pass_10d: { membership: 'resume_pass', days: 10 },
+        full_monthly: { membership: 'full_monthly', days: 30 },
+      };
+      const { membership, days } = cfg[order.product_id as keyof typeof cfg];
       const now = new Date();
       let baseDate = now;
       const { data: profileData } = await supabase
@@ -232,18 +254,18 @@ const handlePaymentSuccess = async (orderId: string): Promise<boolean> => {
         .select('vip_expires_at, membership_type')
         .eq('id', order.user_id)
         .single();
-      if (profileData?.membership_type === 'vip' && profileData?.vip_expires_at) {
+      if (profileData?.membership_type === membership && profileData?.vip_expires_at) {
         const existingExpiry = new Date(profileData.vip_expires_at);
         if (existingExpiry > now) {
           baseDate = existingExpiry;
         }
       }
-      const expiresAt = new Date(baseDate.getTime() + duration * 24 * 60 * 60 * 1000);
+      const expiresAt = new Date(baseDate.getTime() + days * 24 * 60 * 60 * 1000);
 
       const { error: profileError } = await supabase
         .from('profiles')
         .update({
-          membership_type: 'vip',
+          membership_type: membership,
           vip_expires_at: expiresAt.toISOString(),
           updated_at: new Date().toISOString(),
         })
@@ -253,7 +275,7 @@ const handlePaymentSuccess = async (orderId: string): Promise<boolean> => {
         console.error('更新会员状态失败:', profileError);
         return false;
       }
-    } else if (order.product_id === 'resume_download') {
+    } else if (order.product_id === 'resume_download' || order.product_id === 'interview_export') {
       // 单次购买：记录购买记录
       const { error: purchaseError } = await supabase
         .from('single_purchases')
@@ -300,6 +322,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // 验证签名
     if (!verifySign(aoid, order_id, pay_price, pay_time, sign)) {
       console.error('签名验证失败');
+      return res.status(400).send('fail');
+    }
+
+    const { data: orderRow, error: orderFetchErr } = await supabase
+      .from('payment_orders')
+      .select('id, amount, status')
+      .eq('id', order_id)
+      .single();
+
+    if (orderFetchErr || !orderRow) {
+      console.error('回调订单不存在:', order_id);
+      return res.status(400).send('fail');
+    }
+
+    const payYuan = parseFloat(String(pay_price).replace(/[^\d.]/g, ''));
+    const payCents = Math.round(payYuan * 100);
+    const expectedCents = Number(orderRow.amount);
+    if (!Number.isFinite(payCents) || payCents !== expectedCents) {
+      console.error('回调金额与订单不一致:', pay_price, 'parsed=', payCents, 'expected=', expectedCents);
       return res.status(400).send('fail');
     }
 

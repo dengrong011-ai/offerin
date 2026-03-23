@@ -86,12 +86,7 @@ export const DownloadPayModal: React.FC<DownloadPayModalProps> = ({
     setError('');
 
     try {
-      // 获取回调地址
-      const notifyUrl = import.meta.env.VITE_XORPAY_NOTIFY_URL || 
-        `${window.location.origin}/api/xorpay/notify`;
-
-      // 创建支付订单
-      const result = await createXorPayOrder(user.id, 'resume_download', notifyUrl);
+      const result = await createXorPayOrder(user.id, 'resume_download');
 
       if (!result.success) {
         throw new Error(result.error || '创建订单失败');

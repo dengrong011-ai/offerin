@@ -11,26 +11,53 @@ import ResumeLibrary from './components/ResumeLibrary';
 import InterviewLibrary from './components/InterviewLibrary';
 import SelectionToolbar from './components/SelectionToolbar';
 import PhotoUploadPanel from './components/PhotoUploadPanel';
+import ExplorePage from './components/ExplorePage';
+import SavedResumePickModal, { type SavedResumePickMode } from './components/SavedResumePickModal';
+import PlanLibrary from './components/PlanLibrary';
+import PlanDetailPage from './components/PlanDetailPage';
+import JdLibrary from './components/JdLibrary';
+import SavedJdPickModal from './components/SavedJdPickModal';
+import HomeMarketing from './components/HomeMarketing';
+import ModelRoutingTestPage from './components/ModelRoutingTestPage';
+import type { SavedPlan } from './services/planService';
 import { useAuth } from './contexts/AuthContext';
-import { checkUsageLimit, logUsage, checkTranslationLimit } from './services/authService';
-import { createSavedResume, updateSavedResume, extractResumeTitle } from './services/resumeService';
+import { checkUsageLimit, checkTranslationLimit } from './services/authService';
+import { createSavedResume, updateSavedResume, extractResumeTitle, getSavedResumeBodyMarkdown } from './services/resumeService';
 import type { SavedInterviewRecord } from './services/interviewRecordService';
-import type { SavedResume } from './types';
-import { FileText, Target, Send, Loader2, RefreshCw, ChevronRight, Upload, X, Paperclip, Image as ImageIcon, File, AlertCircle, PenTool, ArrowLeft, Maximize2, Minimize2, ZoomIn, ZoomOut, CheckCircle2, AlertTriangle, AlignJustify, Languages, Globe, ArrowRight, Sparkles, Mic, Play, Users, Lock, Briefcase, Crown, Save, FolderOpen, MousePointerClick, Layout, BookOpen } from 'lucide-react';
+import type { SavedResume, SavedJd } from './types';
+import { FileText, Target, Send, Loader2, RefreshCw, ChevronRight, ChevronDown, Upload, X, Paperclip, Image as ImageIcon, File, AlertCircle, PenTool, ArrowLeft, Maximize2, Minimize2, ZoomIn, ZoomOut, CheckCircle2, AlertTriangle, AlignJustify, Languages, Globe, ArrowRight, Sparkles, Mic, Play, Users, Lock, Briefcase, Crown, Save, FolderOpen, MousePointerClick, Layout, BookOpen, ClipboardList, LayoutGrid, MessageSquare } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 
-type Step = 'INPUT' | 'UPLOAD' | 'ANALYSIS' | 'EDITOR' | 'ENGLISH_VERSION' | 'INTERVIEW' | 'RESUME_LIBRARY' | 'INTERVIEW_LIBRARY';
+type Step = 'INPUT' | 'UPLOAD' | 'ANALYSIS' | 'EDITOR' | 'ENGLISH_VERSION' | 'INTERVIEW' | 'RESUME_LIBRARY' | 'INTERVIEW_LIBRARY' | 'JD_LIBRARY' | 'EXPLORE' | 'PLAN_LIBRARY';
 
 const App: React.FC = () => {
   const { user, profile, loading: authLoading, refreshProfile } = useAuth();
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [showVIPModal, setShowVIPModal] = useState(false);
+  const [membershipModalProduct, setMembershipModalProduct] = useState<'resume_pass_10d' | 'full_monthly'>('full_monthly');
   const [showDownloadModal, setShowDownloadModal] = useState(false);
   const [usageLimitError, setUsageLimitError] = useState<string | null>(null);
   
   const [step, setStep] = useState<Step>('INPUT');
   const [viewingInterviewRecord, setViewingInterviewRecord] = useState<SavedInterviewRecord | null>(null);
+  const [viewingSavedCareerPlan, setViewingSavedCareerPlan] = useState<SavedPlan | null>(null);
+  /** 计划库「我的笔记本」打开时按该计划 id 筛选（从计划详情「查看关联笔记」跳转） */
+  const [planLibraryNotebookPlanId, setPlanLibraryNotebookPlanId] = useState<string | null>(null);
+  const handlePlanLibraryNotebookFocusConsumed = useCallback(() => setPlanLibraryNotebookPlanId(null), []);
+  const [uploadLibraryOpen, setUploadLibraryOpen] = useState(false);
+  const [uploadJdLibraryOpen, setUploadJdLibraryOpen] = useState(false);
+  const [modelTestMode, setModelTestMode] = useState(false);
+
+  useEffect(() => {
+    try {
+      if (new URLSearchParams(window.location.search).get('modeltest') === '1') {
+        setModelTestMode(true);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   // 检查登录状态，未登录则弹出登录框
   const requireLogin = (callback: () => void) => {
@@ -40,7 +67,60 @@ const App: React.FC = () => {
     }
     callback();
   };
-  
+
+  const handleUploadLibraryPick = useCallback((r: SavedResume, mode: SavedResumePickMode) => {
+    if (mode === 'resume' || mode === 'both') {
+      setResume(getSavedResumeBodyMarkdown(r));
+      setResumeFile(null);
+    }
+    if (mode === 'jd' || mode === 'both') {
+      setJd(r.job_description || '');
+      setJdFile(null);
+    }
+    if (mode === 'both') {
+      setAspiration(r.aspiration || '');
+    }
+  }, []);
+
+  const openResumeLibrary = useCallback(() => {
+    if (!user) {
+      setShowLoginModal(true);
+      return;
+    }
+    setUploadLibraryOpen(true);
+  }, [user]);
+
+  const handleUploadJdLibraryPick = useCallback((item: SavedJd) => {
+    setJd(item.content);
+    setJdFile(null);
+  }, []);
+
+  const openCareerExplore = useCallback(() => {
+    try {
+      const u = new URL(window.location.href);
+      u.searchParams.set('explore', '1');
+      window.history.replaceState({}, '', `${u.pathname}?${u.searchParams.toString()}`);
+    } catch {
+      window.history.replaceState({}, '', `${window.location.pathname}?explore=1`);
+    }
+    setStep('EXPLORE');
+  }, []);
+
+  const closeCareerExplore = useCallback(() => {
+    try {
+      window.history.replaceState({}, '', window.location.pathname);
+    } catch (_) {}
+    setStep('INPUT');
+  }, []);
+
+  useEffect(() => {
+    try {
+      if (new URLSearchParams(window.location.search).get('explore') === '1') {
+        setStep('EXPLORE');
+      }
+    } catch (_) {}
+  }, []);
+
   const [jd, setJd] = useState('');
   const [resume, setResume] = useState('');
   const [aspiration, setAspiration] = useState('');
@@ -89,6 +169,9 @@ const App: React.FC = () => {
   const resumeFileInputRef = useRef<HTMLInputElement>(null);
   const inputSectionRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  /** 本次「开始分析」使用的简历正文快照；取消分析返回上传页时写回，避免仅编辑器有字时被清空 */
+  const lastAnalysisResumeSnapshotRef = useRef('');
+  const prevStepRef = useRef<Step | null>(null);
 
   const A4_WIDTH_PX = 794;
   const A4_HEIGHT_PX = 1123; 
@@ -97,6 +180,17 @@ const App: React.FC = () => {
   const PAGE_PADDING_BOTTOM = 40; // 页面下边距
   const PAGE_PADDING_LEFT = 40;
   const PAGE_PADDING_RIGHT = 40; 
+
+  // 从编辑器回到「简历输入」时，以编辑器正文为准同步到上传页文本框，避免双缓冲不一致
+  useEffect(() => {
+    const was = prevStepRef.current;
+    prevStepRef.current = step;
+    if (was === null) return;
+    if (step === 'UPLOAD' && was === 'EDITOR') {
+      const t = editableResume.trim();
+      if (t) setResume(t);
+    }
+  }, [step, editableResume]);
 
   useEffect(() => {
     if (step !== 'EDITOR' && step !== 'ENGLISH_VERSION') return;
@@ -499,7 +593,12 @@ const App: React.FC = () => {
   };
 
   // 诊断完成后自动触发重构（后台执行）
-  const autoRewriteAfterDiagnosis = async (diagContent: string, abortController: AbortController) => {
+  const autoRewriteAfterDiagnosis = async (
+    diagContent: string,
+    abortController: AbortController,
+    /** 与本次诊断一致的正文快照（避免已清空 editableResume 后闭包读到空串） */
+    resumeForRewrite: string,
+  ) => {
     if (abortController.signal.aborted) return;
     
     setIsRewriting(true);
@@ -510,7 +609,7 @@ const App: React.FC = () => {
       const resumeFileData: FileData | undefined = resumeFile ? { data: resumeFile.data, mimeType: resumeFile.mime } : undefined;
 
       await rewriteResumeStream(
-        jd, resume, aspiration, diagContent,
+        jd, resumeForRewrite, aspiration, diagContent,
         {
           onResumeChunk: (chunk) => {
             if (abortController.signal.aborted) return;
@@ -536,7 +635,14 @@ const App: React.FC = () => {
   };
 
   const handleAnalysis = useCallback(async () => {
-    if (!jd.trim() && !jdFile && !resume.trim() && !resumeFile) {
+    // 与「简历输入」页文本框、编辑器双缓冲对齐：从简历库进编辑器时可能只有 editableResume 有字
+    const resumeTextSnapshot = resume.trim() || editableResume.trim();
+    lastAnalysisResumeSnapshotRef.current = resumeTextSnapshot;
+    if (resumeTextSnapshot) {
+      setResume(resumeTextSnapshot);
+    }
+
+    if (!jd.trim() && !jdFile && !resumeTextSnapshot && !resumeFile) {
       setError('请提供 JD 或 简历内容。');
       return;
     }
@@ -592,7 +698,7 @@ const App: React.FC = () => {
       // 使用流式诊断（仅诊断，不自动重写，节省 token）
       await analyzeResumeStream(
         jd, 
-        resume, 
+        resumeTextSnapshot, 
         aspiration,
         {
           onDiagnosisChunk: (chunk) => {
@@ -600,13 +706,10 @@ const App: React.FC = () => {
             setDiagnosisContent(prev => prev + chunk);
           },
           onDiagnosisComplete: (content) => {
-            // 诊断完成，记录使用
-            if (user) {
-              logUsage(user.id, 'diagnosis');
-            }
+            // 用量由服务端 proxy 在流式成功结束后写入 usage_logs，此处不再重复记账
             // 诊断完成后自动触发重构（后台执行，不阻塞用户阅读诊断报告）
             if (!abortController.signal.aborted) {
-              autoRewriteAfterDiagnosis(content, abortController);
+              autoRewriteAfterDiagnosis(content, abortController, resumeTextSnapshot);
             }
           },
           onError: (errorMsg) => {
@@ -672,7 +775,7 @@ const App: React.FC = () => {
         setIsAnalyzing(false);
       }
     }
-  }, [jd, resume, aspiration, jdFile, resumeFile, user]);
+  }, [jd, resume, editableResume, aspiration, jdFile, resumeFile, user]);
 
   const generateTranslation = async () => {
     if (!editableResume) return;
@@ -695,8 +798,7 @@ const App: React.FC = () => {
       const result = await translateResume(editableResume);
       setEnglishResume(result);
       setStep('ENGLISH_VERSION');
-      // 记录翻译使用
-      logUsage(user.id, 'translation');
+      // 翻译次数由服务端 proxy 在请求成功后记账
     } catch (err) {
       alert("翻译服务繁忙，请稍后再试。");
     } finally {
@@ -767,6 +869,11 @@ const App: React.FC = () => {
     setPreviewPageBreaks([0]);
     setProcessingState({jd: false, resume: false});
     setViewingInterviewRecord(null);
+    setViewingSavedCareerPlan(null);
+    setPlanLibraryNotebookPlanId(null);
+    try {
+      window.history.replaceState({}, '', window.location.pathname);
+    } catch (_) {}
   };
 
   // 切换账号或登出时清空面试/诊断相关状态与本地缓存，避免看到上一账号数据
@@ -798,7 +905,9 @@ const App: React.FC = () => {
     setIsAnalyzing(false);
     setDiagnosisContent('');
     setResumeContent('');
-    setEditableResume('');
+    const snap = lastAnalysisResumeSnapshotRef.current;
+    setResume(snap);
+    setEditableResume(snap);
     setEnglishResume('');
     setStep('UPLOAD');
   };
@@ -1399,7 +1508,10 @@ const App: React.FC = () => {
   // 从简历库打开简历进入编辑器
   const handleOpenSavedResume = (resume: SavedResume) => {
     setCurrentSavedResumeId(resume.id);
-    setEditableResume(resume.resume_markdown);
+    const body = getSavedResumeBodyMarkdown(resume);
+    setEditableResume(body);
+    // 与「简历输入」页 `resume` 同步，避免从编辑器回到简历输入时正文被清空
+    setResume(body);
     setEnglishResume(resume.english_resume_markdown || '');
     setJd(resume.job_description || '');
     setAspiration(resume.aspiration || '');
@@ -1415,7 +1527,7 @@ const App: React.FC = () => {
     setStep('EDITOR');
 
     // 异步校验照片 URL，如果已失效则清理
-    const photoUrl = getPhotoUrlFromMarkdown(resume.resume_markdown);
+    const photoUrl = getPhotoUrlFromMarkdown(body);
     if (photoUrl) {
       const img = new Image();
       img.onload = () => {}; // 照片可用，无需处理
@@ -1484,48 +1596,177 @@ const App: React.FC = () => {
   };
   const capacity = getCapacityStatus();
 
+  const goHome = () => {
+    try {
+      window.history.replaceState({}, '', window.location.pathname);
+    } catch (_) {}
+    setStep('INPUT');
+  };
+
+  const openPlanLibrary = () => {
+    setViewingSavedCareerPlan(null);
+    setPlanLibraryNotebookPlanId(null);
+    setStep('PLAN_LIBRARY');
+  };
+
+  const resumeOptimizeActive =
+    step === 'UPLOAD' || step === 'ANALYSIS' || step === 'EDITOR' || step === 'ENGLISH_VERSION';
+  const contentMgmtActive =
+    step === 'JD_LIBRARY' || step === 'PLAN_LIBRARY' || step === 'RESUME_LIBRARY' || step === 'INTERVIEW_LIBRARY';
+
+  const navDropdownPanel =
+    'absolute left-1/2 -translate-x-1/2 top-full pt-1.5 z-[60] opacity-0 invisible pointer-events-none group-hover:opacity-100 group-hover:visible group-hover:pointer-events-auto transition-all duration-150';
+  const navDropdownInner = 'bg-white border border-zinc-200 rounded-lg shadow-xl py-1 min-w-[156px]';
+
+  if (modelTestMode) {
+    return (
+      <ModelRoutingTestPage
+        onClose={() => {
+          setModelTestMode(false);
+          try {
+            const u = new URL(window.location.href);
+            u.searchParams.delete('modeltest');
+            window.history.replaceState({}, '', `${u.pathname}${u.search}${u.hash}`);
+          } catch {
+            /* ignore */
+          }
+        }}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-white font-sans text-zinc-900 selection:bg-zinc-900 selection:text-white">
       
       {/* --- HEADER --- */}
+      {step !== 'EXPLORE' && (
       <header className={`fixed top-0 w-full z-50 transition-all duration-300 ${step === 'INPUT' ? 'bg-white/90 backdrop-blur-sm py-5' : 'bg-white border-b border-zinc-200 py-3'}`}>
-        <div className="container mx-auto px-6 flex items-center justify-between max-w-6xl">
-          <button onClick={resetAll} className="flex items-center hover:opacity-70 transition-opacity">
+        <div className="container mx-auto px-6 flex items-center justify-between gap-4 max-w-6xl">
+          <button type="button" onClick={resetAll} className="flex items-center hover:opacity-70 transition-opacity shrink-0">
              <span className="text-[18px] font-medium tracking-wide text-zinc-700" style={{ fontFamily: "'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif" }}>
                Offerin
              </span>
           </button>
 
-          {step !== 'INPUT' && (
-            <div className="hidden md:flex items-center gap-0.5 text-[13px] text-zinc-400">
-              <button onClick={() => setStep('INPUT')} className={`px-1.5 py-1 rounded transition-colors hover:text-zinc-600`}>首页</button>
-              <span className="text-zinc-300">|</span>
-              <button onClick={() => setStep('UPLOAD')} className={`px-1.5 py-1 rounded transition-colors ${step === 'UPLOAD' ? 'text-zinc-900 font-medium' : 'hover:text-zinc-600'}`}>简历输入</button>
-              <span className="text-zinc-300">-</span>
-              <button onClick={() => diagnosisContent && setStep('ANALYSIS')} className={`px-1.5 py-1 rounded transition-colors ${step === 'ANALYSIS' ? 'text-zinc-900 font-medium' : diagnosisContent ? 'hover:text-zinc-600' : 'text-zinc-300 cursor-not-allowed'}`}>诊断</button>
-              <span className="text-zinc-300">-</span>
-              <button onClick={() => !isRewriting && editableResume && setStep('EDITOR')} className={`px-1.5 py-1 rounded transition-colors ${step === 'EDITOR' ? 'text-zinc-900 font-medium' : !isRewriting && editableResume ? 'hover:text-zinc-600' : 'text-zinc-300 cursor-not-allowed'}`}>编辑</button>
-              <span className="text-zinc-300">-</span>
-              <button onClick={() => englishResume && setStep('ENGLISH_VERSION')} className={`px-1.5 py-1 rounded transition-colors ${step === 'ENGLISH_VERSION' ? 'text-zinc-900 font-medium' : englishResume ? 'hover:text-zinc-600' : 'text-zinc-300 cursor-not-allowed'}`}>英文版</button>
-              <span className="text-zinc-300 mx-0.5">|</span>
-              <button onClick={() => setStep('INTERVIEW')} className={`px-1.5 py-1 rounded transition-colors flex items-center gap-1 ${step === 'INTERVIEW' ? 'text-zinc-900 font-medium' : 'hover:text-zinc-600'}`}>
-                <Mic size={11} />
-                模拟面试
+          <nav className="hidden md:flex flex-1 min-w-0 justify-center flex-wrap items-center gap-x-0.5 gap-y-1 text-[12px] lg:text-[13px] text-zinc-400">
+            {step !== 'INPUT' && (
+              <>
+                <button type="button" onClick={goHome} className="px-1.5 py-1 rounded transition-colors hover:text-zinc-600">
+                  首页
+                </button>
+                <span className="text-zinc-300">|</span>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={openCareerExplore}
+              className={`px-1.5 py-1 rounded transition-colors flex items-center gap-1 ${step === 'EXPLORE' ? 'text-zinc-900 font-medium' : 'hover:text-zinc-600'}`}
+            >
+              <Target size={11} className="shrink-0" />
+              职业探索
+            </button>
+            <span className="text-zinc-300">|</span>
+            <div className="relative group">
+              <button
+                type="button"
+                className={`px-1.5 py-1 rounded transition-colors flex items-center gap-0.5 ${resumeOptimizeActive ? 'text-zinc-900 font-medium' : 'hover:text-zinc-600'}`}
+              >
+                <FileText size={11} className="shrink-0" />
+                简历优化
+                <ChevronDown size={12} className="text-zinc-400 opacity-70" />
               </button>
-              <span className="text-zinc-300 mx-0.5">|</span>
-              <button onClick={() => requireLogin(() => setStep('RESUME_LIBRARY'))} className={`px-1.5 py-1 rounded transition-colors flex items-center gap-1 ${step === 'RESUME_LIBRARY' ? 'text-zinc-900 font-medium' : 'hover:text-zinc-600'}`}>
-                <FolderOpen size={11} />
-                简历库
-              </button>
-              <span className="text-zinc-300 mx-0.5">|</span>
-              <button onClick={() => requireLogin(() => setStep('INTERVIEW_LIBRARY'))} className={`px-1.5 py-1 rounded transition-colors flex items-center gap-1 ${step === 'INTERVIEW_LIBRARY' ? 'text-zinc-900 font-medium' : 'hover:text-zinc-600'}`}>
-                <FolderOpen size={11} />
-                面试记录库
-              </button>
+              <div className={navDropdownPanel}>
+                <div className={navDropdownInner}>
+                  <button
+                    type="button"
+                    onClick={() => setStep('UPLOAD')}
+                    className={`w-full text-left px-3 py-2 text-[12px] rounded-md transition-colors ${step === 'UPLOAD' ? 'bg-zinc-100 text-zinc-900 font-medium' : 'text-zinc-600 hover:bg-zinc-50'}`}
+                  >
+                    简历输入
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => diagnosisContent && setStep('ANALYSIS')}
+                    className={`w-full text-left px-3 py-2 text-[12px] rounded-md transition-colors ${step === 'ANALYSIS' ? 'bg-zinc-100 text-zinc-900 font-medium' : diagnosisContent ? 'text-zinc-600 hover:bg-zinc-50' : 'text-zinc-300 cursor-not-allowed'}`}
+                  >
+                    诊断
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => !isRewriting && editableResume && setStep('EDITOR')}
+                    className={`w-full text-left px-3 py-2 text-[12px] rounded-md transition-colors ${step === 'EDITOR' ? 'bg-zinc-100 text-zinc-900 font-medium' : !isRewriting && editableResume ? 'text-zinc-600 hover:bg-zinc-50' : 'text-zinc-300 cursor-not-allowed'}`}
+                  >
+                    编辑
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => englishResume && setStep('ENGLISH_VERSION')}
+                    className={`w-full text-left px-3 py-2 text-[12px] rounded-md transition-colors ${step === 'ENGLISH_VERSION' ? 'bg-zinc-100 text-zinc-900 font-medium' : englishResume ? 'text-zinc-600 hover:bg-zinc-50' : 'text-zinc-300 cursor-not-allowed'}`}
+                  >
+                    英文版
+                  </button>
+                </div>
+              </div>
             </div>
-          )}
-          
-          <div className="flex items-center gap-3">
+            <span className="text-zinc-300">|</span>
+            <button
+              type="button"
+              onClick={() => setStep('INTERVIEW')}
+              className={`px-1.5 py-1 rounded transition-colors flex items-center gap-1 ${step === 'INTERVIEW' ? 'text-zinc-900 font-medium' : 'hover:text-zinc-600'}`}
+            >
+              <Mic size={11} className="shrink-0" />
+              模拟面试
+            </button>
+            <span className="text-zinc-300">|</span>
+            <div className="relative group">
+              <button
+                type="button"
+                className={`px-1.5 py-1 rounded transition-colors flex items-center gap-0.5 ${contentMgmtActive ? 'text-zinc-900 font-medium' : 'hover:text-zinc-600'}`}
+              >
+                <LayoutGrid size={11} className="shrink-0" />
+                内容管理
+                <ChevronDown size={12} className="text-zinc-400 opacity-70" />
+              </button>
+              <div className={navDropdownPanel}>
+                <div className={navDropdownInner}>
+                  <button
+                    type="button"
+                    onClick={() => requireLogin(() => setStep('JD_LIBRARY'))}
+                    className={`w-full text-left px-3 py-2 text-[12px] rounded-md transition-colors flex items-center gap-2 ${step === 'JD_LIBRARY' ? 'bg-zinc-100 text-zinc-900 font-medium' : 'text-zinc-600 hover:bg-zinc-50'}`}
+                  >
+                    <Briefcase size={12} className="shrink-0 opacity-70" />
+                    JD 库
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => requireLogin(openPlanLibrary)}
+                    className={`w-full text-left px-3 py-2 text-[12px] rounded-md transition-colors flex items-center gap-2 ${step === 'PLAN_LIBRARY' ? 'bg-zinc-100 text-zinc-900 font-medium' : 'text-zinc-600 hover:bg-zinc-50'}`}
+                  >
+                    <ClipboardList size={12} className="shrink-0 opacity-70" />
+                    计划库
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => requireLogin(() => setStep('RESUME_LIBRARY'))}
+                    className={`w-full text-left px-3 py-2 text-[12px] rounded-md transition-colors flex items-center gap-2 ${step === 'RESUME_LIBRARY' ? 'bg-zinc-100 text-zinc-900 font-medium' : 'text-zinc-600 hover:bg-zinc-50'}`}
+                  >
+                    <FolderOpen size={12} className="shrink-0 opacity-70" />
+                    简历库
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => requireLogin(() => setStep('INTERVIEW_LIBRARY'))}
+                    className={`w-full text-left px-3 py-2 text-[12px] rounded-md transition-colors flex items-center gap-2 ${step === 'INTERVIEW_LIBRARY' ? 'bg-zinc-100 text-zinc-900 font-medium' : 'text-zinc-600 hover:bg-zinc-50'}`}
+                  >
+                    <MessageSquare size={12} className="shrink-0 opacity-70" />
+                    面试记录
+                  </button>
+                </div>
+              </div>
+            </div>
+          </nav>
+
+          <div className="flex items-center gap-3 shrink-0">
             {step !== 'INPUT' && (
               <button onClick={resetAll} className="text-[13px] text-zinc-400 hover:text-zinc-900 transition-colors flex items-center gap-1.5">
                 <RefreshCw size={13} />
@@ -1535,20 +1776,48 @@ const App: React.FC = () => {
 
             <UserAvatar 
               onLoginClick={() => setShowLoginModal(true)} 
-              onUpgradeClick={() => setShowVIPModal(true)}
+              onUpgradeClick={() => {
+                setMembershipModalProduct('full_monthly');
+                setShowVIPModal(true);
+              }}
+              onJdLibrary={() => requireLogin(() => setStep('JD_LIBRARY'))}
+              onPlanLibrary={() => requireLogin(openPlanLibrary)}
               onResumeLibrary={() => requireLogin(() => setStep('RESUME_LIBRARY'))}
               onInterviewLibrary={() => requireLogin(() => setStep('INTERVIEW_LIBRARY'))}
             />
           </div>
         </div>
       </header>
+      )}
 
       {/* 登录弹窗 */}
       <LoginModal isOpen={showLoginModal} onClose={() => setShowLoginModal(false)} />
 
+      {user?.id && (
+        <SavedResumePickModal
+          isOpen={uploadLibraryOpen}
+          onClose={() => setUploadLibraryOpen(false)}
+          userId={user.id}
+          modes={['resume']}
+          title="从简历库载入简历"
+          onPick={handleUploadLibraryPick}
+        />
+      )}
+
+      {user?.id && (
+        <SavedJdPickModal
+          isOpen={uploadJdLibraryOpen}
+          onClose={() => setUploadJdLibraryOpen(false)}
+          userId={user.id}
+          title="从 JD 库载入"
+          onPick={handleUploadJdLibraryPick}
+        />
+      )}
+
       {/* VIP 升级弹窗 */}
       <VIPUpgradeModal 
         isOpen={showVIPModal} 
+        defaultProductId={membershipModalProduct}
         onClose={() => setShowVIPModal(false)}
         onSuccess={() => setUsageLimitError(null)}
       />
@@ -1561,7 +1830,10 @@ const App: React.FC = () => {
           setShowDownloadModal(false);
           doExportPDF();
         }}
-        onUpgradeVIP={() => setShowVIPModal(true)}
+        onUpgradeVIP={() => {
+          setMembershipModalProduct('full_monthly');
+          setShowVIPModal(true);
+        }}
       />
 
       {/* 简历命名弹窗（首次保存时） */}
@@ -1628,17 +1900,71 @@ const App: React.FC = () => {
               <button
                 onClick={() => {
                   setUsageLimitError(null);
+                  setMembershipModalProduct('full_monthly');
                   setShowVIPModal(true);
                 }}
                 className="flex-1 px-4 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 rounded-lg text-sm font-medium text-white hover:from-amber-600 hover:to-orange-600 transition-colors"
               >
-                升级 VIP
+                开通会员
               </button>
             </div>
           </div>
         </div>
       )}
 
+      {step === 'EXPLORE' && (
+        <ExplorePage
+          initialResumeFromApp={resume.trim() || undefined}
+          onBack={closeCareerExplore}
+          onOpenPlanLibrary={() =>
+            requireLogin(() => {
+              setViewingSavedCareerPlan(null);
+              setPlanLibraryNotebookPlanId(null);
+              setStep('PLAN_LIBRARY');
+            })
+          }
+          onOpenJdLibrary={() => requireLogin(() => setStep('JD_LIBRARY'))}
+        />
+      )}
+
+      {step === 'PLAN_LIBRARY' && (
+        <div className="min-h-screen bg-white pt-20 pb-12">
+          <div className="container mx-auto px-6 max-w-4xl">
+            {viewingSavedCareerPlan ? (
+              <PlanDetailPage
+                savedPlan={viewingSavedCareerPlan}
+                onBack={() => setViewingSavedCareerPlan(null)}
+                onOpenLinkedNotes={planId => {
+                  setViewingSavedCareerPlan(null);
+                  setPlanLibraryNotebookPlanId(planId);
+                }}
+              />
+            ) : (
+              <PlanLibrary
+                notebookFocusPlanId={planLibraryNotebookPlanId}
+                onNotebookFocusConsumed={handlePlanLibraryNotebookFocusConsumed}
+                onBack={() => {
+                  setViewingSavedCareerPlan(null);
+                  setPlanLibraryNotebookPlanId(null);
+                  try {
+                    window.history.replaceState({}, '', window.location.pathname);
+                  } catch (_) {}
+                  setStep('INPUT');
+                }}
+                onOpenPlan={p => setViewingSavedCareerPlan(p)}
+                onNewPlan={() => {
+                  setViewingSavedCareerPlan(null);
+                  setPlanLibraryNotebookPlanId(null);
+                  openCareerExplore();
+                }}
+              />
+            )}
+          </div>
+        </div>
+      )}
+
+      {(step !== 'EXPLORE' && step !== 'PLAN_LIBRARY') && (
+      <>
       {/* --- HERO --- */}
       {step === 'INPUT' && (
         <section className="pt-36 pb-16 px-6">
@@ -1649,7 +1975,7 @@ const App: React.FC = () => {
                 <span className="inline-block animate-slide-up animation-delay-100">你的 AI 求职专家</span>
               </h1>
               <p className="text-zinc-500 text-[15px] font-normal max-w-xl mx-auto mb-10 leading-relaxed animate-fade-in animation-delay-200">
-                求职全链路，每一步都更简单。
+                求职全链路，和你一起走完。
               </p>
               <a 
                 href="https://xhslink.com/m/AhWS7UwBPGZ" 
@@ -1661,579 +1987,27 @@ const App: React.FC = () => {
                 <ArrowRight size={14} />
               </a>
 
-              {/* 功能板块 */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-left items-stretch">
-                
-                {/* 板块一：简历优化 */}
-                <button 
-                  onClick={() => requireLogin(() => setStep('UPLOAD'))}
-                  className="rounded-xl border border-zinc-200 bg-white overflow-hidden text-left hover:border-zinc-300 hover:shadow-lg transition-all duration-300 group flex flex-col h-full hover:-translate-y-1"
-                >
-                  <div className="px-5 py-4 bg-zinc-50 border-b border-zinc-100 group-hover:bg-zinc-100 transition-colors">
-                    <div className="flex items-center gap-2">
-                      <FileText size={18} className="text-zinc-600" />
-                      <h2 className="font-display font-semibold text-[16px] text-zinc-800">简历优化</h2>
-                      <ArrowRight size={16} className="text-zinc-300 ml-auto group-hover:translate-x-1 group-hover:text-zinc-600 transition-all" />
-                    </div>
-                    <p className="text-[12px] text-zinc-400 mt-1">智能诊断 · AI 优化 · 逐句精调 · 英文翻译 · 简历库</p>
-                  </div>
-                  <div className="p-5 space-y-4 flex-1 flex flex-col">
-                    <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-50/50 group-hover:bg-zinc-100/50 transition-colors">
-                      <div className="w-8 h-8 rounded-md bg-zinc-100 flex items-center justify-center shrink-0">
-                        <Target size={16} className="text-zinc-600" />
-                      </div>
-                      <div>
-                        <h3 className="font-medium text-[13px] text-zinc-900 mb-0.5">智能诊断</h3>
-                        <p className="text-[12px] text-zinc-500 leading-relaxed">
-                          基于目标 JD 进行匹配度分析，提供评分、能力差距识别及 ATS 关键词建议
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-50/50 group-hover:bg-zinc-100/50 transition-colors">
-                      <div className="w-8 h-8 rounded-md bg-zinc-100 flex items-center justify-center shrink-0">
-                        <PenTool size={16} className="text-zinc-600" />
-                      </div>
-                      <div>
-                        <h3 className="font-medium text-[13px] text-zinc-900 mb-0.5">AI 优化 & 精调</h3>
-                        <p className="text-[12px] text-zinc-500 leading-relaxed">
-                          基于诊断结果智能优化简历，支持选中任意文本逐句 AI 精调，实时预览与 PDF 导出
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-50/50 group-hover:bg-zinc-100/50 transition-colors">
-                      <div className="w-8 h-8 rounded-md bg-zinc-100 flex items-center justify-center shrink-0">
-                        <Globe size={16} className="text-zinc-600" />
-                      </div>
-                      <div>
-                        <h3 className="font-medium text-[13px] text-zinc-900 mb-0.5">英文版本</h3>
-                        <p className="text-[12px] text-zinc-500 leading-relaxed">
-                          一键生成专业英文简历，遵循硅谷标准格式，助力外企与海外求职
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-50/50 group-hover:bg-zinc-100/50 transition-colors flex-1">
-                      <div className="w-8 h-8 rounded-md bg-zinc-100 flex items-center justify-center shrink-0">
-                        <FolderOpen size={16} className="text-zinc-600" />
-                      </div>
-                      <div>
-                        <h3 className="font-medium text-[13px] text-zinc-900 mb-0.5">简历库</h3>
-                        <p className="text-[12px] text-zinc-500 leading-relaxed">
-                          云端保存多版本简历，支持收藏、复制、重命名，随时打开继续编辑
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </button>
+              <HomeMarketing
+                requireLogin={requireLogin}
+                openCareerExplore={openCareerExplore}
+                onShowLogin={() => setShowLoginModal(true)}
+                onOpenMembership={(product) => {
+                  setMembershipModalProduct(product);
+                  setShowVIPModal(true);
+                }}
+                user={user?.id ? { id: user.id } : null}
+                onGoUpload={() => setStep('UPLOAD')}
+                onGoInterview={() => setStep('INTERVIEW')}
+                onGoJdLibrary={() => setStep('JD_LIBRARY')}
+                onGoPlanLibrary={() => {
+                  setViewingSavedCareerPlan(null);
+                  setPlanLibraryNotebookPlanId(null);
+                  setStep('PLAN_LIBRARY');
+                }}
+                onGoResumeLibrary={() => setStep('RESUME_LIBRARY')}
+                onGoInterviewLibrary={() => setStep('INTERVIEW_LIBRARY')}
+              />
 
-                {/* 板块二：模拟面试 */}
-                <button 
-                  onClick={() => requireLogin(() => setStep('INTERVIEW'))}
-                  className="rounded-xl border border-zinc-200 bg-white overflow-hidden text-left hover:border-zinc-300 hover:shadow-lg transition-all duration-300 group flex flex-col h-full hover:-translate-y-1"
-                >
-                  <div className="px-5 py-4 bg-zinc-50 border-b border-zinc-100 group-hover:bg-zinc-100 transition-colors">
-                    <div className="flex items-center gap-2">
-                      <Mic size={18} className="text-zinc-600" />
-                      <h2 className="font-display font-semibold text-[16px] text-zinc-800">模拟面试</h2>
-                      <ArrowRight size={16} className="text-zinc-300 ml-auto group-hover:translate-x-1 group-hover:text-zinc-600 transition-all" />
-                    </div>
-                    <p className="text-[12px] text-zinc-400 mt-1">纯模拟观摩 · 人机交互练习 · 五轮全流程 · 谈薪指导</p>
-                  </div>
-                  <div className="p-5 space-y-4 flex-1 flex flex-col">
-                    <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-50/50 group-hover:bg-zinc-100/50 transition-colors">
-                      <div className="w-8 h-8 rounded-md bg-zinc-100 flex items-center justify-center shrink-0">
-                        <Play size={16} className="text-zinc-600" />
-                      </div>
-                      <div>
-                        <h3 className="font-medium text-[13px] text-zinc-900 mb-0.5">纯模拟模式</h3>
-                        <p className="text-[12px] text-zinc-500 leading-relaxed">
-                          AI 同时扮演面试官和面试者，自动多轮问答，适合观摩学习标准回答
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-50/50 group-hover:bg-zinc-100/50 transition-colors">
-                      <div className="w-8 h-8 rounded-md bg-zinc-100 flex items-center justify-center shrink-0">
-                        <Users size={16} className="text-zinc-600" />
-                      </div>
-                      <div>
-                        <h3 className="font-medium text-[13px] text-zinc-900 mb-0.5">人机交互模式</h3>
-                        <p className="text-[12px] text-zinc-500 leading-relaxed">
-                          AI 提问你来回答，每轮获得即时点评反馈，真实模拟面试场景
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-50/50 group-hover:bg-zinc-100/50 transition-colors">
-                      <div className="w-8 h-8 rounded-md bg-zinc-100 flex items-center justify-center shrink-0">
-                        <Briefcase size={16} className="text-zinc-600" />
-                      </div>
-                      <div>
-                        <h3 className="font-medium text-[13px] text-zinc-900 mb-0.5">五轮全流程模拟</h3>
-                        <p className="text-[12px] text-zinc-500 leading-relaxed">
-                          真实模拟 TA→Peers→+1→+2→HRBP 完整面试链路
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3 p-3 rounded-lg bg-zinc-50/50 group-hover:bg-zinc-100/50 transition-colors flex-1">
-                      <div className="w-8 h-8 rounded-md bg-zinc-100 flex items-center justify-center shrink-0">
-                        <Target size={16} className="text-zinc-600" />
-                      </div>
-                      <div>
-                        <h3 className="font-medium text-[13px] text-zinc-900 mb-0.5">谈薪博弈指导</h3>
-                        <p className="text-[12px] text-zinc-500 leading-relaxed">
-                          HRBP 轮含薪资谈判模拟，提供策略建议与话术参考
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </button>
-
-              </div>
-
-              {/* 使用方式介绍 */}
-              <div className="mt-20 pt-16 border-t border-zinc-200">
-                <h2 className="font-display text-[24px] font-semibold text-zinc-900 mb-3">
-                  如何使用 Offerin
-                </h2>
-                <p className="text-zinc-500 text-[14px] mb-12 max-w-2xl mx-auto">
-                  两种使用路径，满足不同求职阶段的需求
-                </p>
-
-                {/* 路径一：完整流程 - 推荐 */}
-                <div className="bg-gradient-to-b from-zinc-50 to-zinc-100/50 border-2 border-zinc-200 rounded-2xl p-6 md:p-8 mb-6 text-left shadow-sm">
-                  <div className="flex flex-wrap items-center gap-3 mb-6">
-                    <div className="w-8 h-8 rounded-full bg-zinc-900 flex items-center justify-center text-white font-semibold text-[14px] shrink-0">
-                      1
-                    </div>
-                    <h3 className="text-zinc-800 font-semibold text-[16px] md:text-[18px]">推荐路径：简历优化 → 模拟面试</h3>
-                    <span className="px-3 py-1 bg-zinc-900 text-white text-[12px] rounded-full font-medium shrink-0">
-                      ✨ 最佳体验
-                    </span>
-                    <button 
-                      onClick={() => requireLogin(() => setStep('UPLOAD'))}
-                      className="w-full md:w-auto md:ml-auto group inline-flex items-center justify-center gap-2 px-4 py-2 bg-zinc-900 text-white rounded-lg text-[13px] font-medium hover:bg-zinc-800 transition-all"
-                    >
-                      <FileText size={14} />
-                      开始诊断
-                      <ArrowRight size={14} className="opacity-60 group-hover:translate-x-0.5 transition-transform" />
-                    </button>
-                  </div>
-                  
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
-                    {/* 步骤 1 */}
-                    <div className="bg-white rounded-xl p-4 md:p-5 relative border border-zinc-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200">
-                      <div className="absolute -top-3 left-3 md:left-4 px-2 py-0.5 bg-zinc-800 text-white text-[10px] md:text-[11px] rounded font-medium">
-                        STEP 1
-                      </div>
-                      <div className="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-zinc-100 flex items-center justify-center mb-2 md:mb-3">
-                        <Target size={18} className="text-zinc-600" />
-                      </div>
-                      <h4 className="text-zinc-800 font-medium text-[13px] md:text-[14px] mb-1 md:mb-2">上传 JD + 简历</h4>
-                      <p className="text-zinc-500 text-[11px] md:text-[12px] leading-relaxed">
-                        目标岗位 JD + 当前简历
-                      </p>
-                    </div>
-
-                    {/* 步骤 2 */}
-                    <div className="bg-white rounded-xl p-4 md:p-5 relative border border-zinc-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200">
-                      <div className="absolute -top-3 left-3 md:left-4 px-2 py-0.5 bg-zinc-800 text-white text-[10px] md:text-[11px] rounded font-medium">
-                        STEP 2
-                      </div>
-                      <div className="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-zinc-100 flex items-center justify-center mb-2 md:mb-3">
-                        <AlertTriangle size={18} className="text-zinc-600" />
-                      </div>
-                      <h4 className="text-zinc-800 font-medium text-[13px] md:text-[14px] mb-1 md:mb-2">AI 诊断</h4>
-                      <p className="text-zinc-500 text-[11px] md:text-[12px] leading-relaxed">
-                        匹配度分析，识别硬伤与亮点
-                      </p>
-                    </div>
-
-                    {/* 步骤 3 */}
-                    <div className="bg-white rounded-xl p-4 md:p-5 relative border border-zinc-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200">
-                      <div className="absolute -top-3 left-3 md:left-4 px-2 py-0.5 bg-zinc-800 text-white text-[10px] md:text-[11px] rounded font-medium">
-                        STEP 3
-                      </div>
-                      <div className="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-zinc-100 flex items-center justify-center mb-2 md:mb-3">
-                        <PenTool size={18} className="text-zinc-600" />
-                      </div>
-                      <h4 className="text-zinc-800 font-medium text-[13px] md:text-[14px] mb-1 md:mb-2">AI 优化 & 精调</h4>
-                      <p className="text-zinc-500 text-[11px] md:text-[12px] leading-relaxed">
-                        智能优化，逐句精调
-                      </p>
-                    </div>
-
-                    {/* 步骤 4 */}
-                    <div className="bg-white rounded-xl p-4 md:p-5 relative border border-zinc-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200">
-                      <div className="absolute -top-3 left-3 md:left-4 px-2 py-0.5 bg-zinc-800 text-white text-[10px] md:text-[11px] rounded font-medium">
-                        STEP 4
-                      </div>
-                      <div className="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-zinc-100 flex items-center justify-center mb-2 md:mb-3">
-                        <Globe size={18} className="text-zinc-600" />
-                      </div>
-                      <h4 className="text-zinc-800 font-medium text-[13px] md:text-[14px] mb-1 md:mb-2">英文版 (可选)</h4>
-                      <p className="text-zinc-500 text-[11px] md:text-[12px] leading-relaxed">
-                        一键生成专业英文简历
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* 补充提示 */}
-                  <div className="mt-5 md:mt-6 pt-4 md:pt-5 border-t border-zinc-200/80 space-y-2">
-                    <p className="text-zinc-500 text-[12px] md:text-[13px] flex items-start md:items-center gap-2">
-                      <FolderOpen size={14} className="text-zinc-400 shrink-0 mt-0.5 md:mt-0" />
-                      <span>优化后的简历可保存至<span className="text-zinc-700 font-medium">简历库</span>，支持多版本管理、收藏和随时编辑</span>
-                    </p>
-                    <p className="text-zinc-500 text-[12px] md:text-[13px] flex items-start md:items-center gap-2">
-                      <Mic size={14} className="text-zinc-400 shrink-0 mt-0.5 md:mt-0" />
-                      <span>完成优化后，可直接进入模拟面试，简历和 JD 将自动填入</span>
-                    </p>
-                  </div>
-                </div>
-
-                {/* 路径二：直接面试 */}
-                <div className="bg-white border border-zinc-200 rounded-2xl p-6 md:p-8 text-left">
-                  <div className="flex flex-wrap items-center gap-3 mb-6">
-                    <div className="w-8 h-8 rounded-full bg-zinc-200 flex items-center justify-center text-zinc-600 font-semibold text-[14px] shrink-0">
-                      2
-                    </div>
-                    <h3 className="text-zinc-800 font-semibold text-[16px] md:text-[18px]">快速路径：直接模拟面试</h3>
-                    <span className="px-3 py-1 bg-zinc-100 text-zinc-500 text-[12px] rounded-full font-medium shrink-0">
-                      ⚡ 快速开始
-                    </span>
-                    <button 
-                      onClick={() => requireLogin(() => setStep('INTERVIEW'))}
-                      className="w-full md:w-auto md:ml-auto group inline-flex items-center justify-center gap-2 px-4 py-2 bg-white text-zinc-700 border border-zinc-300 rounded-lg text-[13px] font-medium hover:border-zinc-400 hover:shadow-sm transition-all"
-                    >
-                      <Mic size={14} />
-                      开始面试
-                      <ArrowRight size={14} className="text-zinc-400 group-hover:text-zinc-600 group-hover:translate-x-0.5 transition-all" />
-                    </button>
-                  </div>
-                  
-                  <p className="text-zinc-500 text-[13px] md:text-[14px] leading-relaxed mb-5">
-                    推荐路径：先观摩 AI 模拟面试了解高质量回答 → 再人机交互练习锻炼表达
-                  </p>
-                  
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="flex items-center gap-2 px-3 py-2.5 bg-zinc-50 border border-zinc-200 rounded-lg text-[12px] text-zinc-600">
-                      <Play size={14} className="text-zinc-400 shrink-0" />
-                      <span>纯模拟观摩</span>
-                    </div>
-                    <div className="flex items-center gap-2 px-3 py-2.5 bg-zinc-50 border border-zinc-200 rounded-lg text-[12px] text-zinc-600">
-                      <Users size={14} className="text-zinc-400 shrink-0" />
-                      <span>人机交互练习</span>
-                    </div>
-                    <div className="flex items-center gap-2 px-3 py-2.5 bg-zinc-50 border border-zinc-200 rounded-lg text-[12px] text-zinc-600">
-                      <Briefcase size={14} className="text-zinc-400 shrink-0" />
-                      <span>五轮全流程</span>
-                    </div>
-                    <div className="flex items-center gap-2 px-3 py-2.5 bg-zinc-50 border border-zinc-200 rounded-lg text-[12px] text-zinc-600">
-                      <Target size={14} className="text-zinc-400 shrink-0" />
-                      <span>谈薪博弈指导</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* 会员体系介绍 - 紧凑版，两侧对齐 */}
-              <div className="mt-16 pt-12 border-t border-zinc-200">
-                <div className="flex items-center justify-center gap-2 mb-2">
-                  <Crown size={18} className="text-zinc-600" />
-                  <h2 className="font-display text-[20px] font-semibold text-zinc-800">
-                    会员体系
-                  </h2>
-                </div>
-                <p className="text-zinc-500 text-[13px] mb-8">
-                  选择适合你的方案，开启高效求职之旅
-                </p>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-2xl mx-auto">
-                  {/* 免费用户 */}
-                  <div className="bg-white border border-zinc-200 rounded-xl p-5 text-left flex flex-col hover:shadow-md hover:-translate-y-0.5 transition-all duration-200">
-                    <div className="flex items-center gap-2.5 mb-4">
-                      <div className="w-9 h-9 bg-zinc-100 rounded-lg flex items-center justify-center">
-                        <Users size={18} className="text-zinc-500" />
-                      </div>
-                      <div>
-                        <h3 className="font-semibold text-[15px] text-zinc-800">免费用户</h3>
-                        <p className="text-[11px] text-zinc-400">体验核心功能</p>
-                      </div>
-                    </div>
-                    
-                    <div className="space-y-2.5 mb-5 flex-grow">
-                      <div className="flex items-center gap-2.5 text-[13px] text-zinc-600">
-                        <span className="w-5 h-5 rounded bg-zinc-100 flex items-center justify-center text-[10px] font-semibold text-zinc-500 shrink-0">3</span>
-                        <span>简历诊断 + 全局重构 共3次体验</span>
-                      </div>
-                      <div className="flex items-center gap-2.5 text-[13px] text-zinc-600">
-                        <span className="w-5 h-5 rounded bg-zinc-100 flex items-center justify-center text-[10px] font-semibold text-zinc-500 shrink-0">1</span>
-                        <span>模拟面试 独立1次体验</span>
-                      </div>
-                      <div className="flex items-center gap-2.5 text-[13px] text-zinc-600">
-                        <span className="w-5 h-5 rounded bg-zinc-100 flex items-center justify-center text-[10px] font-semibold text-zinc-500 shrink-0">3</span>
-                        <span>英文简历翻译 共3次体验</span>
-                      </div>
-                      <div className="flex items-center gap-2.5 text-[13px] text-zinc-600">
-                        <span className="w-5 h-5 rounded bg-zinc-100 flex items-center justify-center shrink-0">
-                          <CheckCircle2 size={10} className="text-zinc-500" />
-                        </span>
-                        <span>PDF 导出 <span className="font-medium text-zinc-800">免费</span></span>
-                      </div>
-                      <div className="flex items-center gap-2.5 text-[13px] text-zinc-600">
-                        <span className="w-5 h-5 rounded bg-zinc-100 flex items-center justify-center shrink-0">
-                          <CheckCircle2 size={10} className="text-zinc-500" />
-                        </span>
-                        <span>面试记录保存 <span className="font-medium text-zinc-800">免费</span></span>
-                      </div>
-                      <div className="flex items-center gap-2.5 text-[13px] text-zinc-600">
-                        <span className="w-5 h-5 rounded bg-zinc-100 flex items-center justify-center shrink-0">
-                          <CheckCircle2 size={10} className="text-zinc-500" />
-                        </span>
-                        <span>简历库 云端保存与管理</span>
-                      </div>
-                    </div>
-
-                    <div className="pt-4 border-t border-zinc-100">
-                      <div className="text-[22px] font-bold text-zinc-800">免费</div>
-                      <p className="text-[11px] text-zinc-400">适合初次体验</p>
-                    </div>
-                  </div>
-
-                  {/* VIP 会员 - 浅灰背景，琥珀色仅用于按钮 */}
-                  <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-5 text-left relative flex flex-col hover:shadow-md hover:-translate-y-0.5 transition-all duration-200">
-                    {/* 推荐标签 */}
-                    <div className="absolute top-4 right-4 px-2 py-0.5 bg-zinc-900 text-white text-[10px] font-semibold rounded">
-                      推荐
-                    </div>
-                    
-                    <div className="flex items-center gap-2.5 mb-4">
-                      <div className="w-9 h-9 bg-zinc-900 rounded-lg flex items-center justify-center">
-                        <Crown size={18} className="text-white" />
-                      </div>
-                      <div>
-                        <h3 className="font-semibold text-[15px] text-zinc-800">VIP 会员</h3>
-                        <p className="text-[11px] text-zinc-500">解锁全部功能</p>
-                      </div>
-                    </div>
-                    
-                    <div className="space-y-2.5 mb-5 flex-grow">
-                      <div className="flex items-center gap-2.5 text-[13px] text-zinc-700">
-                        <span className="w-5 h-5 rounded bg-zinc-200 flex items-center justify-center shrink-0">
-                          <CheckCircle2 size={12} className="text-zinc-600" />
-                        </span>
-                        <span>简历诊断 <span className="text-zinc-900 font-semibold">无限次</span></span>
-                      </div>
-                      <div className="flex items-center gap-2.5 text-[13px] text-zinc-700">
-                        <span className="w-5 h-5 rounded bg-zinc-200 flex items-center justify-center shrink-0">
-                          <CheckCircle2 size={12} className="text-zinc-600" />
-                        </span>
-                        <span>模拟面试 <span className="text-zinc-900 font-semibold">无限次</span></span>
-                      </div>
-                      <div className="flex items-center gap-2.5 text-[13px] text-zinc-700">
-                        <span className="w-5 h-5 rounded bg-zinc-200 flex items-center justify-center shrink-0">
-                          <CheckCircle2 size={12} className="text-zinc-600" />
-                        </span>
-                        <span>英文简历翻译 <span className="text-zinc-900 font-semibold">无限</span></span>
-                      </div>
-                      <div className="flex items-center gap-2.5 text-[13px] text-zinc-700">
-                        <span className="w-5 h-5 rounded bg-zinc-200 flex items-center justify-center shrink-0">
-                          <CheckCircle2 size={12} className="text-zinc-600" />
-                        </span>
-                        <span>PDF 导出 <span className="text-zinc-900 font-semibold">无限</span></span>
-                      </div>
-                      <div className="flex items-center gap-2.5 text-[13px] text-zinc-700">
-                        <span className="w-5 h-5 rounded bg-zinc-200 flex items-center justify-center shrink-0">
-                          <CheckCircle2 size={12} className="text-zinc-600" />
-                        </span>
-                        <span>面试记录保存 <span className="text-zinc-900 font-semibold">无限</span></span>
-                      </div>
-                    </div>
-
-                    <div className="pt-4 border-t border-zinc-200">
-                      <div className="flex items-baseline gap-1.5">
-                        <span className="text-[22px] font-bold text-zinc-800">¥19.9</span>
-                        <span className="text-zinc-500 text-[13px]">/10天起</span>
-                      </div>
-                      <p className="text-[11px] text-zinc-500">冲刺计划¥19.9/10天 · 月度¥29.9/30天</p>
-                    </div>
-
-                    <button 
-                      onClick={() => {
-                        if (!user) {
-                          setShowLoginModal(true);
-                        } else {
-                          setShowVIPModal(true);
-                        }
-                      }}
-                      className="w-full mt-4 py-2.5 bg-zinc-900 hover:bg-zinc-800 text-white rounded-lg text-[13px] font-medium transition-colors flex items-center justify-center gap-2"
-                    >
-                      <Crown size={14} />
-                      立即开通
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* 即将上线 - 会员专属功能预告 */}
-              <div className="mt-20 pt-16 border-t border-zinc-200">
-                <div className="flex items-center justify-center gap-3 mb-3">
-                  <Sparkles size={20} className="text-amber-500" />
-                  <h2 className="font-display text-[24px] font-semibold text-zinc-900">
-                    会员专属 · 敬请期待
-                  </h2>
-                  <Sparkles size={20} className="text-amber-500" />
-                </div>
-                <p className="text-zinc-500 text-[14px] mb-10 max-w-2xl mx-auto">
-                  更多智能功能正在紧锣密鼓开发中，VIP 会员将优先体验
-                </p>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-4xl mx-auto">
-                  {/* 功能一：职业探索 & 智能匹配 */}
-                  <div className="bg-zinc-50/80 border border-zinc-200 rounded-2xl p-6 text-left relative overflow-hidden group hover:shadow-md hover:-translate-y-0.5 transition-all duration-300 flex flex-col">
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-zinc-200/20 rounded-full blur-3xl -mr-16 -mt-16" />
-                    
-                    <div className="absolute top-4 right-4 px-2.5 py-1 bg-zinc-800 text-white text-[10px] font-semibold rounded-full flex items-center gap-1">
-                      <Sparkles size={10} />
-                      即将上线
-                    </div>
-                    
-                    <div className="relative flex flex-col flex-1">
-                      <div className="w-11 h-11 bg-zinc-800 rounded-xl flex items-center justify-center mb-4">
-                        <Target size={22} className="text-white" />
-                      </div>
-                      
-                      <h3 className="font-semibold text-[16px] text-zinc-800 mb-2">
-                        🧭 职业探索 & 智能匹配
-                      </h3>
-                      <p className="text-zinc-500 text-[12px] leading-relaxed mb-4">
-                        不知道该找什么工作？AI 读取简历，结合你的想法甚至迷茫，规划方向、匹配岗位
-                      </p>
-                      
-                      <div className="space-y-1.5 mb-4">
-                        {[
-                          '深耕 / 转型 / 跨界，AI 职业路径建议',
-                          '匹配度 + 成长潜力双维评分',
-                          '技能差距分析 · 告诉你还差什么',
-                          '选中目标岗位 → 一键生成针对性简历',
-                        ].map((text, i) => (
-                          <div key={i} className="flex items-center gap-2 text-[11px] text-zinc-500">
-                            <CheckCircle2 size={11} className="text-zinc-400 shrink-0" />
-                            <span>{text}</span>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* 预览卡片 */}
-                      <div className="space-y-1.5">
-                        <div className="p-2 bg-white border border-zinc-200 rounded-lg">
-                          <div className="flex items-center gap-1.5 mb-0.5">
-                            <div className="w-4 h-4 bg-zinc-800 rounded flex items-center justify-center">
-                              <Briefcase size={8} className="text-white" />
-                            </div>
-                            <span className="text-[10px] font-medium text-zinc-700">字节 · AI 产品经理</span>
-                            <span className="ml-auto text-[9px] px-1.5 py-0.5 bg-green-50 text-green-600 rounded font-medium">92%</span>
-                            <span className="text-[9px] px-1.5 py-0.5 bg-amber-50 text-amber-600 rounded font-medium">A+</span>
-                          </div>
-                          <p className="text-[9px] text-zinc-400 pl-5.5">深耕路径 · 技能契合度高</p>
-                        </div>
-                        <div className="p-2 bg-white border border-zinc-200 rounded-lg">
-                          <div className="flex items-center gap-1.5 mb-0.5">
-                            <div className="w-4 h-4 bg-zinc-800 rounded flex items-center justify-center">
-                              <Briefcase size={8} className="text-white" />
-                            </div>
-                            <span className="text-[10px] font-medium text-zinc-700">腾讯 · 增长策略分析</span>
-                            <span className="ml-auto text-[9px] px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded font-medium">78%</span>
-                            <span className="text-[9px] px-1.5 py-0.5 bg-amber-50 text-amber-600 rounded font-medium">A</span>
-                          </div>
-                          <p className="text-[9px] text-zinc-400 pl-5.5">转型路径 · 需补充数据分析</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 功能二：工作复盘 → 简历素材 */}
-                  <div className="bg-zinc-50/80 border border-zinc-200 rounded-2xl p-6 text-left relative overflow-hidden group hover:shadow-md hover:-translate-y-0.5 transition-all duration-300 flex flex-col">
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-zinc-200/20 rounded-full blur-3xl -mr-16 -mt-16" />
-                    
-                    <div className="absolute top-4 right-4 px-2.5 py-1 bg-zinc-800 text-white text-[10px] font-semibold rounded-full flex items-center gap-1">
-                      <Sparkles size={10} />
-                      即将上线
-                    </div>
-                    
-                    <div className="relative flex flex-col flex-1">
-                      <div className="w-11 h-11 bg-zinc-800 rounded-xl flex items-center justify-center mb-4">
-                        <BookOpen size={22} className="text-white" />
-                      </div>
-                      
-                      <h3 className="font-semibold text-[16px] text-zinc-800 mb-2">
-                        📋 工作复盘助手
-                      </h3>
-                      <p className="text-zinc-500 text-[12px] leading-relaxed mb-4">
-                        用 GRAI/STAR 等框架做日报周报月报复盘，AI 一键提炼为简历素材
-                      </p>
-                      
-                      <div className="space-y-1.5 mb-4">
-                        {[
-                          'GRAI / STAR / PDCA 多种复盘框架',
-                          'AI 自动提取可量化成果亮点',
-                          '选中复盘记录 → 一键生成简历条目',
-                          '时间线视图 · 积累职业成就档案',
-                        ].map((text, i) => (
-                          <div key={i} className="flex items-center gap-2 text-[11px] text-zinc-500">
-                            <CheckCircle2 size={11} className="text-zinc-400 shrink-0" />
-                            <span>{text}</span>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* 流程预览 */}
-                      <div className="p-3 bg-white border border-zinc-200 rounded-lg">
-                        <div className="flex items-center justify-between text-[10px] text-zinc-500">
-                          <div className="flex flex-col items-center gap-1">
-                            <div className="w-7 h-7 bg-zinc-100 rounded-lg flex items-center justify-center text-[13px]">📝</div>
-                            <span>日常复盘</span>
-                          </div>
-                          <ArrowRight size={10} className="text-zinc-300 shrink-0" />
-                          <div className="flex flex-col items-center gap-1">
-                            <div className="w-7 h-7 bg-zinc-100 rounded-lg flex items-center justify-center text-[13px]">🤖</div>
-                            <span>AI 提炼</span>
-                          </div>
-                          <ArrowRight size={10} className="text-zinc-300 shrink-0" />
-                          <div className="flex flex-col items-center gap-1">
-                            <div className="w-7 h-7 bg-zinc-100 rounded-lg flex items-center justify-center text-[13px]">✨</div>
-                            <span>简历素材</span>
-                          </div>
-                          <ArrowRight size={10} className="text-zinc-300 shrink-0" />
-                          <div className="flex flex-col items-center gap-1">
-                            <div className="w-7 h-7 bg-zinc-100 rounded-lg flex items-center justify-center text-[13px]">📄</div>
-                            <span>一键填入</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-
-                </div>
-              </div>
-
-              {/* 底部提示 - 移到最底部 */}
-              <div className="mt-12 pt-8 border-t border-zinc-100 flex items-center justify-center gap-6 text-[12px] text-zinc-500 flex-wrap">
-                <div className="flex items-center gap-1.5">
-                  <CheckCircle2 size={14} className="text-zinc-400" />
-                  AI 智能诊断与优化
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <CheckCircle2 size={14} className="text-zinc-400" />
-                  五轮面试全流程模拟
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <CheckCircle2 size={14} className="text-zinc-400" />
-                  简历库多版本管理
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <CheckCircle2 size={14} className="text-zinc-400" />
-                  支持导出 PDF/文本/图片
-                </div>
-              </div>
 
            </div>
         </section>
@@ -2251,14 +2025,29 @@ const App: React.FC = () => {
                 
                 {/* JD Input */}
                 <div className="space-y-2.5">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
                     <label className="text-[13px] font-medium text-zinc-900 flex items-center gap-1.5">
                       <Target size={13} className="text-zinc-400" />
                       目标岗位 JD
                     </label>
-                    <button onClick={() => jdFileInputRef.current?.click()} disabled={processingState.jd} className={`text-[12px] text-zinc-400 hover:text-zinc-900 font-medium flex items-center gap-1 transition-colors ${processingState.jd ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                      <Upload size={11} /> 上传文件
-                    </button>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!user) {
+                            setShowLoginModal(true);
+                            return;
+                          }
+                          setUploadJdLibraryOpen(true);
+                        }}
+                        className="text-[12px] text-zinc-500 hover:text-zinc-900 font-medium flex items-center gap-1 transition-colors"
+                      >
+                        <Briefcase size={11} /> 从 JD 库
+                      </button>
+                      <button onClick={() => jdFileInputRef.current?.click()} disabled={processingState.jd} className={`text-[12px] text-zinc-400 hover:text-zinc-900 font-medium flex items-center gap-1 transition-colors ${processingState.jd ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                        <Upload size={11} /> 上传文件
+                      </button>
+                    </div>
                   </div>
                   {/* JD 完整度提示 */}
                   <div className="px-3 py-2 bg-amber-50 border border-amber-200 rounded-md">
@@ -2281,14 +2070,19 @@ const App: React.FC = () => {
 
                 {/* Resume Input */}
                 <div className="space-y-2.5">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
                     <label className="text-[13px] font-medium text-zinc-900 flex items-center gap-1.5">
                       <FileText size={13} className="text-zinc-400" />
                       你的简历
                     </label>
-                    <button onClick={() => resumeFileInputRef.current?.click()} disabled={processingState.resume} className={`text-[12px] text-zinc-400 hover:text-zinc-900 font-medium flex items-center gap-1 transition-colors ${processingState.resume ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                      <Upload size={11} /> 上传文件
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={openResumeLibrary} className="text-[12px] text-zinc-500 hover:text-zinc-900 font-medium flex items-center gap-1 transition-colors">
+                        <FolderOpen size={11} /> 从简历库
+                      </button>
+                      <button onClick={() => resumeFileInputRef.current?.click()} disabled={processingState.resume} className={`text-[12px] text-zinc-400 hover:text-zinc-900 font-medium flex items-center gap-1 transition-colors ${processingState.resume ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                        <Upload size={11} /> 上传文件
+                      </button>
+                    </div>
                   </div>
                   <p className="text-[11px] text-zinc-400">支持 PDF、Word（.doc/.docx）、图片，单文件 ≤3MB；建议优先使用 PDF 或 .docx。</p>
                   <input type="file" ref={resumeFileInputRef} className="hidden" accept=".pdf,.doc,.docx,image/*" onChange={(e) => handleFileChange(e, 'resume')} />
@@ -2838,9 +2632,18 @@ const App: React.FC = () => {
             initialJd={jd}
             initialJdFile={jdFile ? { name: jdFile.name, data: jdFile.data, mime: jdFile.mime } : null}
             initialResumeFile={resumeFile ? { name: resumeFile.name, data: resumeFile.data, mime: resumeFile.mime } : null}
-            onShowVIPModal={() => setShowVIPModal(true)}
+            onShowVIPModal={() => {
+              setMembershipModalProduct('full_monthly');
+              setShowVIPModal(true);
+            }}
+            onRequireLogin={() => setShowLoginModal(true)}
             viewingRecord={viewingInterviewRecord}
           />
+        )}
+
+        {/* Step: JD Library */}
+        {step === 'JD_LIBRARY' && (
+          <JdLibrary onBack={() => setStep('INPUT')} />
         )}
 
         {/* Step 6: Resume Library */}
@@ -2874,6 +2677,8 @@ const App: React.FC = () => {
             <span className="mx-2 text-zinc-200">|</span>
             <span className="text-zinc-400">小红书：<a href="https://xhslink.com/m/2DTebq4fiED" target="_blank" rel="noopener noreferrer" className="text-zinc-400 hover:text-zinc-600 transition-colors underline underline-offset-2">Rachels here</a></span>
          </footer>
+      )}
+      </>
       )}
     </div>
   );

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Mail, Loader2, X, Check, Crown, User, LogOut, ChevronDown, FolderOpen, MessageSquare } from 'lucide-react';
+import { Mail, Loader2, X, Check, Crown, User, LogOut, ChevronDown, FolderOpen, MessageSquare, ClipboardList, Briefcase } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { sendOTP, verifyOTP, signOut } from '../services/authService';
 
@@ -204,7 +204,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
             <div className="grid grid-cols-2 gap-1.5 text-[12px]">
               <div className="flex items-center gap-1.5 text-zinc-500">
                 <Check size={12} className="text-zinc-400" />
-                每日3次免费诊断
+                免费体验：诊断、面试、职业探索等
               </div>
               <div className="flex items-center gap-1.5 text-zinc-500">
                 <Check size={12} className="text-zinc-400" />
@@ -216,7 +216,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
               </div>
               <div className="flex items-center gap-1.5 text-zinc-500">
                 <Crown size={12} className="text-zinc-400" />
-                VIP 无限使用
+                可选：简历畅改 / 全局畅享会员
               </div>
             </div>
           </div>
@@ -230,11 +230,21 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
 interface UserAvatarProps {
   onLoginClick: () => void;
   onUpgradeClick?: () => void;
+  /** 与顶栏「内容管理」顺序一致：JD 库 → 计划库 → 简历库 → 面试记录 */
+  onJdLibrary?: () => void;
+  onPlanLibrary?: () => void;
   onResumeLibrary?: () => void;
   onInterviewLibrary?: () => void;
 }
 
-export const UserAvatar: React.FC<UserAvatarProps> = ({ onLoginClick, onUpgradeClick, onResumeLibrary, onInterviewLibrary }) => {
+export const UserAvatar: React.FC<UserAvatarProps> = ({
+  onLoginClick,
+  onUpgradeClick,
+  onJdLibrary,
+  onPlanLibrary,
+  onResumeLibrary,
+  onInterviewLibrary,
+}) => {
   const { user, profile, loading } = useAuth();
   const [showDropdown, setShowDropdown] = useState(false);
 
@@ -261,17 +271,28 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({ onLoginClick, onUpgradeC
     );
   }
 
-  const membershipLabel = {
+  const membershipLabel: Record<string, string> = {
     free: '免费版',
     vip: 'VIP',
+    resume_pass: '简历畅改',
+    full_monthly: '全局畅享',
     pro: 'Pro',
+    special: '特邀',
   };
 
-  const membershipColor = {
+  const membershipColor: Record<string, string> = {
     free: 'bg-zinc-100 text-zinc-600',
     vip: 'bg-zinc-900 text-white',
+    resume_pass: 'bg-amber-700 text-white',
+    full_monthly: 'bg-zinc-900 text-white',
     pro: 'bg-zinc-900 text-white',
+    special: 'bg-violet-700 text-white',
   };
+
+  const mt = profile?.membership_type || 'free';
+  const showPaidBadge =
+    mt === 'vip' || mt === 'pro' || mt === 'resume_pass' || mt === 'full_monthly' || mt === 'special';
+  const showUpgradeEntry = mt === 'free' || mt === 'resume_pass';
 
   return (
     <div className="relative">
@@ -308,18 +329,16 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({ onLoginClick, onUpgradeC
                 </div>
               </div>
               <div className="mt-2">
-                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium ${membershipColor[profile?.membership_type || 'free']}`}>
-                  {profile?.membership_type === 'vip' || profile?.membership_type === 'pro' ? (
-                    <Crown size={10} />
-                  ) : null}
-                  {membershipLabel[profile?.membership_type || 'free']}
+                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium ${membershipColor[mt] ?? membershipColor.free}`}>
+                  {showPaidBadge ? <Crown size={10} /> : null}
+                  {membershipLabel[mt] ?? membershipLabel.free}
                 </span>
               </div>
             </div>
 
             {/* 菜单项 */}
             <div className="p-1.5">
-              {profile?.membership_type === 'free' && (
+              {showUpgradeEntry && (
                 <button 
                   onClick={() => {
                     setShowDropdown(false);
@@ -328,9 +347,29 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({ onLoginClick, onUpgradeC
                   className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-amber-600 hover:bg-amber-50 rounded-md transition-colors"
                 >
                   <Crown size={14} />
-                  升级 VIP
+                  {mt === 'resume_pass' ? '升级全局畅享' : '开通会员'}
                 </button>
               )}
+              <button
+                onClick={() => {
+                  setShowDropdown(false);
+                  onJdLibrary?.();
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-zinc-600 hover:bg-zinc-50 rounded-md transition-colors"
+              >
+                <Briefcase size={14} />
+                JD 库
+              </button>
+              <button
+                onClick={() => {
+                  setShowDropdown(false);
+                  onPlanLibrary?.();
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-zinc-600 hover:bg-zinc-50 rounded-md transition-colors"
+              >
+                <ClipboardList size={14} />
+                计划库
+              </button>
               <button
                 onClick={() => {
                   setShowDropdown(false);
@@ -349,7 +388,7 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({ onLoginClick, onUpgradeC
                 className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-zinc-600 hover:bg-zinc-50 rounded-md transition-colors"
               >
                 <MessageSquare size={14} />
-                面试记录库
+                面试记录
               </button>
               <div className="border-t border-zinc-100 my-1" />
               <button

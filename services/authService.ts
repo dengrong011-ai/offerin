@@ -117,6 +117,27 @@ function getUtcMonthRange(): { start: string; end: string } {
   return { start: start.toISOString(), end: end.toISOString() };
 }
 
+async function countInterviewSessionsInMonthClient(
+  userId: string,
+  monthStart: string,
+  monthEnd: string
+): Promise<number> {
+  const { data, error } = await supabase
+    .from('usage_logs')
+    .select('interview_session_id')
+    .eq('user_id', userId)
+    .eq('action_type', 'interview')
+    .gte('created_at', monthStart)
+    .lte('created_at', monthEnd);
+
+  if (error || !data?.length) return 0;
+  const distinct = new Set(
+    data.map((r: { interview_session_id: string | null }) => r.interview_session_id).filter(Boolean)
+  );
+  const nullRows = data.filter((r) => !r.interview_session_id).length;
+  return distinct.size + nullRows;
+}
+
 // 获取「与后端一致」的有效会员类型（profiles + 白名单覆盖）
 async function getEffectiveMembership(userId: string): Promise<string> {
   try {
@@ -142,50 +163,16 @@ export const checkUsageLimit = async (
 ): Promise<{ allowed: boolean; remaining: number; limit: number; isTrialLimit?: boolean }> => {
   try {
     const membership = await getEffectiveMembership(userId);
-    const limits = MEMBERSHIP_LIMITS[membership] || MEMBERSHIP_LIMITS.free;
-    
-    // 免费用户：诊断(含全局重构)3次 和 面试1次，分开计算
-    if (membership === 'free') {
-      if (actionType === 'interview') {
-        // 面试独立限额
-        const interviewLimit = limits.interview_trial_count;
-        const { count: interviewCount, error: intError } = await supabase
-          .from('usage_logs')
-          .select('*', { count: 'exact', head: true })
-          .eq('user_id', userId)
-          .eq('action_type', 'interview');
-        
-        if (intError) throw intError;
-        const interviewUsed = interviewCount || 0;
-        const remaining = interviewLimit - interviewUsed;
-        return { allowed: remaining > 0, remaining: Math.max(0, remaining), limit: interviewLimit, isTrialLimit: true };
-      }
+    const limits = MEMBERSHIP_LIMITS[membership as keyof typeof MEMBERSHIP_LIMITS] || MEMBERSHIP_LIMITS.free;
 
-      // 诊断(含全局重构/resume_edit) 独立限额
-      const diagnosisLimit = limits.diagnosis_trial_count;
-      const { count, error } = await supabase
-        .from('usage_logs')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', userId)
-        .in('action_type', ['diagnosis', 'resume_edit']);
-
-      if (error) throw error;
-      const usedCount = count || 0;
-      const remaining = diagnosisLimit - usedCount;
-
-      return { 
-        allowed: remaining > 0, 
-        remaining: Math.max(0, remaining), 
-        limit: diagnosisLimit,
-        isTrialLimit: true
-      };
+    if (membership === 'pro') {
+      return { allowed: true, remaining: -1, limit: -1 };
     }
-    
-    // Special 白名单用户：所有操作共享每日 10 次限额
+
     if (membership === 'special') {
       const dailyLimit = limits.daily_total || 10;
       const today = new Date().toISOString().split('T')[0];
-      
+
       const { count, error } = await supabase
         .from('usage_logs')
         .select('*', { count: 'exact', head: true })
@@ -199,57 +186,183 @@ export const checkUsageLimit = async (
       return { allowed: remaining > 0, remaining: Math.max(0, remaining), limit: dailyLimit };
     }
 
-    // VIP 用户：面试按月限制（使用 UTC 月份，与后端一致）
-    if (membership === 'vip' && actionType === 'interview') {
-      const monthlyLimit = limits.monthly_interview;
-      if (monthlyLimit > 0) {
-        const { start: monthStart, end: monthEnd } = getUtcMonthRange();
-        
+    // —— 老 VIP：面试按月「请求条数」、简历侧按月 200（与 proxy 一致）——
+    if (membership === 'vip') {
+      const { start: monthStart, end: monthEnd } = getUtcMonthRange();
+
+      if (actionType === 'interview') {
+        const monthlyLimit = limits.monthly_interview;
+        if (monthlyLimit > 0) {
+          const { count, error } = await supabase
+            .from('usage_logs')
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', userId)
+            .eq('action_type', 'interview')
+            .gte('created_at', monthStart)
+            .lte('created_at', monthEnd);
+
+          if (error) throw error;
+          const usedCount = count || 0;
+          const remaining = monthlyLimit - usedCount;
+          return { allowed: remaining > 0, remaining: Math.max(0, remaining), limit: monthlyLimit };
+        }
+        return { allowed: true, remaining: -1, limit: -1 };
+      }
+
+      if (actionType === 'diagnosis' || actionType === 'resume_edit') {
+        const monthlyLimit = (limits as { monthly_diagnosis?: number }).monthly_diagnosis ?? -1;
+        if (monthlyLimit > 0) {
+          const { count, error } = await supabase
+            .from('usage_logs')
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', userId)
+            .in('action_type', ['diagnosis', 'resume_edit', 'auto_rewrite'])
+            .gte('created_at', monthStart)
+            .lte('created_at', monthEnd);
+
+          if (error) throw error;
+          const usedCount = count || 0;
+          const remaining = monthlyLimit - usedCount;
+          return { allowed: remaining > 0, remaining: Math.max(0, remaining), limit: monthlyLimit };
+        }
+      }
+
+      return { allowed: true, remaining: -1, limit: -1 };
+    }
+
+    // —— 全局畅享：月 30 场面试、月 50 次简历侧 ——
+    if (membership === 'full_monthly') {
+      const { start: monthStart, end: monthEnd } = getUtcMonthRange();
+
+      if (actionType === 'interview') {
+        const sessionsUsed = await countInterviewSessionsInMonthClient(userId, monthStart, monthEnd);
+        const cap = 30;
+        const remaining = cap - sessionsUsed;
+        return {
+          allowed: remaining > 0,
+          remaining: Math.max(0, remaining),
+          limit: cap,
+        };
+      }
+
+      if (actionType === 'diagnosis' || actionType === 'resume_edit') {
         const { count, error } = await supabase
           .from('usage_logs')
           .select('*', { count: 'exact', head: true })
           .eq('user_id', userId)
-          .eq('action_type', 'interview')
+          .in('action_type', ['diagnosis', 'resume_edit', 'auto_rewrite'])
           .gte('created_at', monthStart)
           .lte('created_at', monthEnd);
 
         if (error) throw error;
         const usedCount = count || 0;
-        const remaining = monthlyLimit - usedCount;
-        return { allowed: remaining > 0, remaining: Math.max(0, remaining), limit: monthlyLimit };
+        const cap = 50;
+        const remaining = cap - usedCount;
+        return { allowed: remaining > 0, remaining: Math.max(0, remaining), limit: cap };
       }
+
       return { allowed: true, remaining: -1, limit: -1 };
     }
 
-    // VIP/Pro 用户：检查每日限制（诊断等）
-    const dailyLimit = actionType === 'diagnosis' 
-      ? limits.daily_diagnosis 
-      : limits.daily_interview;
-    
-    if (dailyLimit === -1) {
+    // —— 简历畅改：10 天内 50 次诊断；划选不限；面试同免费 ——
+    if (membership === 'resume_pass') {
+      if (actionType === 'resume_edit') {
+        return { allowed: true, remaining: -1, limit: -1 };
+      }
+
+      if (actionType === 'interview') {
+        const interviewLimit = MEMBERSHIP_LIMITS.free.interview_trial_count;
+        const { data: interviewRows, error: intError } = await supabase
+          .from('usage_logs')
+          .select('interview_session_id')
+          .eq('user_id', userId)
+          .eq('action_type', 'interview');
+
+        if (intError) throw intError;
+        const rows = interviewRows || [];
+        const distinctSessions = new Set(rows.map((r) => r.interview_session_id).filter(Boolean));
+        const hasLegacy = rows.some((r) => r.interview_session_id == null);
+        const sessionsUsed = distinctSessions.size + (hasLegacy ? 1 : 0);
+        const remaining = interviewLimit - sessionsUsed;
+        return {
+          allowed: remaining > 0,
+          remaining: Math.max(0, remaining),
+          limit: interviewLimit,
+          isTrialLimit: true,
+        };
+      }
+
+      if (actionType === 'diagnosis') {
+        const profile = await getUserProfile(userId);
+        const expStr = profile?.vip_expires_at;
+        if (!expStr || new Date(expStr) < new Date()) {
+          return { allowed: false, remaining: 0, limit: 50 };
+        }
+        const exp = new Date(expStr);
+        const now = new Date();
+        const windowStart = new Date(exp.getTime() - 10 * 24 * 60 * 60 * 1000).toISOString();
+        const endIso = now < exp ? now.toISOString() : exp.toISOString();
+        const { count, error } = await supabase
+          .from('usage_logs')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', userId)
+          .eq('action_type', 'diagnosis')
+          .gte('created_at', windowStart)
+          .lte('created_at', endIso);
+
+        if (error) throw error;
+        const cap = 50;
+        const usedCount = count || 0;
+        const remaining = cap - usedCount;
+        return { allowed: remaining > 0, remaining: Math.max(0, remaining), limit: cap };
+      }
+
       return { allowed: true, remaining: -1, limit: -1 };
     }
 
-    // 统计今日使用次数
-    const today = new Date().toISOString().split('T')[0];
-    const { count, error } = await supabase
-      .from('usage_logs')
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', userId)
-      .eq('action_type', actionType)
-      .gte('created_at', `${today}T00:00:00.000Z`)
-      .lte('created_at', `${today}T23:59:59.999Z`);
+    if (membership === 'free') {
+      if (actionType === 'interview') {
+        const interviewLimit = limits.interview_trial_count;
+        const { data: interviewRows, error: intError } = await supabase
+          .from('usage_logs')
+          .select('interview_session_id')
+          .eq('user_id', userId)
+          .eq('action_type', 'interview');
 
-    if (error) throw error;
+        if (intError) throw intError;
+        const rows = interviewRows || [];
+        const distinctSessions = new Set(rows.map((r) => r.interview_session_id).filter(Boolean));
+        const hasLegacy = rows.some((r) => r.interview_session_id == null);
+        const sessionsUsed = distinctSessions.size + (hasLegacy ? 1 : 0);
+        const remaining = interviewLimit - sessionsUsed;
+        return {
+          allowed: remaining > 0,
+          remaining: Math.max(0, remaining),
+          limit: interviewLimit,
+          isTrialLimit: true,
+        };
+      }
 
-    const usedCount = count || 0;
-    const remaining = dailyLimit - usedCount;
+      const diagnosisLimit = limits.diagnosis_trial_count;
+      const { count, error } = await supabase
+        .from('usage_logs')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .in('action_type', ['diagnosis', 'resume_edit']);
 
-    return { 
-      allowed: remaining > 0, 
-      remaining: Math.max(0, remaining), 
-      limit: dailyLimit 
-    };
+      if (error) throw error;
+      const usedCount = count || 0;
+      const remaining = diagnosisLimit - usedCount;
+
+      return {
+        allowed: remaining > 0,
+        remaining: Math.max(0, remaining),
+        limit: diagnosisLimit,
+        isTrialLimit: true,
+      };
+    }
+
+    return { allowed: true, remaining: -1, limit: -1 };
   } catch (error) {
     console.error('检查使用限制失败:', error);
     return { allowed: false, remaining: 0, limit: 0 };
@@ -264,14 +377,8 @@ export const checkTranslationLimit = async (
   _userEmail?: string
 ): Promise<{ allowed: boolean; remaining: number; limit: number }> => {
   try {
-    // 获取用户资料
-    const profile = await getUserProfile(userId);
-    if (!profile) {
-      return { allowed: false, remaining: 0, limit: 0 };
-    }
-
-    const membership = profile.membership_type;
-    const limits = MEMBERSHIP_LIMITS[membership];
+    const membership = await getEffectiveMembership(userId);
+    const limits = MEMBERSHIP_LIMITS[membership] || MEMBERSHIP_LIMITS.free;
     
     // Special 用户：受每日总限额控制
     if (membership === 'special') {
@@ -333,9 +440,10 @@ export const checkInterviewExportPermission = async (
       return { allowed: false, reason: '请先登录' };
     }
 
-    const membership = profile.membership_type;
-    const limits = MEMBERSHIP_LIMITS[membership];
-    
+    const membership = await getEffectiveMembership(userId);
+    const limits =
+      MEMBERSHIP_LIMITS[membership as keyof typeof MEMBERSHIP_LIMITS] || MEMBERSHIP_LIMITS.free;
+
     // VIP/Pro/Special 用户直接允许
     if (limits.can_export_interview) {
       return { allowed: true };
@@ -437,5 +545,103 @@ export const getTotalUsageStats = async (userId: string): Promise<{
   } catch (error) {
     console.error('获取总使用统计失败:', error);
     return { diagnosisAndInterview: 0, translation: 0 };
+  }
+};
+
+/** 与 api/gemini/proxy 中职业探索逻辑一致（日上限、免费 3 次计费池） */
+const CAREER_EXPLORE_DAILY_MAX = 50;
+const CAREER_EXPLORE_TRIAL_BILLABLE = 3;
+const CAREER_BILLABLE_ACTIONS = [
+  'career_explore_profile',
+  'career_explore_directions',
+  'career_explore_plan',
+  'career_explore_jd_demo',
+] as const;
+
+export type CareerExploreQuota = {
+  dailyUsed: number;
+  /** null 表示当前档位不设「今日剩余」展示 */
+  dailyRemaining: number | null;
+  trialBillableUsed: number;
+  trialBillableRemaining: number | null;
+  membership: string;
+  monthlyCareerUsed?: number;
+  monthlyCareerRemaining?: number;
+};
+
+export const getCareerExploreQuota = async (userId: string): Promise<CareerExploreQuota | null> => {
+  try {
+    const membership = await getEffectiveMembership(userId);
+    const today = new Date().toISOString().split('T')[0];
+
+    const { count: dailyCountRaw, error: dErr } = await supabase
+      .from('usage_logs')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .like('action_type', 'career_explore%')
+      .gte('created_at', `${today}T00:00:00.000Z`)
+      .lte('created_at', `${today}T23:59:59.999Z`);
+
+    if (dErr) throw dErr;
+    const dailyUsed = dailyCountRaw || 0;
+
+    if (membership === 'vip') {
+      return {
+        dailyUsed,
+        dailyRemaining: Math.max(0, CAREER_EXPLORE_DAILY_MAX - dailyUsed),
+        trialBillableUsed: 0,
+        trialBillableRemaining: null,
+        membership,
+      };
+    }
+
+    if (membership === 'full_monthly') {
+      const { start, end } = getUtcMonthRange();
+      const { count: mCount, error: mErr } = await supabase
+        .from('usage_logs')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .in('action_type', [...CAREER_BILLABLE_ACTIONS])
+        .gte('created_at', start)
+        .lte('created_at', end);
+
+      if (mErr) throw mErr;
+      const monthlyUsed = mCount || 0;
+      return {
+        dailyUsed,
+        dailyRemaining: null,
+        trialBillableUsed: 0,
+        trialBillableRemaining: null,
+        monthlyCareerUsed: monthlyUsed,
+        monthlyCareerRemaining: Math.max(0, 50 - monthlyUsed),
+        membership,
+      };
+    }
+
+    let trialBillableUsed = 0;
+    if (membership === 'free' || membership === 'resume_pass') {
+      const { count: tCount, error: tErr } = await supabase
+        .from('usage_logs')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .in('action_type', [...CAREER_BILLABLE_ACTIONS]);
+
+      if (tErr) throw tErr;
+      trialBillableUsed = tCount || 0;
+    }
+
+    return {
+      dailyUsed,
+      dailyRemaining: null,
+      trialBillableUsed,
+      trialBillableRemaining:
+        membership === 'free' || membership === 'resume_pass'
+          ? Math.max(0, CAREER_EXPLORE_TRIAL_BILLABLE - trialBillableUsed)
+          : null,
+      membership,
+    };
+  } catch (error) {
+    console.error('获取职业探索配额失败:', error);
+    return null;
   }
 };

@@ -9,9 +9,8 @@ import { supabase, isSupabaseConfigured } from './supabaseClient';
 
 // ============ 虎皮椒配置 ============
 
-// 从环境变量获取配置
+// 仅 AppId 可出现在前端；签名必须在服务端（见 /api/xunhupay/create）
 const XUNHU_APP_ID = import.meta.env.VITE_XUNHU_APP_ID || '';
-const XUNHU_APP_SECRET = import.meta.env.VITE_XUNHU_APP_SECRET || '';
 
 // API 端点
 const XUNHU_API_URL = 'https://api.xunhupay.com/payment/do.html';
@@ -19,7 +18,7 @@ const XUNHU_API_URL_BACKUP = 'https://api.dpweixin.com/payment/do.html';
 
 // 检查虎皮椒是否已配置
 export const isXunhuPayConfigured = (): boolean => {
-  return !!(XUNHU_APP_ID && XUNHU_APP_SECRET);
+  return !!XUNHU_APP_ID;
 };
 
 // ============ MD5 签名算法 ============
@@ -210,7 +209,7 @@ export const generateXunhuSign = (params: Record<string, string | number>, appSe
 
 // ============ 产品配置 ============
 
-export type XunhuProductType = 'vip_monthly' | 'resume_download';
+export type XunhuProductType = 'vip_sprint' | 'vip_monthly' | 'resume_download';
 
 export interface XunhuProduct {
   id: XunhuProductType;
@@ -255,171 +254,77 @@ export interface XunhuOrderResult {
 }
 
 /**
- * 生成随机字符串
- */
-const generateNonceStr = (): string => {
-  return Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
-};
-
-/**
- * 创建本地订单记录
- */
-const createLocalOrder = async (
-  userId: string,
-  productId: XunhuProductType,
-  amount: number
-): Promise<{ success: boolean; orderId?: string; error?: string }> => {
-  if (!isSupabaseConfigured) {
-    // 开发模式：生成一个临时订单ID
-    const tempOrderId = `dev_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    return { success: true, orderId: tempOrderId };
-  }
-
-  try {
-    const productType = (productId === 'vip_monthly' || productId === 'vip_sprint') ? 'vip' : 'single';
-    const { data, error } = await supabase
-      .from('payment_orders')
-      .insert({
-        user_id: userId,
-        product_id: productId,
-        product_type: productType,
-        amount: amount,
-        status: 'pending',
-        payment_method: 'xunhupay',
-      })
-      .select('id')
-      .single();
-
-    if (error) throw error;
-    return { success: true, orderId: data.id };
-  } catch (error: any) {
-    console.error('创建本地订单失败:', error);
-    return { success: false, error: error.message };
-  }
-};
-
-/**
- * 创建虎皮椒支付订单
- * 
- * @param userId 用户ID
- * @param productId 产品ID
- * @param notifyUrl 异步回调地址
+ * 创建虎皮椒支付订单（签名在服务端 /api/xunhupay/create，前端不再持有密钥）
+ *
+ * @param _userId 保留兼容调用方；实际以 JWT 对应用户为准
+ * @param _notifyUrl 已忽略，回调地址由服务端环境变量决定
  */
 export const createXunhuPayOrder = async (
-  userId: string,
+  _userId: string,
   productId: XunhuProductType,
-  notifyUrl: string
+  _notifyUrl: string
 ): Promise<XunhuOrderResult> => {
   const product = XUNHU_PRODUCTS[productId];
   if (!product) {
     return { success: false, error: '无效的产品' };
   }
 
-  // 1. 创建本地订单
-  const localOrder = await createLocalOrder(userId, productId, product.priceInCents);
-  if (!localOrder.success || !localOrder.orderId) {
-    return { success: false, error: localOrder.error || '创建订单失败' };
-  }
-
-  // 2. 检查虎皮椒配置
-  if (!isXunhuPayConfigured()) {
-    console.warn('虎皮椒未配置，使用模拟模式');
-    // 返回模拟数据用于开发测试
+  if (!isSupabaseConfigured) {
+    const mockId = `dev_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     return {
       success: true,
-      orderId: localOrder.orderId,
-      payUrl: `https://mock.xunhupay.com/pay?order=${localOrder.orderId}`,
-      qrCodeUrl: `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`alipay://mock?order=${localOrder.orderId}`)}`,
+      orderId: mockId,
+      payUrl: `https://mock.xunhupay.com/pay?order=${mockId}`,
+      qrCodeUrl: `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`alipay://mock?order=${mockId}`)}`,
     };
   }
 
-  // 3. 构建请求参数
-  const timestamp = Math.floor(Date.now() / 1000);
-  const nonceStr = generateNonceStr();
-  
-  const params: Record<string, string | number> = {
-    version: '1.1',
-    appid: XUNHU_APP_ID,
-    trade_order_id: localOrder.orderId,
-    total_fee: product.price,
-    title: product.name,
-    time: timestamp,
-    notify_url: notifyUrl,
-    nonce_str: nonceStr,
-  };
+  if (!isXunhuPayConfigured()) {
+    console.warn('虎皮椒 AppId 未配置，使用模拟模式');
+    const mockId = `dev_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    return {
+      success: true,
+      orderId: mockId,
+      payUrl: `https://mock.xunhupay.com/pay?order=${mockId}`,
+      qrCodeUrl: `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`alipay://mock?order=${mockId}`)}`,
+    };
+  }
 
-  // 4. 生成签名
-  params.hash = generateXunhuSign(params, XUNHU_APP_SECRET);
-
-  // 5. 调用虎皮椒 API
   try {
-    const formData = new URLSearchParams();
-    for (const [key, value] of Object.entries(params)) {
-      formData.append(key, String(value));
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) {
+      return { success: false, error: '请先登录' };
     }
 
-    const response = await fetch(XUNHU_API_URL, {
+    const res = await fetch('/api/xunhupay/create', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
       },
-      body: formData.toString(),
+      body: JSON.stringify({ productId }),
     });
 
-    const result = await response.json();
-
-    if (result.errcode === 0) {
-      return {
-        success: true,
-        orderId: localOrder.orderId,
-        payUrl: result.url,           // 手机端跳转链接
-        qrCodeUrl: result.url_qrcode, // PC端二维码
-      };
-    } else {
-      console.error('虎皮椒创建订单失败:', result);
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
       return {
         success: false,
-        orderId: localOrder.orderId,
-        error: result.errmsg || '创建订单失败',
+        error: typeof json.error === 'string' ? json.error : '创建订单失败',
       };
     }
-  } catch (error: any) {
-    console.error('虎皮椒 API 调用失败:', error);
-    
-    // 尝试备用接口
-    try {
-      const formData = new URLSearchParams();
-      for (const [key, value] of Object.entries(params)) {
-        formData.append(key, String(value));
-      }
-
-      const response = await fetch(XUNHU_API_URL_BACKUP, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: formData.toString(),
-      });
-
-      const result = await response.json();
-
-      if (result.errcode === 0) {
-        return {
-          success: true,
-          orderId: localOrder.orderId,
-          payUrl: result.url,
-          qrCodeUrl: result.url_qrcode,
-        };
-      }
-    } catch (backupError) {
-      console.error('虎皮椒备用接口也失败:', backupError);
+    if (json.success && json.orderId) {
+      return {
+        success: true,
+        orderId: json.orderId,
+        payUrl: json.payUrl,
+        qrCodeUrl: json.qrCodeUrl,
+      };
     }
-
-    return {
-      success: false,
-      orderId: localOrder.orderId,
-      error: '支付服务暂时不可用，请稍后重试',
-    };
+    return { success: false, error: json.error || '创建订单失败' };
+  } catch (e: any) {
+    console.error('虎皮椒下单请求失败:', e);
+    return { success: false, error: e?.message || '支付服务暂时不可用' };
   }
 };
 

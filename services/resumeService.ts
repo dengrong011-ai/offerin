@@ -1,6 +1,13 @@
 import { supabase } from './supabaseClient';
 import type { SavedResume } from '../types';
 
+/** 简历库条目用于诊断/编辑的正文：中文 Markdown 优先，否则英文（避免「只存了英文版」时载入为空） */
+export function getSavedResumeBodyMarkdown(r: SavedResume): string {
+  const zh = (r.resume_markdown || '').trim();
+  const en = (r.english_resume_markdown || '').trim();
+  return zh || en;
+}
+
 // ============ 简历库 CRUD ============
 
 /** 获取用户的所有简历（按收藏优先、更新时间倒序） */
