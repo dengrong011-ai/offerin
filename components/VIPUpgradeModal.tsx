@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Crown, Check, Loader2, Sparkles, FileText, MessageSquare, QrCode, RefreshCw, Smartphone, Globe, Download } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { repairSubscriptionAfterPay } from '../services/authService';
 import { 
   XORPAY_PRODUCTS,
   createXorPayOrder, 
@@ -157,6 +158,7 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
           if (!error && data && data.status === 'paid') {
             clearTimers();
             setPaymentStep('polling');
+            await repairSubscriptionAfterPay(orderIdToCheck);
             await refreshProfile({ untilPaidMembership: true });
             setPaymentStep('success');
             setTimeout(() => {

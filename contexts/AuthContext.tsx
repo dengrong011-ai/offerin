@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import type { User, Session } from '@supabase/supabase-js';
 import { supabase, UserProfile, isSupabaseConfigured } from '../services/supabaseClient';
-import { getUserProfile, onAuthStateChange } from '../services/authService';
+import { getUserProfile, onAuthStateChange, repairSubscriptionAfterPay } from '../services/authService';
 
 export type RefreshProfileOptions = {
   /**
@@ -41,6 +41,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const refreshProfile = async (options?: RefreshProfileOptions) => {
     if (!user) return;
+
+    if (options?.untilPaidMembership) {
+      await repairSubscriptionAfterPay();
+    }
 
     const paidTiers = new Set(['vip', 'resume_pass', 'full_monthly', 'pro', 'special']);
     const maxAttempts = options?.untilPaidMembership ? 8 : 1;

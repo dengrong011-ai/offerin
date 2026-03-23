@@ -5,12 +5,17 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
+import {
+  resolveSupabaseAnonKey,
+  resolveSupabaseServiceRoleKey,
+  resolveSupabaseUrl,
+} from '../../server/supabaseServerEnv';
 
 const CORS_ORIGINS = ['https://offerin.co', 'https://www.offerin.co', 'http://localhost:3000', 'http://localhost:5173', 'http://localhost:5174'];
 
-const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || '';
+const supabaseUrl = resolveSupabaseUrl();
+const supabaseServiceKey = resolveSupabaseServiceRoleKey();
+const supabaseAnonKey = resolveSupabaseAnonKey();
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
 function getSupabaseAuth(jwt: string) {

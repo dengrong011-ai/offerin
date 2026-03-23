@@ -1,15 +1,17 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import {
+  resolveSupabaseAnonKey,
+  resolveSupabaseServiceRoleKey,
+  resolveSupabaseUrl,
+} from '../../server/supabaseServerEnv';
 
 const CORS_ORIGINS = ['https://offerin.co', 'https://www.offerin.co', 'http://localhost:3000', 'http://localhost:5173', 'http://localhost:5174'];
 
 let supabaseAdmin: SupabaseClient | null = null;
 function getSupabaseAdmin() {
   if (!supabaseAdmin) {
-    supabaseAdmin = createClient(
-      process.env.VITE_SUPABASE_URL || '',
-      process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-    );
+    supabaseAdmin = createClient(resolveSupabaseUrl(), resolveSupabaseServiceRoleKey());
   }
   return supabaseAdmin;
 }
@@ -63,11 +65,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!jwt) return res.status(401).json({ error: 'UNAUTHORIZED' });
 
   try {
-    const authClient = createClient(
-      process.env.VITE_SUPABASE_URL || '',
-      process.env.VITE_SUPABASE_ANON_KEY || '',
-      { global: { headers: { Authorization: `Bearer ${jwt}` } } }
-    );
+    const authClient = createClient(resolveSupabaseUrl(), resolveSupabaseAnonKey(), {
+      global: {
+        headers: {
+          Authorization: `Bearer ${jwt}`,
+        },
+      },
+    });
     const { data: { user }, error } = await authClient.auth.getUser();
     if (error || !user) return res.status(401).json({ error: 'UNAUTHORIZED' });
 

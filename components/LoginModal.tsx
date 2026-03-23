@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Mail, Loader2, X, Check, Crown, User, LogOut, ChevronDown, FolderOpen, MessageSquare, ClipboardList, Briefcase } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { sendOTP, verifyOTP, signOut } from '../services/authService';
+import { sendOTP, verifyOTP, signOut, repairSubscriptionAfterPay } from '../services/authService';
 
 interface LoginModalProps {
   isOpen: boolean;
@@ -301,7 +301,10 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
           const opening = !showDropdown;
           setShowDropdown(opening);
           if (opening) {
-            void refreshProfile();
+            void (async () => {
+              await repairSubscriptionAfterPay();
+              await refreshProfile();
+            })();
           }
         }}
         className="flex items-center gap-2 p-1 rounded-lg hover:bg-zinc-100 transition-colors"

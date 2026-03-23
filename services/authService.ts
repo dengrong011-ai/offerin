@@ -74,6 +74,32 @@ export const onAuthStateChange = (callback: (event: string, session: Session | n
 
 // ============ 用户资料相关 ============
 
+/**
+ * 支付回调未写入 profiles 时补单（需已登录）。可传 orderId；不传则尝试最近 7 天内已付订阅订单。
+ */
+export async function repairSubscriptionAfterPay(orderId?: string): Promise<void> {
+  if (!isSupabaseConfigured) return;
+  try {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) return;
+    const res = await fetch('/api/user/repair-subscription', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify(orderId ? { orderId } : {}),
+    });
+    if (!res.ok) {
+      console.warn('[repairSubscriptionAfterPay] HTTP', res.status);
+    }
+  } catch (e) {
+    console.warn('[repairSubscriptionAfterPay]', e);
+  }
+}
+
 // 获取用户资料
 export const getUserProfile = async (userId: string): Promise<UserProfile | null> => {
   try {

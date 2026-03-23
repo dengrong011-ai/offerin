@@ -4,13 +4,19 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { applySubscriptionGrant } from '../../server/subscriptionGrant';
+import { resolveSupabaseServiceRoleKey, resolveSupabaseUrl } from '../../server/supabaseServerEnv';
 
-// 初始化 Supabase 客户端（使用 Service Role Key 以绕过 RLS）
-const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+function getServiceClient(): SupabaseClient | null {
+  const url = resolveSupabaseUrl();
+  const key = resolveSupabaseServiceRoleKey();
+  if (!url || !key) {
+    console.error('[xorpay/notify] 缺少 Supabase URL 或 SUPABASE_SERVICE_ROLE_KEY，无法写库（请检查 Vercel 环境变量）');
+    return null;
+  }
+  return createClient(url, key);
+}
 
 // XorPay 配置（仅使用服务端变量，勿用 VITE_ 前缀以免泄露）
 const XORPAY_APP_SECRET = process.env.XORPAY_APP_SECRET || '';
@@ -186,7 +192,7 @@ const verifySign = (aoid: string, orderId: string, payPrice: string, payTime: st
 /**
  * 处理支付成功后的业务逻辑
  */
-const handlePaymentSuccess = async (orderId: string): Promise<boolean> => {
+const handlePaymentSuccess = async (orderId: string, supabase: SupabaseClient): Promise<boolean> => {
   try {
     // 1. 查询订单信息
     const { data: order, error: orderError } = await supabase
@@ -237,45 +243,14 @@ const handlePaymentSuccess = async (orderId: string): Promise<boolean> => {
       return false;
     }
 
-    // 4. 根据产品类型处理（老 VIP 与两档新会员：同档续费从到期日叠加，否则从当前时间起算）
-    const subProducts = ['vip_sprint', 'vip_monthly', 'resume_pass_10d', 'full_monthly'] as const;
-    if ((subProducts as readonly string[]).includes(order.product_id)) {
-      const cfg: Record<string, { membership: string; days: number }> = {
-        vip_sprint: { membership: 'vip', days: 10 },
-        vip_monthly: { membership: 'vip', days: 30 },
-        resume_pass_10d: { membership: 'resume_pass', days: 10 },
-        full_monthly: { membership: 'full_monthly', days: 30 },
-      };
-      const { membership, days } = cfg[order.product_id as keyof typeof cfg];
-      const now = new Date();
-      let baseDate = now;
-      const { data: profileData } = await supabase
-        .from('profiles')
-        .select('vip_expires_at, membership_type')
-        .eq('id', order.user_id)
-        .single();
-      if (profileData?.membership_type === membership && profileData?.vip_expires_at) {
-        const existingExpiry = new Date(profileData.vip_expires_at);
-        if (existingExpiry > now) {
-          baseDate = existingExpiry;
-        }
-      }
-      const expiresAt = new Date(baseDate.getTime() + days * 24 * 60 * 60 * 1000);
+    // 4. 订阅类：与 server/subscriptionGrant 共用逻辑（全局畅享 / 简历畅改 / 老 VIP）
+    const grant = await applySubscriptionGrant(supabase, order.user_id, order.product_id);
+    if (!grant.ok) {
+      console.error('更新会员状态失败:', grant.error);
+      return false;
+    }
 
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .update({
-          membership_type: membership,
-          vip_expires_at: expiresAt.toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', order.user_id);
-
-      if (profileError) {
-        console.error('更新会员状态失败:', profileError);
-        return false;
-      }
-    } else if (order.product_id === 'resume_download' || order.product_id === 'interview_export') {
+    if (order.product_id === 'resume_download' || order.product_id === 'interview_export') {
       // 单次购买：记录购买记录
       const { error: purchaseError } = await supabase
         .from('single_purchases')
@@ -310,6 +285,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
+    const supabase = getServiceClient();
+    if (!supabase) {
+      return res.status(500).send('fail');
+    }
+
     // 解析回调参数
     const { aoid, order_id, pay_price, pay_time, sign } = req.body;
 
@@ -345,7 +325,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // 处理支付成功
-    const success = await handlePaymentSuccess(order_id);
+    const success = await handlePaymentSuccess(order_id, supabase);
 
     if (success) {
       // 返回 success 表示处理成功，XorPay 不会再次回调
