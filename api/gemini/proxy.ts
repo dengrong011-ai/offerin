@@ -278,6 +278,16 @@ function careerStepToBaseLogType(step: string): string {
   return CAREER_LOG_PLAN;
 }
 
+/** 统一小写，避免客户端大小写不一致导致 actionType 落回 diagnosis */
+function normalizeCareerExploreStep(
+  step: unknown,
+): 'profile' | 'directions' | 'plan' | 'jd_demo' | null {
+  if (typeof step !== 'string') return null;
+  const s = step.trim().toLowerCase();
+  if (s === 'profile' || s === 'directions' || s === 'plan' || s === 'jd_demo') return s;
+  return null;
+}
+
 async function countCareerBillableInMonth(
   supabaseAdmin: SupabaseClient,
   userId: string,
@@ -1134,18 +1144,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ---- 服务端使用量校验（仅检查，成功响应后再写入 usage_logs）----
     // career_explore：成功返回后由 recordCareerExploreSuccess 记账
-    const normalizedAction = (actionType && ALLOWED_ACTION_TYPES.has(actionType)) ? actionType : 'diagnosis';
+    const actionTypeNorm = typeof actionType === 'string' ? actionType.trim().toLowerCase() : '';
+    const careerStepNorm = normalizeCareerExploreStep(careerExploreStep);
+    let normalizedAction: string;
+    if (actionTypeNorm && ALLOWED_ACTION_TYPES.has(actionTypeNorm)) {
+      normalizedAction = actionTypeNorm;
+    } else if (careerStepNorm) {
+      // 若仅缺/错 actionType（或未 trim 的大小写变体），仍视为职业探索；否则会被记成 diagnosis，usage_logs 永无 career_explore_*
+      normalizedAction = 'career_explore';
+    } else {
+      normalizedAction = 'diagnosis';
+    }
     const interviewSessionId =
       normalizedAction === 'interview' ? parseInterviewSessionId(rawInterviewSessionId) : null;
     let pendingCareerStep: 'profile' | 'directions' | 'plan' | 'jd_demo' | null = null;
 
     if (normalizedAction === 'career_explore') {
-      const step = careerExploreStep;
-      if (step !== 'profile' && step !== 'directions' && step !== 'plan' && step !== 'jd_demo') {
+      if (!careerStepNorm) {
         return res.status(400).json({ error: 'INVALID_CAREER_EXPLORE_STEP' });
       }
       try {
-        const pre = await checkCareerExplorePrecheck(authUser.userId, authUser.membershipType, step);
+        const pre = await checkCareerExplorePrecheck(authUser.userId, authUser.membershipType, careerStepNorm);
         if (!pre.allowed) {
           return res.status(403).json({ error: pre.reason || 'CAREER_EXPLORE_LIMIT_EXCEEDED' });
         }
@@ -1156,7 +1175,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           message: 'Unable to verify quota. Check Supabase and retry.',
         });
       }
-      pendingCareerStep = step;
+      pendingCareerStep = careerStepNorm;
     } else {
       try {
         const usageCheck = await checkUsageEligibility(
