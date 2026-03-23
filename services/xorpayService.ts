@@ -355,6 +355,20 @@ const updateOrderXorPayId = async (
   }
 };
 
+/** 解析 /api/xorpay/create 等返回的 JSON 错误文案，便于区分鉴权/配置问题与笼统 500 */
+function parseApiErrorJson(text: string): string | null {
+  const t = text.trim();
+  if (!t.startsWith('{')) return null;
+  try {
+    const j = JSON.parse(t) as { error?: unknown; message?: unknown };
+    if (typeof j.error === 'string' && j.error.trim()) return j.error.trim();
+    if (typeof j.message === 'string' && j.message.trim()) return j.message.trim();
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 /**
  * 创建 XorPay 支付订单（微信扫码）
  * 通过服务端 API 调用，避免 CORS 问题（异步回调 URL 由服务端 XORPAY_NOTIFY_URL 固定）
@@ -390,7 +404,20 @@ export const createXorPayOrder = async (
     if (!response.ok) {
       const errorText = await response.text();
       console.error('API 响应错误:', response.status, errorText);
-      throw new Error(`服务器错误: ${response.status}`);
+      const fromBody = parseApiErrorJson(errorText);
+      if (fromBody) {
+        return { success: false, error: fromBody };
+      }
+      if (response.status === 401) {
+        return { success: false, error: '请先登录后再支付' };
+      }
+      if (response.status === 403) {
+        return { success: false, error: '没有权限发起支付，请重新登录后重试' };
+      }
+      return {
+        success: false,
+        error: `支付服务异常（${response.status}），请稍后重试。若持续失败请查看是否已配置 XorPay 与 Supabase 环境变量。`,
+      };
     }
 
     const result = await response.json();
@@ -415,9 +442,14 @@ export const createXorPayOrder = async (
     }
   } catch (error: any) {
     console.error('支付服务调用失败:', error);
+    const net =
+      typeof error?.message === 'string' &&
+      (error.message === 'Failed to fetch' || error.message.includes('NetworkError'));
     return {
       success: false,
-      error: '支付服务暂时不可用，请稍后重试',
+      error: net
+        ? '网络异常，请检查连接后重试'
+        : '支付服务暂时不可用，请稍后重试',
     };
   }
 };
