@@ -280,8 +280,22 @@ async function proxyGenerateRequest(options: ProxyGeminiOptions & {
 
   if (!response.ok) {
     const errorData = await response.text();
+    if (response.status === 413) {
+      let msg =
+        '请求体过大（多为简历/JD 附件 Base64）。请压缩 PDF、一次只传一个文件，或改用粘贴文本。';
+      try {
+        const j = JSON.parse(errorData);
+        if (typeof j?.message === 'string' && j.message.trim()) msg = j.message;
+      } catch {
+        /* 网关可能返回非 JSON */
+      }
+      throw new Error(msg);
+    }
     try {
       const errorJson = JSON.parse(errorData);
+      if (errorJson.error === 'PAYLOAD_TOO_LARGE' && typeof errorJson.message === 'string') {
+        throw new Error(errorJson.message);
+      }
       if (errorJson.error === 'UNAUTHORIZED') {
         throw new Error('UNAUTHORIZED');
       }
@@ -304,10 +318,12 @@ async function proxyGenerateRequest(options: ProxyGeminiOptions & {
       if (
         e.message === 'UNAUTHORIZED' ||
         e.message === 'AI_RATE_LIMIT_EXCEEDED' ||
+        e.message === 'PAYLOAD_TOO_LARGE' ||
         e.message?.includes('LIMIT_EXCEEDED') ||
         e.message?.startsWith('CAREER_') ||
         e.message?.includes('上游模型响应超时') ||
-        e.message?.includes('模型返回为空或无法解析')
+        e.message?.includes('模型返回为空或无法解析') ||
+        e.message?.includes('请求体过大')
       ) {
         throw e;
       }

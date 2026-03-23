@@ -2,10 +2,12 @@
 import { createAIClient, type AIClient } from "./geminiProxy";
 import {
   FALLBACK_AFTER_3_1_PRO,
+  FALLBACK_FILE_EXTRACT,
   FALLBACK_RESUME_EDIT,
   FALLBACK_TRANSLATION,
   MODEL_PRIMARY_AUTO_REWRITE,
   MODEL_PRIMARY_DIAGNOSIS,
+  MODEL_PRIMARY_FILE_EXTRACT,
   MODEL_PRIMARY_FILE_MULTIMODAL,
   MODEL_PRIMARY_RESUME_EDIT,
   MODEL_PRIMARY_TRANSLATION,
@@ -734,7 +736,8 @@ export const extractTextFromFile = async (
 
   try {
     const response = await generateContentWithRetry(client, {
-      model: MODEL_PRIMARY_FILE_MULTIMODAL,
+      model: MODEL_PRIMARY_FILE_EXTRACT,
+      fallbackModels: [...FALLBACK_FILE_EXTRACT],
       contents: [{
         parts: [
           { inlineData: { data: fileData.data, mimeType: mimeType } },

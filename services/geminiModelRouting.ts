@@ -12,6 +12,13 @@ export const MODEL_PRIMARY_CAREER_EXPLORE = MODEL_PRIMARY_DIAGNOSIS;
 /** 音频转写、文件 OCR 等多模态低成本路径 */
 export const MODEL_PRIMARY_FILE_MULTIMODAL = 'gemini-2.0-flash';
 
+/** PDF/Word 等附件纯文本提取：仅用 Flash 系，避免默认尾链里的 Pro 拖慢导致 Serverless 超时 */
+export const MODEL_PRIMARY_FILE_EXTRACT = 'gemini-2.5-flash';
+export const FALLBACK_FILE_EXTRACT = [
+  'gemini-2.0-flash',
+  'gemini-2.0-flash-lite',
+] as const;
+
 /**
  * 以 3.1-pro 为主时的降级尾链（不含主模型本身）。
  * 顺序：2.5-pro → 2.5-flash → 2.0 系（含 lite 兜底）。

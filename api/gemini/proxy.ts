@@ -152,31 +152,40 @@ const WHITELIST_CACHE_TTL = 5 * 60 * 1000; // 5 分钟
 
 async function getWhitelistEntry(email: string, supabaseAdmin: SupabaseClient): Promise<WhitelistEntry | null> {
   const now = Date.now();
-  
-  // 缓存过期或不存在，重新加载
+
+  // 缓存过期或不存在，重新加载（查询失败时不得写入空 Map 并缓存 5 分钟，否则全员白名单失效、Pro 会按 vip 吃 300 次上限）
   if (!whitelistCache || now - whitelistCacheTime > WHITELIST_CACHE_TTL) {
-    const { data } = await supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from('email_whitelist')
       .select('email, whitelist_type, expires_at, is_active')
       .eq('is_active', true);
-    
-    whitelistCache = new Map();
-    if (data) {
-      for (const entry of data) {
-        whitelistCache.set(entry.email.toLowerCase(), entry);
+
+    if (error) {
+      console.error('[gemini proxy] email_whitelist load failed:', error.message, error.code, error.details);
+      if (whitelistCache) {
+        whitelistCacheTime = now;
       }
+    } else {
+      const next = new Map<string, WhitelistEntry>();
+      if (data) {
+        for (const entry of data) {
+          next.set(entry.email.toLowerCase(), entry);
+        }
+      }
+      whitelistCache = next;
+      whitelistCacheTime = now;
     }
-    whitelistCacheTime = now;
   }
-  
+
+  if (!whitelistCache) return null;
+
   const entry = whitelistCache.get(email.toLowerCase());
   if (!entry) return null;
-  
-  // 检查是否过期
+
   if (entry.expires_at && new Date(entry.expires_at) < new Date()) {
     return null;
   }
-  
+
   return entry;
 }
 
@@ -1115,6 +1124,9 @@ function recordUsageSuccess(
     );
 }
 
+/** Vercel Serverless 请求体约 4.5MB 上限；多模态 JSON 过大易 OOM 导致 FUNCTION_INVOCATION_FAILED */
+const MAX_PROXY_BODY_BYTES = 4_100_000;
+
 // ============ 主处理函数 ============
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -1128,18 +1140,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-  // 生产环境必须配置 Upstash Redis，否则多实例限流失效
   const isProduction = process.env.VERCEL_ENV === 'production';
   if (isProduction && (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN)) {
-    console.error('Production requires UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.');
-    return res.status(503).json({
-      error: 'UPSTASH_REDIS_REQUIRED',
-      message: 'Rate limiting requires Redis in production. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in Vercel.',
-    });
+    console.warn(
+      '[gemini proxy] Production without Upstash: using in-memory rate limit only (多实例不共享). 建议在 Vercel 配置 UPSTASH_REDIS_*。',
+    );
   }
 
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const contentLength = Number.parseInt(String(req.headers['content-length'] || ''), 10);
+  if (Number.isFinite(contentLength) && contentLength > MAX_PROXY_BODY_BYTES) {
+    return res.status(413).json({
+      error: 'PAYLOAD_TOO_LARGE',
+      message:
+        '请求体过大（多为简历/JD 附件 Base64）。请压缩 PDF、一次只传一个文件，或改用粘贴文本（单文件建议小于约 2.5MB）。',
+    });
   }
 
   const apiKey = process.env.GEMINI_API_KEY;
@@ -1568,7 +1586,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   } catch (err: any) {
-    console.error('Handler error:', err);
-    return res.status(500).json({ error: 'AI_SERVICE_ERROR' });
+    console.error('Handler error:', err?.message || err, err?.stack);
+    if (!res.headersSent) {
+      return res.status(500).json({ error: 'AI_SERVICE_ERROR', message: '代理异常，请查看 Vercel Logs 或稍后重试' });
+    }
   }
 }
