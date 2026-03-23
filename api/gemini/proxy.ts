@@ -405,6 +405,14 @@ async function recordCareerExploreSuccess(
   userId: string,
   step: 'profile' | 'directions' | 'plan' | 'jd_demo',
 ): Promise<void> {
+  const url = resolveSupabaseUrl();
+  const sk = resolveSupabaseServiceRoleKey();
+  if (!url || !sk) {
+    console.error(
+      '[gemini proxy] recordCareerExploreSuccess: missing Supabase URL or SUPABASE_SERVICE_ROLE_KEY — set on Vercel (same project as VITE_SUPABASE_URL). usage_logs will stay empty.',
+    );
+    throw new Error('SUPABASE_ADMIN_NOT_CONFIGURED');
+  }
   const supabaseAdmin = getSupabaseAdmin();
   const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const n24 = await countCareerStepCallsSince(supabaseAdmin, userId, step, since24h);
@@ -413,7 +421,15 @@ async function recordCareerExploreSuccess(
   const actionType = isRetrySlot ? base + CAREER_LOG_RETRY_SUFFIX : base;
   const { error } = await supabaseAdmin.from('usage_logs').insert({ user_id: userId, action_type: actionType });
   if (error) {
-    console.error('recordCareerExploreSuccess insert failed', actionType, userId, error);
+    console.error(
+      'recordCareerExploreSuccess insert failed',
+      actionType,
+      userId,
+      error.message,
+      error.code,
+      error.hint,
+      '| If code is 42501 / RLS: Vercel must use service_role key, not anon.',
+    );
     throw error;
   }
 }
@@ -453,12 +469,40 @@ async function checkRateLimit(key: string): Promise<{ success: boolean; remainin
 
 // ============ Supabase 服务端客户端（单例复用，避免每次请求创建新实例） ============
 
+/** Vercel 上常只配 NEXT_PUBLIC_* / SUPABASE_URL；与 Vite 本地 VITE_* 对齐 */
+function resolveSupabaseUrl(): string {
+  return (
+    process.env.VITE_SUPABASE_URL ||
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    process.env.SUPABASE_URL ||
+    ''
+  ).trim();
+}
+
+function resolveSupabaseServiceRoleKey(): string {
+  return (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '').trim();
+}
+
+function resolveSupabaseAnonKey(): string {
+  return (
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    ''
+  ).trim();
+}
+
 let _supabaseAdmin: SupabaseClient | null = null;
 
 function getSupabaseAdmin(): SupabaseClient {
   if (!_supabaseAdmin) {
-    const url = process.env.VITE_SUPABASE_URL || '';
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+    const url = resolveSupabaseUrl();
+    const serviceKey = resolveSupabaseServiceRoleKey();
+    if (!url || !serviceKey) {
+      console.error(
+        '[gemini proxy] getSupabaseAdmin: VITE_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_URL / SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must both be set for usage_logs.',
+      );
+    }
     _supabaseAdmin = createClient(url, serviceKey);
   }
   return _supabaseAdmin;
@@ -466,8 +510,8 @@ function getSupabaseAdmin(): SupabaseClient {
 
 /** 每请求独立 client，避免 Serverless 并发下复用单例导致 JWT 串用户 */
 function createSupabaseAuthClient(jwt: string): SupabaseClient {
-  const url = process.env.VITE_SUPABASE_URL || '';
-  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || '';
+  const url = resolveSupabaseUrl();
+  const anonKey = resolveSupabaseAnonKey();
   return createClient(url, anonKey, {
     global: { headers: { Authorization: `Bearer ${jwt}` } },
   });
