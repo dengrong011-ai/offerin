@@ -39,6 +39,8 @@ interface ExplorePageProps {
   onBack: () => void;
   onOpenPlanLibrary?: () => void;
   onOpenJdLibrary?: () => void;
+  /** 免费额度不足时打开会员升级弹窗（与首页 VIP 一致） */
+  onOpenUpgrade?: () => void;
   /** 首页已填写的简历正文：进入职业探索时若本页简历为空则自动带入一次（避免误以为「识别不到」） */
   initialResumeFromApp?: string;
 }
@@ -47,6 +49,7 @@ const ExplorePage: React.FC<ExplorePageProps> = ({
   onBack,
   onOpenPlanLibrary,
   onOpenJdLibrary,
+  onOpenUpgrade,
   initialResumeFromApp,
 }) => {
   const { user } = useAuth();
@@ -129,11 +132,12 @@ const ExplorePage: React.FC<ExplorePageProps> = ({
             '免费体验计费额度已用完（画像、方向、参考 JD、计划共 3 次；同一步 24h 内第 2 次成功不扣）。升级会员后可继续使用。'
           );
         }
+        onOpenUpgrade?.();
         return false;
       }
       return true;
     },
-    [user?.id],
+    [user?.id, onOpenUpgrade],
   );
 
   useEffect(() => {
@@ -423,6 +427,7 @@ const ExplorePage: React.FC<ExplorePageProps> = ({
             onSubmit={handlePreferencesSubmit}
             isLoading={loading}
             trialQuotaBlocksFirstFlow={trialQuotaBlocksFirstFlow}
+            onOpenUpgrade={onOpenUpgrade}
             resumeText={exploreResumeText}
             onResumeTextChange={setExploreResumeText}
             resumeLabel={exploreResumeLabel}
@@ -535,6 +540,7 @@ const ExplorePage: React.FC<ExplorePageProps> = ({
                     onDemoJd={handleDemoJd}
                     demoJdLoadingFor={demoJdLoadingFor}
                     demoJdDisabled={trialQuotaBlocksOneStep}
+                    onDemoJdQuotaBlocked={onOpenUpgrade}
                   />
                 ))}
               </div>
@@ -607,15 +613,27 @@ const ExplorePage: React.FC<ExplorePageProps> = ({
             </div>
 
             <button
-              onClick={handleGeneratePlan}
-              disabled={loading || trialQuotaBlocksOneStep}
-              className="w-full py-3 rounded-xl text-sm font-medium bg-zinc-900 text-white hover:bg-zinc-800 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+              onClick={() => {
+                if (trialQuotaBlocksOneStep) {
+                  onOpenUpgrade?.();
+                  return;
+                }
+                void handleGeneratePlan();
+              }}
+              disabled={loading}
+              className={`w-full py-3 rounded-xl text-sm font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50 ${
+                trialQuotaBlocksOneStep && !loading
+                  ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white hover:from-amber-600 hover:to-orange-600'
+                  : 'bg-zinc-900 text-white hover:bg-zinc-800'
+              }`}
             >
               {loading ? (
                 <>
                   <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                   正在生成计划...
                 </>
+              ) : trialQuotaBlocksOneStep ? (
+                <>升级会员，继续生成计划</>
               ) : (
                 <>
                   <Sparkles size={16} />
@@ -625,7 +643,7 @@ const ExplorePage: React.FC<ExplorePageProps> = ({
             </button>
             {trialQuotaBlocksOneStep && (
               <p className="mt-2 text-center text-xs text-zinc-500">
-                免费体验计费额度已用尽（四步共用 3 次），无法生成新计划。可返回查看已生成的画像与方向。
+                免费体验计费额度已用尽（四步共用 3 次）。点击上方按钮可开通会员；也可返回查看已生成的画像与方向。
               </p>
             )}
 

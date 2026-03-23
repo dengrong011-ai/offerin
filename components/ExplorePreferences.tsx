@@ -31,8 +31,9 @@ const CHOICE_OPTIONS = [
 interface ExplorePreferencesProps {
   onSubmit: (preferences: UserPreferences) => void;
   isLoading?: boolean;
-  /** 免费档「画像+方向」需 2 次计费额度；不足时禁用首步按钮 */
+  /** 免费档「画像+方向」需 2 次计费额度；不足时弹出升级或点主按钮打开会员 */
   trialQuotaBlocksFirstFlow?: boolean;
+  onOpenUpgrade?: () => void;
   /** 由 ExplorePage 持有，避免子组件卸载后简历丢失 */
   resumeText: string;
   onResumeTextChange: (text: string) => void;
@@ -51,6 +52,7 @@ const ExplorePreferences: React.FC<ExplorePreferencesProps> = ({
   onSubmit,
   isLoading,
   trialQuotaBlocksFirstFlow = false,
+  onOpenUpgrade,
   resumeText,
   onResumeTextChange,
   resumeLabel,
@@ -69,10 +71,24 @@ const ExplorePreferences: React.FC<ExplorePreferencesProps> = ({
   const [resumeExtracting, setResumeExtracting] = useState(false);
   const [libraryEmptyHint, setLibraryEmptyHint] = useState<string | null>(null);
   const resumeFileInputRef = useRef<HTMLInputElement>(null);
+  const quotaUpgradeAutoShownRef = useRef(false);
 
   useEffect(() => {
     if (resumeText.trim().length > 0) setShowResumeInput(true);
   }, [resumeText]);
+
+  const hasResume = resumeText.trim().length > 0;
+  const formReady = selectedNeeds.length > 0 && hasResume;
+
+  useEffect(() => {
+    if (!trialQuotaBlocksFirstFlow) {
+      quotaUpgradeAutoShownRef.current = false;
+      return;
+    }
+    if (!formReady || !onOpenUpgrade || quotaUpgradeAutoShownRef.current) return;
+    quotaUpgradeAutoShownRef.current = true;
+    onOpenUpgrade();
+  }, [trialQuotaBlocksFirstFlow, formReady, onOpenUpgrade]);
 
   const toggleNeed = useCallback((need: string) => {
     setSelectedNeeds(prev =>
@@ -168,8 +184,16 @@ const ExplorePreferences: React.FC<ExplorePreferencesProps> = ({
     setShowResumeInput(true);
   }, [onResumeLabelChange, onResumeTextChange]);
 
-  const hasResume = resumeText.trim().length > 0;
-  const canSubmit = selectedNeeds.length > 0 && hasResume && !trialQuotaBlocksFirstFlow;
+  const handlePrimaryClick = () => {
+    if (trialQuotaBlocksFirstFlow) {
+      onOpenUpgrade?.();
+      return;
+    }
+    handleSubmit();
+  };
+
+  const primaryDisabled = isLoading || !formReady;
+  const primaryQuotaBlocked = trialQuotaBlocksFirstFlow && formReady;
 
   return (
     <>
@@ -378,10 +402,15 @@ const ExplorePreferences: React.FC<ExplorePreferencesProps> = ({
       </div>
 
       <button
-        onClick={handleSubmit}
-        disabled={!canSubmit || isLoading}
+        type="button"
+        onClick={handlePrimaryClick}
+        disabled={primaryDisabled}
         className={`w-full py-3 rounded-xl text-sm font-medium transition-all duration-200 flex items-center justify-center gap-2 ${
-          canSubmit && !isLoading ? 'bg-zinc-900 text-white hover:bg-zinc-800 shadow-sm' : 'bg-zinc-100 text-zinc-400 cursor-not-allowed'
+          primaryDisabled
+            ? 'bg-zinc-100 text-zinc-400 cursor-not-allowed'
+            : primaryQuotaBlocked
+              ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white hover:from-amber-600 hover:to-orange-600 shadow-sm'
+              : 'bg-zinc-900 text-white hover:bg-zinc-800 shadow-sm'
         }`}
       >
         {isLoading ? (
@@ -389,6 +418,8 @@ const ExplorePreferences: React.FC<ExplorePreferencesProps> = ({
             <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
             AI 正在分析...
           </>
+        ) : primaryQuotaBlocked ? (
+          <>升级会员，继续职业探索</>
         ) : (
           <>
             <Sparkles size={16} />
@@ -397,17 +428,17 @@ const ExplorePreferences: React.FC<ExplorePreferencesProps> = ({
           </>
         )}
       </button>
-      {!canSubmit && (
+      {(primaryDisabled && !isLoading) || trialQuotaBlocksFirstFlow ? (
         <p className="mt-2 text-center text-xs text-zinc-400">
           {trialQuotaBlocksFirstFlow
-            ? '免费体验计费额度不足：完成「画像 + 方向」需要 2 次（共 3 次可用）。'
+            ? '免费体验计费额度不足：完成「画像 + 方向」需要 2 次（共 3 次可用）。已为你弹出会员方案，也可点上方按钮再次打开。'
             : selectedNeeds.length === 0 && !hasResume
               ? '请选择核心诉求并上传简历'
               : selectedNeeds.length === 0
                 ? '请先在上方「核心诉求」中至少点选一项（如成长、好平台），再点 AI 推荐方向'
                 : '请上传简历、粘贴文本或从简历库载入正文'}
         </p>
-      )}
+      ) : null}
     </div>
     {user?.id && (
       <SavedResumePickModal

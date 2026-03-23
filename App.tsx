@@ -113,6 +113,11 @@ const App: React.FC = () => {
     setStep('INPUT');
   }, []);
 
+  const openExploreUpgrade = useCallback(() => {
+    setMembershipModalProduct('full_monthly');
+    setShowVIPModal(true);
+  }, []);
+
   useEffect(() => {
     try {
       if (new URLSearchParams(window.location.search).get('explore') === '1') {
@@ -1924,6 +1929,7 @@ const App: React.FC = () => {
             })
           }
           onOpenJdLibrary={() => requireLogin(() => setStep('JD_LIBRARY'))}
+          onOpenUpgrade={openExploreUpgrade}
         />
       )}
 

@@ -12,6 +12,8 @@ interface DirectionCardProps {
   demoJdLoadingFor?: string | null;
   /** 免费档计费额度已用尽时禁用 */
   demoJdDisabled?: boolean;
+  /** 额度用尽时点击「生成参考 JD」改为打开会员（与 ExplorePage 传入同一回调） */
+  onDemoJdQuotaBlocked?: () => void;
 }
 
 function getScoreColor(score: number): string {
@@ -66,6 +68,7 @@ const DirectionCard: React.FC<DirectionCardProps> = ({
   onDemoJd,
   demoJdLoadingFor,
   demoJdDisabled,
+  onDemoJdQuotaBlocked,
 }) => {
   return (
     <div className="border border-zinc-200 rounded-xl bg-white overflow-hidden">
@@ -172,12 +175,26 @@ const DirectionCard: React.FC<DirectionCardProps> = ({
           {onDemoJd && (
             <button
               type="button"
-              disabled={demoJdDisabled || demoJdLoadingFor === direction.directionName}
-              title={demoJdDisabled ? '免费体验计费额度已用完' : undefined}
-              onClick={() => onDemoJd(direction)}
-              className="flex-1 min-w-[140px] py-2.5 rounded-lg text-sm font-medium bg-zinc-200 text-zinc-800 border border-zinc-300 hover:bg-zinc-300 transition-colors disabled:opacity-50 flex items-center justify-center"
+              disabled={demoJdLoadingFor === direction.directionName}
+              title={demoJdDisabled ? '免费体验计费额度已用完，点击开通会员' : undefined}
+              onClick={() => {
+                if (demoJdDisabled) {
+                  onDemoJdQuotaBlocked?.();
+                  return;
+                }
+                onDemoJd(direction);
+              }}
+              className={`flex-1 min-w-[140px] py-2.5 rounded-lg text-sm font-medium border transition-colors flex items-center justify-center ${
+                demoJdDisabled
+                  ? 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100'
+                  : 'bg-zinc-200 text-zinc-800 border-zinc-300 hover:bg-zinc-300 disabled:opacity-50'
+              }`}
             >
-              {demoJdLoadingFor === direction.directionName ? '生成中…' : '生成参考JD（demo）'}
+              {demoJdLoadingFor === direction.directionName
+                ? '生成中…'
+                : demoJdDisabled
+                  ? '额度已用尽 · 开通会员'
+                  : '生成参考JD（demo）'}
             </button>
           )}
           <button
