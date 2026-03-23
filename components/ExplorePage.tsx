@@ -466,8 +466,7 @@ const ExplorePage: React.FC<ExplorePageProps> = ({
         {subStep === 'loading' && (
           <div className="max-w-2xl mx-auto py-16 text-center">
             <div className="w-12 h-12 border-2 border-zinc-200 border-t-zinc-900 rounded-full animate-spin mx-auto mb-4" />
-            <p className="text-zinc-600 mb-2">{loadingMessage}</p>
-            <p className="text-[11px] text-zinc-400 mb-3">内容将以流式到达，下方为实时输出尾部（JSON 结构，生成完成后会解析为画像与方向卡片）</p>
+            <p className="text-zinc-600 mb-3">{loadingMessage}</p>
             {streamPreview ? (
               <pre className="mx-auto max-w-full text-left text-[11px] leading-relaxed text-zinc-500 bg-zinc-50 border border-zinc-100 rounded-xl p-3 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono">
                 {streamPreview}

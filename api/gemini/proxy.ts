@@ -924,8 +924,59 @@ function shouldBillGeminiRestResponse(data: unknown): boolean {
   return parts.some((p) => typeof p.text === 'string' && p.text.length > 0);
 }
 
+/** Google 偶发将单个 part 写成对象而非数组，严格 shouldBill 会恒 false → 职业探索永不写 usage_logs */
+function geminiContentPartsAsArray(content: Record<string, unknown> | undefined): unknown[] {
+  if (!content) return [];
+  const parts = content.parts;
+  if (Array.isArray(parts)) return parts;
+  if (parts !== undefined && parts !== null && typeof parts === 'object') return [parts];
+  return [];
+}
+
+/** 从首条 candidate 抽取可计费文本（兼容 parts 非数组、content 为字符串等变体） */
+function extractCandidateTextFlexible(data: unknown): string {
+  if (!data || typeof data !== 'object') return '';
+  const d = data as Record<string, unknown>;
+  const candidates = d.candidates as Array<Record<string, unknown>> | undefined;
+  const c0 = candidates?.[0];
+  if (!c0) return '';
+  const raw = c0.content;
+  if (typeof raw === 'string') return raw;
+  if (!raw || typeof raw !== 'object') return '';
+  const list = geminiContentPartsAsArray(raw as Record<string, unknown>);
+  let s = '';
+  for (const p of list) {
+    if (p && typeof p === 'object') {
+      const o = p as Record<string, unknown>;
+      if (typeof o.text === 'string') s += o.text;
+    }
+  }
+  return s;
+}
+
+/** 职业探索非流式：在标准判定之上用宽松文本提取，避免漏记账 */
+function shouldBillCareerExploreRest(data: unknown): boolean {
+  if (shouldBillGeminiRestResponse(data)) return true;
+  if (!data || typeof data !== 'object') return false;
+  const d = data as Record<string, unknown>;
+  if (d.error) return false;
+  const pf = d.promptFeedback as { blockReason?: string } | undefined;
+  if (pf?.blockReason) return false;
+  const candidates = d.candidates as Array<Record<string, unknown>> | undefined;
+  if (!Array.isArray(candidates) || candidates.length === 0) return false;
+  const c0 = candidates[0];
+  const fr = c0?.finishReason as string | undefined;
+  if (fr === 'SAFETY' || fr === 'RECITATION' || fr === 'BLOCKLIST' || fr === 'PROHIBITED_CONTENT') {
+    return false;
+  }
+  const compact = extractCandidateTextFlexible(data).replace(/\s/g, '');
+  return compact.length >= 8;
+}
+
 /** 拼接首条候选中的全部文本（多 part 时合并） */
 function extractFirstCandidateTextConcat(data: unknown): string {
+  const flex = extractCandidateTextFlexible(data);
+  if (flex) return flex;
   if (!data || typeof data !== 'object') return '';
   const d = data as Record<string, unknown>;
   const candidates = d.candidates as Array<Record<string, unknown>> | undefined;
@@ -952,11 +1003,21 @@ function tryParseStructuredJson(text: string): boolean {
 
 /** 职业探索 + JSON：正文必须可解析为 JSON，否则换模型重试 */
 function careerExploreJsonResponseOk(data: unknown): boolean {
-  if (!shouldBillGeminiRestResponse(data)) return false;
-  const text = extractFirstCandidateTextConcat(data);
-  if (tryParseStructuredJson(text)) return true;
+  if (!data || typeof data !== 'object') return false;
   const d = data as Record<string, unknown>;
-  const fr = (d.candidates as Array<{ finishReason?: string }> | undefined)?.[0]?.finishReason;
+  if (d.error) return false;
+  const pf = d.promptFeedback as { blockReason?: string } | undefined;
+  if (pf?.blockReason) return false;
+  const candidates = d.candidates as Array<Record<string, unknown>> | undefined;
+  if (!Array.isArray(candidates) || candidates.length === 0) return false;
+  const c0 = candidates[0];
+  const fr = c0?.finishReason as string | undefined;
+  if (fr === 'SAFETY' || fr === 'RECITATION' || fr === 'BLOCKLIST' || fr === 'PROHIBITED_CONTENT') {
+    return false;
+  }
+  const text = extractCandidateTextFlexible(data);
+  if (!text.trim()) return false;
+  if (tryParseStructuredJson(text)) return true;
   if (fr) {
     console.warn(`[gemini proxy] career JSON parse failed, finishReason=${fr}`);
   }
@@ -1406,6 +1467,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             interviewSessionId
           );
         }
+      } else if (pendingCareerStep) {
+        console.warn('[gemini proxy] career stream completed but not billed', {
+          step: pendingCareerStep,
+          streamCompleted,
+          blocked: sseAcc.blocked,
+          sawModelText: sseAcc.sawModelText,
+          bytesIn: sseAcc.bytesIn,
+        });
       }
       return;
     } else {
@@ -1454,7 +1523,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       res.setHeader('X-Gemini-Model', resolvedModel);
       res.setHeader('Access-Control-Expose-Headers', 'X-Gemini-Model');
-      if (shouldBillGeminiRestResponse(data)) {
+      const billNonStream = pendingCareerStep
+        ? shouldBillCareerExploreRest(data)
+        : shouldBillGeminiRestResponse(data);
+      if (billNonStream) {
         if (pendingCareerStep) {
           try {
             await recordCareerExploreSuccess(authUser.userId, pendingCareerStep);
@@ -1469,6 +1541,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             interviewSessionId
           );
         }
+      } else if (pendingCareerStep) {
+        console.warn('[gemini proxy] career REST response not billed', {
+          step: pendingCareerStep,
+          flexTextLen: extractCandidateTextFlexible(data).length,
+        });
       }
       return res.status(200).json(data);
     }
