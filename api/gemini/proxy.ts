@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { mergeWhitelistIntoPaidProfile } from '../../server/membershipWhitelistMerge';
 import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
 /**
@@ -586,23 +587,10 @@ async function authenticateUser(authHeader: string | undefined): Promise<AuthRes
       }
     }
 
-    // 白名单：不改动仍在期的老 vip 上限（月 300 次面试等）；仅当资料里已是「在期的」全局畅享/简历畅改时，
-    // 不得以白名单里的 vip 覆盖，否则新档位付费用户仍走旧额度。
-    if (whitelistEntry) {
-      const rawTier = profileResult.data?.membership_type || 'free';
-      const rawExp = profileResult.data?.vip_expires_at;
-      const paidNewTierActive =
-        (rawTier === 'full_monthly' || rawTier === 'resume_pass') &&
-        !!rawExp &&
-        new Date(rawExp) >= new Date();
-      const skipWhitelistVipForPaidNewTier =
-        whitelistEntry.whitelist_type === 'vip' && paidNewTierActive;
-
-      if (!skipWhitelistVipForPaidNewTier) {
-        membershipType = whitelistEntry.whitelist_type;
-        vipExpiresAt = null;
-      }
-    }
+    // 白名单：资料里在期的付费档位（含老 VIP）优先，避免被 special 等弱档覆盖导致误拦；pro 仍为最高档。
+    const merged = mergeWhitelistIntoPaidProfile(membershipType, vipExpiresAt, whitelistEntry);
+    membershipType = merged.membershipType;
+    vipExpiresAt = merged.vipExpiresAt;
 
     return {
       userId: user.id,

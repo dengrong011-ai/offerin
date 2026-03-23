@@ -4,7 +4,11 @@
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
-import { applySubscriptionGrant, isSubscriptionProductId } from '../../server/subscriptionGrant';
+import {
+  applySubscriptionGrant,
+  isSubscriptionProductId,
+  profileNeedsSubscriptionGrantForProduct,
+} from '../../server/subscriptionGrant';
 import {
   resolveSupabaseAnonKey,
   resolveSupabaseServiceRoleKey,
@@ -82,8 +86,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.json({ ok: true, repaired: false, reason: 'not_subscription' });
       }
 
-      const { data: prof } = await admin.from('profiles').select('membership_type').eq('id', userId).single();
-      if (prof?.membership_type && prof.membership_type !== 'free') {
+      const needs = await profileNeedsSubscriptionGrantForProduct(admin, userId, order.product_id);
+      if (!needs) {
         return res.json({ ok: true, repaired: false, reason: 'already_has_tier' });
       }
 
@@ -111,8 +115,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.json({ ok: true, repaired: false, reason: 'no_recent_order' });
     }
 
-    const { data: prof } = await admin.from('profiles').select('membership_type').eq('id', userId).single();
-    if (prof?.membership_type && prof.membership_type !== 'free') {
+    const needs = await profileNeedsSubscriptionGrantForProduct(admin, userId, latest.product_id);
+    if (!needs) {
       return res.json({ ok: true, repaired: false, reason: 'already_has_tier' });
     }
 

@@ -23,6 +23,73 @@ const CFG: Record<SubscriptionProductId, { membership: string; days: number }> =
   full_monthly: { membership: 'full_monthly', days: 30 },
 };
 
+/** 判断「这笔订阅订单对应的资料」是否仍需开通（幂等回调 / 已付未写 profile 场景） */
+export async function profileNeedsSubscriptionGrantForProduct(
+  supabase: SupabaseClient,
+  userId: string,
+  productId: string,
+): Promise<boolean> {
+  if (!isSubscriptionProductId(productId)) return false;
+  const expectedMembership = CFG[productId].membership;
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('membership_type, vip_expires_at')
+    .eq('id', userId)
+    .single();
+
+  const type = profile?.membership_type || 'free';
+  const now = new Date();
+  const exp = profile?.vip_expires_at ? new Date(profile.vip_expires_at) : null;
+  const expValid = !!exp && exp > now;
+
+  if (type === 'free') return true;
+
+  if (type === expectedMembership) {
+    if (expValid) return false;
+    if (!profile?.vip_expires_at && type === 'vip') return false;
+    return true;
+  }
+
+  return true;
+}
+
+/**
+ * 打开 App / 拉会员接口时：若订单已 paid 但 profiles 未同步，按最近已付订阅单补写（与 repair-subscription 窗口一致；free+未来到期时间 用更长窗口纠偏脏数据）。
+ */
+export async function healStaleSubscriptionProfile(supabase: SupabaseClient, userId: string): Promise<void> {
+  const { data: p } = await supabase
+    .from('profiles')
+    .select('membership_type, vip_expires_at')
+    .eq('id', userId)
+    .single();
+  if (!p) return;
+
+  const type = p.membership_type || 'free';
+  const exp = p.vip_expires_at ? new Date(p.vip_expires_at) : null;
+  const expValid = !!exp && exp > new Date();
+
+  const windowDays = type === 'free' && expValid ? 366 : 7;
+  const cutoff = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data: ord } = await supabase
+    .from('payment_orders')
+    .select('product_id')
+    .eq('user_id', userId)
+    .eq('status', 'paid')
+    .in('product_id', [...SUBSCRIPTION_PRODUCT_IDS])
+    .gte('paid_at', cutoff)
+    .order('paid_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!ord?.product_id || !isSubscriptionProductId(ord.product_id)) return;
+
+  const needs = await profileNeedsSubscriptionGrantForProduct(supabase, userId, ord.product_id);
+  if (!needs) return;
+
+  await applySubscriptionGrant(supabase, userId, ord.product_id);
+}
+
 export async function applySubscriptionGrant(
   supabase: SupabaseClient,
   userId: string,
@@ -33,12 +100,31 @@ export async function applySubscriptionGrant(
   }
   const { membership, days } = CFG[productId];
   const now = new Date();
-  let baseDate = now;
   const { data: profileData } = await supabase
     .from('profiles')
     .select('vip_expires_at, membership_type')
     .eq('id', userId)
     .single();
+
+  // 脏数据：仍为 free 但 vip_expires_at 未清空 — 只补 membership_type，保留原到期时间，避免用户被当免费版拦截
+  if (profileData?.membership_type === 'free' && profileData?.vip_expires_at) {
+    const existingExpiry = new Date(profileData.vip_expires_at);
+    if (existingExpiry > now) {
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update({
+          membership_type: membership,
+          updated_at: now.toISOString(),
+        })
+        .eq('id', userId);
+      if (profileError) {
+        return { ok: false, error: profileError.message };
+      }
+      return { ok: true };
+    }
+  }
+
+  let baseDate = now;
   if (profileData?.membership_type === membership && profileData?.vip_expires_at) {
     const existingExpiry = new Date(profileData.vip_expires_at);
     if (existingExpiry > now) {

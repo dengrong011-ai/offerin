@@ -5,6 +5,8 @@ import {
   resolveSupabaseServiceRoleKey,
   resolveSupabaseUrl,
 } from '../../server/supabaseServerEnv';
+import { mergeWhitelistIntoPaidProfile } from '../../server/membershipWhitelistMerge';
+import { healStaleSubscriptionProfile } from '../../server/subscriptionGrant';
 
 const CORS_ORIGINS = ['https://offerin.co', 'https://www.offerin.co', 'http://localhost:3000', 'http://localhost:5173', 'http://localhost:5174'];
 
@@ -75,6 +77,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { data: { user }, error } = await authClient.auth.getUser();
     if (error || !user) return res.status(401).json({ error: 'UNAUTHORIZED' });
 
+    await healStaleSubscriptionProfile(getSupabaseAdmin(), user.id);
+
     const [profileResult, whitelistEntry] = await Promise.all([
       getSupabaseAdmin().from('profiles').select('membership_type, vip_expires_at').eq('id', user.id).single(),
       user.email ? getWhitelistEntry(user.email) : Promise.resolve(null),
@@ -101,17 +105,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (normErr) console.error('[api/user/membership] expiry normalize failed:', user.id, normErr);
     }
 
-    if (whitelistEntry) {
-      const rawTier = profileResult.data?.membership_type || 'free';
-      const rawExp = profileResult.data?.vip_expires_at;
-      const paidNewTierActive =
-        (rawTier === 'full_monthly' || rawTier === 'resume_pass') &&
-        !!rawExp &&
-        new Date(rawExp) >= new Date();
-      if (!(whitelistEntry.whitelist_type === 'vip' && paidNewTierActive)) {
-        membershipType = whitelistEntry.whitelist_type;
-      }
-    }
+    const merged = mergeWhitelistIntoPaidProfile(membershipType, exp ?? null, whitelistEntry);
+    membershipType = merged.membershipType;
 
     return res.status(200).json({ membershipType });
   } catch {

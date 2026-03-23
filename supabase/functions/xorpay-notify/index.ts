@@ -194,6 +194,98 @@ function verifySign(
   return sign === expectedSign
 }
 
+/** 与 server/subscriptionGrant.ts 保持同步（Edge 无法直接 import 仓库模块） */
+const SUB_PRODUCT_IDS = ['vip_sprint', 'vip_monthly', 'resume_pass_10d', 'full_monthly'] as const
+
+function isSubProductId(id: string): boolean {
+  return (SUB_PRODUCT_IDS as readonly string[]).includes(id)
+}
+
+const SUB_CFG: Record<string, { membership: string; days: number }> = {
+  vip_sprint: { membership: 'vip', days: 10 },
+  vip_monthly: { membership: 'vip', days: 30 },
+  resume_pass_10d: { membership: 'resume_pass', days: 10 },
+  full_monthly: { membership: 'full_monthly', days: 30 },
+}
+
+async function profileNeedsGrantForProduct(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  productId: string,
+): Promise<boolean> {
+  if (!isSubProductId(productId)) return false
+  const expectedMembership = SUB_CFG[productId].membership
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('membership_type, vip_expires_at')
+    .eq('id', userId)
+    .single()
+
+  const type = profile?.membership_type || 'free'
+  const now = new Date()
+  const exp = profile?.vip_expires_at ? new Date(profile.vip_expires_at) : null
+  const expValid = !!exp && exp > now
+
+  if (type === 'free') return true
+
+  if (type === expectedMembership) {
+    if (expValid) return false
+    if (!profile?.vip_expires_at && type === 'vip') return false
+    return true
+  }
+
+  return true
+}
+
+async function applySubscriptionGrantEdge(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  productId: string,
+): Promise<{ ok: boolean }> {
+  if (!isSubProductId(productId)) return { ok: true }
+  const { membership, days } = SUB_CFG[productId]
+  const now = new Date()
+  const { data: profileData } = await supabase
+    .from('profiles')
+    .select('vip_expires_at, membership_type')
+    .eq('id', userId)
+    .single()
+
+  if (profileData?.membership_type === 'free' && profileData?.vip_expires_at) {
+    const existingExpiry = new Date(profileData.vip_expires_at)
+    if (existingExpiry > now) {
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update({
+          membership_type: membership,
+          updated_at: now.toISOString(),
+        })
+        .eq('id', userId)
+      return { ok: !profileError }
+    }
+  }
+
+  let baseDate = now
+  if (profileData?.membership_type === membership && profileData?.vip_expires_at) {
+    const existingExpiry = new Date(profileData.vip_expires_at)
+    if (existingExpiry > now) {
+      baseDate = existingExpiry
+    }
+  }
+  const expiresAt = new Date(baseDate.getTime() + days * 24 * 60 * 60 * 1000)
+
+  const { error: profileError } = await supabase
+    .from('profiles')
+    .update({
+      membership_type: membership,
+      vip_expires_at: expiresAt.toISOString(),
+      updated_at: now.toISOString(),
+    })
+    .eq('id', userId)
+
+  return { ok: !profileError }
+}
+
 serve(async (req) => {
   // 只接受 POST 请求
   if (req.method !== 'POST') {
@@ -235,9 +327,19 @@ serve(async (req) => {
       return new Response('Order Not Found', { status: 404 })
     }
 
-    // 4. 检查订单是否已处理
+    // 4. 订单已是 paid：仍可能未写入 profiles，按需幂等补写（与 api/xorpay/notify 一致）
     if (order.status === 'paid') {
-      console.log('订单已处理:', orderId)
+      console.log('订单已是已支付状态，检查 profiles:', orderId)
+      if (isSubProductId(order.product_id)) {
+        const needs = await profileNeedsGrantForProduct(supabase, order.user_id, order.product_id)
+        if (needs) {
+          const r = await applySubscriptionGrantEdge(supabase, order.user_id, order.product_id)
+          if (!r.ok) {
+            console.error('补写会员失败(已付订单)')
+            return new Response('Profile Error', { status: 500 })
+          }
+        }
+      }
       return new Response('ok', { status: 200 })
     }
 
@@ -266,6 +368,16 @@ serve(async (req) => {
         .eq('id', orderId)
         .single()
       if (recheck?.status === 'paid') {
+        if (isSubProductId(order.product_id)) {
+          const needs = await profileNeedsGrantForProduct(supabase, order.user_id, order.product_id)
+          if (needs) {
+            const r = await applySubscriptionGrantEdge(supabase, order.user_id, order.product_id)
+            if (!r.ok) {
+              console.error('并发路径补写会员失败')
+              return new Response('Profile Error', { status: 500 })
+            }
+          }
+        }
         return new Response('ok', { status: 200 })
       }
       return new Response('Conflict', { status: 409 })
@@ -276,42 +388,11 @@ serve(async (req) => {
     const productId = order.product_id
     const productType = order.product_type
 
-    // 与 api/xorpay/notify.ts 一致：按 product_id 区分老 VIP 与两档新会员；同档续费从到期日叠加
-    const subProducts = ['vip_sprint', 'vip_monthly', 'resume_pass_10d', 'full_monthly'] as const
-    if ((subProducts as readonly string[]).includes(productId)) {
-      const cfg: Record<string, { membership: string; days: number }> = {
-        vip_sprint: { membership: 'vip', days: 10 },
-        vip_monthly: { membership: 'vip', days: 30 },
-        resume_pass_10d: { membership: 'resume_pass', days: 10 },
-        full_monthly: { membership: 'full_monthly', days: 30 },
-      }
-      const { membership, days } = cfg[productId as keyof typeof cfg]
-      const now = new Date()
-      let baseDate = now
-      const { data: profileData } = await supabase
-        .from('profiles')
-        .select('vip_expires_at, membership_type')
-        .eq('id', userId)
-        .single()
-      if (profileData?.membership_type === membership && profileData?.vip_expires_at) {
-        const existingExpiry = new Date(profileData.vip_expires_at)
-        if (existingExpiry > now) {
-          baseDate = existingExpiry
-        }
-      }
-      const expiresAt = new Date(baseDate.getTime() + days * 24 * 60 * 60 * 1000)
-
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .update({
-          membership_type: membership,
-          vip_expires_at: expiresAt.toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', userId)
-
-      if (profileError) {
-        console.error('更新会员状态失败:', profileError)
+    if (isSubProductId(productId)) {
+      const r = await applySubscriptionGrantEdge(supabase, userId, productId)
+      if (!r.ok) {
+        console.error('更新会员状态失败')
+        return new Response('Profile Error', { status: 500 })
       }
     } else if (productType === 'single') {
       // 单次购买：记录购买记录

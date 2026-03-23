@@ -46,6 +46,20 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       await repairSubscriptionAfterPay();
     }
 
+    // GET /api/user/membership 会按已付订单自愈 profiles（订单 paid 但 type 仍为 free 等）
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (session?.access_token) {
+        await fetch('/api/user/membership', {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+      }
+    } catch {
+      /* ignore */
+    }
+
     const paidTiers = new Set(['vip', 'resume_pass', 'full_monthly', 'pro', 'special']);
     const maxAttempts = options?.untilPaidMembership ? 8 : 1;
 
@@ -78,6 +92,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         setUser(session?.user ?? null);
         
         if (session?.user) {
+          if (session.access_token) {
+            try {
+              await fetch('/api/user/membership', {
+                headers: { Authorization: `Bearer ${session.access_token}` },
+              });
+            } catch {
+              /* ignore */
+            }
+          }
           const userProfile = await getUserProfile(session.user.id);
           setProfile(userProfile);
         }
@@ -99,6 +122,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (session?.user) {
         // 获取 profile，带重试机制（新用户触发器创建可能需要时间）
         const fetchProfileWithRetry = async (userId: string, retries = 3, delay = 500) => {
+          if (session.access_token) {
+            try {
+              await fetch('/api/user/membership', {
+                headers: { Authorization: `Bearer ${session.access_token}` },
+              });
+            } catch {
+              /* ignore */
+            }
+          }
           for (let i = 0; i < retries; i++) {
             const userProfile = await getUserProfile(userId);
             if (userProfile) {

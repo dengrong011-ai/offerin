@@ -5,7 +5,11 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { applySubscriptionGrant } from '../../server/subscriptionGrant';
+import {
+  applySubscriptionGrant,
+  isSubscriptionProductId,
+  profileNeedsSubscriptionGrantForProduct,
+} from '../../server/subscriptionGrant';
 import { resolveSupabaseServiceRoleKey, resolveSupabaseUrl } from '../../server/supabaseServerEnv';
 
 function getServiceClient(): SupabaseClient | null {
@@ -206,9 +210,19 @@ const handlePaymentSuccess = async (orderId: string, supabase: SupabaseClient): 
       return false;
     }
 
-    // 2. 检查是否已处理
+    // 2. 订单已是 paid：仍可能未写入 profiles（并发先改状态、首次 grant 失败、或回调重入），按需幂等补写
     if (order.status === 'paid') {
-      console.log('订单已处理:', orderId);
+      console.log('订单已是已支付状态，检查 profiles 是否需补写:', orderId);
+      if (isSubscriptionProductId(order.product_id)) {
+        const needs = await profileNeedsSubscriptionGrantForProduct(supabase, order.user_id, order.product_id);
+        if (needs) {
+          const grant = await applySubscriptionGrant(supabase, order.user_id, order.product_id);
+          if (!grant.ok) {
+            console.error('补写会员失败(已付订单):', grant.error);
+            return false;
+          }
+        }
+      }
       return true;
     }
 
@@ -237,6 +251,16 @@ const handlePaymentSuccess = async (orderId: string, supabase: SupabaseClient): 
         .single();
       if (recheck?.status === 'paid') {
         console.log('订单已由并发请求标记为已支付:', orderId);
+        if (isSubscriptionProductId(order.product_id)) {
+          const needs = await profileNeedsSubscriptionGrantForProduct(supabase, order.user_id, order.product_id);
+          if (needs) {
+            const grant = await applySubscriptionGrant(supabase, order.user_id, order.product_id);
+            if (!grant.ok) {
+              console.error('并发路径补写会员失败:', grant.error);
+              return false;
+            }
+          }
+        }
         return true;
       }
       console.error('订单非 pending，无法标记已支付:', orderId);
