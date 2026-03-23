@@ -50,6 +50,7 @@ const SUPPORTED_RESUME_TYPES = [
 const ExplorePreferences: React.FC<ExplorePreferencesProps> = ({
   onSubmit,
   isLoading,
+  trialQuotaBlocksFirstFlow = false,
   resumeText,
   onResumeTextChange,
   resumeLabel,
