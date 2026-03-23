@@ -54,7 +54,35 @@ export async function profileNeedsSubscriptionGrantForProduct(
 }
 
 /**
- * 打开 App / 拉会员接口时：若订单已 paid 但 profiles 未同步，按最近已付订阅单补写（与 repair-subscription 窗口一致；free+未来到期时间 用更长窗口纠偏脏数据）。
+ * 查找用于「补写 profile」的最近一笔已付订阅订单。
+ * - 含 paid_at 为 NULL 的旧数据：用 created_at 落在窗口内匹配（仅 .gte('paid_at') 会永远筛不到 NULL）。
+ * - 按 created_at 排序，避免 paid_at 空时顺序不稳定。
+ */
+export async function findLatestPaidSubscriptionOrderInWindow(
+  supabase: SupabaseClient,
+  userId: string,
+  windowDays: number,
+): Promise<SubscriptionProductId | null> {
+  const cutoff = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data: row, error } = await supabase
+    .from('payment_orders')
+    .select('product_id')
+    .eq('user_id', userId)
+    .eq('status', 'paid')
+    .in('product_id', [...SUBSCRIPTION_PRODUCT_IDS])
+    .or(`paid_at.gte.${cutoff},and(paid_at.is.null,created_at.gte.${cutoff})`)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error || !row?.product_id || !isSubscriptionProductId(row.product_id)) return null;
+  return row.product_id;
+}
+
+/**
+ * 打开 App / 拉会员接口时：若订单已 paid 但 profiles 未同步，按最近已付订阅单补写。
+ * free+未来 vip_expires_at 脏数据用更长窗口；普通 free 用 90 天（原 7 天易漏掉仅 created_at 或稍早的已付单）。
  */
 export async function healStaleSubscriptionProfile(supabase: SupabaseClient, userId: string): Promise<void> {
   const { data: p } = await supabase
@@ -68,26 +96,14 @@ export async function healStaleSubscriptionProfile(supabase: SupabaseClient, use
   const exp = p.vip_expires_at ? new Date(p.vip_expires_at) : null;
   const expValid = !!exp && exp > new Date();
 
-  const windowDays = type === 'free' && expValid ? 366 : 7;
-  const cutoff = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
+  const windowDays = type === 'free' && expValid ? 366 : 90;
+  const productId = await findLatestPaidSubscriptionOrderInWindow(supabase, userId, windowDays);
+  if (!productId) return;
 
-  const { data: ord } = await supabase
-    .from('payment_orders')
-    .select('product_id')
-    .eq('user_id', userId)
-    .eq('status', 'paid')
-    .in('product_id', [...SUBSCRIPTION_PRODUCT_IDS])
-    .gte('paid_at', cutoff)
-    .order('paid_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (!ord?.product_id || !isSubscriptionProductId(ord.product_id)) return;
-
-  const needs = await profileNeedsSubscriptionGrantForProduct(supabase, userId, ord.product_id);
+  const needs = await profileNeedsSubscriptionGrantForProduct(supabase, userId, productId);
   if (!needs) return;
 
-  await applySubscriptionGrant(supabase, userId, ord.product_id);
+  await applySubscriptionGrant(supabase, userId, productId);
 }
 
 export async function applySubscriptionGrant(

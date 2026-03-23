@@ -6,6 +6,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 import {
   applySubscriptionGrant,
+  findLatestPaidSubscriptionOrderInWindow,
   isSubscriptionProductId,
   profileNeedsSubscriptionGrantForProduct,
 } from '../../server/subscriptionGrant';
@@ -98,29 +99,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.json({ ok: true, repaired: true });
     }
 
-    // 无 orderId：最近 7 天内已支付的订阅订单，且当前仍为 free → 补写一次
-    const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const { data: latest, error: lErr } = await admin
-      .from('payment_orders')
-      .select('id, product_id, paid_at, status')
-      .eq('user_id', userId)
-      .eq('status', 'paid')
-      .in('product_id', [...SUB_IDS])
-      .gte('paid_at', cutoff)
-      .order('paid_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (lErr || !latest?.product_id) {
+    // 无 orderId：最近 90 天内已付订阅单（含 paid_at 为空的行，用 created_at），与 healStale 一致
+    const latestProductId = await findLatestPaidSubscriptionOrderInWindow(admin, userId, 90);
+    if (!latestProductId) {
       return res.json({ ok: true, repaired: false, reason: 'no_recent_order' });
     }
 
-    const needs = await profileNeedsSubscriptionGrantForProduct(admin, userId, latest.product_id);
+    const needs = await profileNeedsSubscriptionGrantForProduct(admin, userId, latestProductId);
     if (!needs) {
       return res.json({ ok: true, repaired: false, reason: 'already_has_tier' });
     }
 
-    const grant = await applySubscriptionGrant(admin, userId, latest.product_id);
+    const grant = await applySubscriptionGrant(admin, userId, latestProductId);
     if (!grant.ok) {
       return res.status(500).json({ ok: false, error: grant.error });
     }
