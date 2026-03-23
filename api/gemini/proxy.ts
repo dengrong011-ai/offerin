@@ -1147,11 +1147,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const actionTypeNorm = typeof actionType === 'string' ? actionType.trim().toLowerCase() : '';
     const careerStepNorm = normalizeCareerExploreStep(careerExploreStep);
     let normalizedAction: string;
-    if (actionTypeNorm && ALLOWED_ACTION_TYPES.has(actionTypeNorm)) {
-      normalizedAction = actionTypeNorm;
-    } else if (careerStepNorm) {
-      // 若仅缺/错 actionType（或未 trim 的大小写变体），仍视为职业探索；否则会被记成 diagnosis，usage_logs 永无 career_explore_*
+    // 合法 careerExploreStep 优先于 actionType：避免异常请求同时带 interview/diagnosis 与 step 时被错记成 interview（usage_logs 里只有 interview、没有 career_explore_*）
+    if (careerStepNorm) {
       normalizedAction = 'career_explore';
+    } else if (actionTypeNorm && ALLOWED_ACTION_TYPES.has(actionTypeNorm)) {
+      normalizedAction = actionTypeNorm;
     } else {
       normalizedAction = 'diagnosis';
     }
