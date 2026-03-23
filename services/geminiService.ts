@@ -710,20 +710,34 @@ export const transcribeAudio = async (
   }
 };
 
+/** PDF 的 base64 常以 JVBERi0 开头（对应 %PDF-）；部分环境 mime 为空时补上 */
+function coalesceMimeForFileExtract(fileData: { data: string; mimeType: string }): string {
+  let mime = (fileData.mimeType || '').trim();
+  if (mime) return mime;
+  const raw = fileData.data.replace(/\s/g, '');
+  if (raw.length >= 8 && raw.startsWith('JVBERi0')) {
+    return 'application/pdf';
+  }
+  return mime;
+}
+
 // 从文件中提取文本内容
 export const extractTextFromFile = async (
   fileData: { data: string; mimeType: string },
   actionType: string = 'file_extract'
 ): Promise<string> => {
   const client = createAIClient(actionType);
-  
+  const mimeType = coalesceMimeForFileExtract(fileData);
+  if (!mimeType) {
+    throw new Error('无法识别文件类型，请使用 PDF、Word 或图片，并确保扩展名正确');
+  }
 
   try {
     const response = await generateContentWithRetry(client, {
       model: MODEL_PRIMARY_FILE_MULTIMODAL,
       contents: [{
         parts: [
-          { inlineData: { data: fileData.data, mimeType: fileData.mimeType } },
+          { inlineData: { data: fileData.data, mimeType: mimeType } },
           { text: "请提取这个文件中的所有文本内容，保持原有格式。只输出提取的文本，不要添加任何解释或评论。" }
         ]
       }],

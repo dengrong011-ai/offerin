@@ -48,6 +48,28 @@ const SUPPORTED_RESUME_TYPES = [
   'application/msword',
 ];
 
+/** 部分浏览器对 PDF 的 file.type 为空或 octet-stream，需按扩展名补全 */
+function inferResumeMimeFromFileName(name: string): string | null {
+  const n = name.toLowerCase();
+  if (n.endsWith('.pdf')) return 'application/pdf';
+  if (n.endsWith('.docx')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  if (n.endsWith('.doc')) return 'application/msword';
+  if (n.endsWith('.jpg') || n.endsWith('.jpeg')) return 'image/jpeg';
+  if (n.endsWith('.png')) return 'image/png';
+  if (n.endsWith('.webp')) return 'image/webp';
+  if (n.endsWith('.heic')) return 'image/heic';
+  return null;
+}
+
+function effectiveResumeMime(file: File): string | null {
+  if (file.type && SUPPORTED_RESUME_TYPES.includes(file.type)) return file.type;
+  if (file.type === 'application/octet-stream') {
+    const fromName = inferResumeMimeFromFileName(file.name);
+    if (fromName) return fromName;
+  }
+  return inferResumeMimeFromFileName(file.name);
+}
+
 const ExplorePreferences: React.FC<ExplorePreferencesProps> = ({
   onSubmit,
   isLoading,
@@ -69,6 +91,7 @@ const ExplorePreferences: React.FC<ExplorePreferencesProps> = ({
   const [otherCityRemark, setOtherCityRemark] = useState('');
   const [showResumeInput, setShowResumeInput] = useState(() => resumeText.trim().length > 0);
   const [resumeExtracting, setResumeExtracting] = useState(false);
+  const [resumeFileError, setResumeFileError] = useState<string | null>(null);
   const [libraryEmptyHint, setLibraryEmptyHint] = useState<string | null>(null);
   const resumeFileInputRef = useRef<HTMLInputElement>(null);
   const quotaUpgradeAutoShownRef = useRef(false);
@@ -125,7 +148,7 @@ const ExplorePreferences: React.FC<ExplorePreferencesProps> = ({
     void onSubmit(preferences);
   };
 
-  const readFileToBase64 = (file: File): Promise<{ data: string; mime: string }> => {
+  const readFileToBase64 = (file: File, mimeForApi: string): Promise<{ data: string; mime: string }> => {
     return new Promise((resolve, reject) => {
       if (file.size > 3 * 1024 * 1024) {
         reject(new Error('文件请小于 3MB'));
@@ -136,7 +159,7 @@ const ExplorePreferences: React.FC<ExplorePreferencesProps> = ({
       reader.onload = () => {
         const result = reader.result as string;
         const base64 = result.split(',')[1]?.replace(/\s/g, '') || '';
-        resolve({ data: base64, mime: file.type });
+        resolve({ data: base64, mime: mimeForApi });
       };
       reader.onerror = () => reject(new Error('读取文件失败'));
     });
@@ -146,17 +169,29 @@ const ExplorePreferences: React.FC<ExplorePreferencesProps> = ({
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    if (!SUPPORTED_RESUME_TYPES.includes(file.type)) {
+    setResumeFileError(null);
+    const mime = effectiveResumeMime(file);
+    if (!mime) {
+      setResumeFileError('无法识别文件类型。请使用 PDF、Word（.doc/.docx）或常见图片；若已是 PDF，请确认扩展名为 .pdf。');
       return;
     }
     setResumeExtracting(true);
     onResumeLabelChange(file.name);
     try {
-      const { data, mime } = await readFileToBase64(file);
-      const text = await extractTextFromFile({ data, mimeType: mime });
-      onResumeTextChange(text);
+      const { data, mime: apiMime } = await readFileToBase64(file, mime);
+      const text = await extractTextFromFile({ data, mimeType: apiMime });
+      const trimmed = (text || '').trim();
+      if (!trimmed) {
+        setResumeFileError('未能从文件中提取到文字。可尝试：另存为新 PDF、截图上传、或直接粘贴简历文本。');
+        onResumeLabelChange(null);
+        onResumeTextChange('');
+        return;
+      }
+      onResumeTextChange(trimmed);
       setShowResumeInput(true);
-    } catch {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '解析失败';
+      setResumeFileError(msg);
       onResumeLabelChange(null);
       onResumeTextChange('');
     } finally {
@@ -168,6 +203,7 @@ const ExplorePreferences: React.FC<ExplorePreferencesProps> = ({
     onResumeTextChange('');
     onResumeLabelChange(null);
     setShowResumeInput(false);
+    setResumeFileError(null);
   };
 
   const handleResumeLibraryPick = useCallback((r: SavedResume, mode: SavedResumePickMode) => {
@@ -377,6 +413,9 @@ const ExplorePreferences: React.FC<ExplorePreferencesProps> = ({
             </span>
           )}
         </div>
+        {resumeFileError && (
+          <p className="text-xs text-red-700 bg-red-50 border border-red-100 rounded-lg px-3 py-2 mb-2">{resumeFileError}</p>
+        )}
         {libraryEmptyHint && (
           <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mb-2">{libraryEmptyHint}</p>
         )}
