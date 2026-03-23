@@ -79,6 +79,20 @@ async function buildAuthHeaders(): Promise<Record<string, string>> {
 }
 
 /**
+ * 职业探索：createAIClient 的第二个参数即 step。若仅因 actionType 未带上或与 'career_explore' 严格相等失败，
+ * 旧逻辑会不把 careerExploreStep 放进 JSON，服务端看不到 step 会落回 diagnosis，usage_logs 永无 career_explore_*。
+ */
+function resolveProxyBillingFields(
+  actionType: string | undefined,
+  careerExploreStep: CareerExploreStep | undefined,
+): { actionType: string; careerExploreStep?: CareerExploreStep } {
+  if (careerExploreStep) {
+    return { actionType: 'career_explore', careerExploreStep };
+  }
+  return { actionType: actionType || 'diagnosis' };
+}
+
+/**
  * 通过代理发起流式请求，返回 AsyncIterable 兼容格式
  */
 export type ProxyGeminiOptions = {
@@ -96,6 +110,7 @@ async function proxyStreamRequest(options: ProxyGeminiOptions & {
   careerExploreStep?: CareerExploreStep;
 }): Promise<AsyncIterable<{ text: string }>> {
   const { model, contents, config, actionType, careerExploreStep, fallbackModels, interviewSessionId } = options;
+  const billing = resolveProxyBillingFields(actionType, careerExploreStep);
   const headers = await buildAuthHeaders();
 
   const response = await fetch(getProxyUrl(), {
@@ -106,8 +121,8 @@ async function proxyStreamRequest(options: ProxyGeminiOptions & {
       contents,
       config,
       mode: 'stream',
-      actionType: actionType || 'diagnosis',
-      ...(actionType === 'career_explore' && careerExploreStep ? { careerExploreStep } : {}),
+      actionType: billing.actionType,
+      ...(billing.careerExploreStep ? { careerExploreStep: billing.careerExploreStep } : {}),
       ...(fallbackModels !== undefined ? { fallbackModels } : {}),
       ...(interviewSessionId ? { interviewSessionId } : {}),
     }),
@@ -231,6 +246,7 @@ async function proxyGenerateRequest(options: ProxyGeminiOptions & {
   careerExploreStep?: CareerExploreStep;
 }): Promise<{ text: string }> {
   const { model, contents, config, actionType, careerExploreStep, fallbackModels, interviewSessionId } = options;
+  const billing = resolveProxyBillingFields(actionType, careerExploreStep);
   const headers = await buildAuthHeaders();
 
   const body = JSON.stringify({
@@ -238,8 +254,8 @@ async function proxyGenerateRequest(options: ProxyGeminiOptions & {
     contents,
     config,
     mode: 'generate',
-    actionType: actionType || 'diagnosis',
-    ...(actionType === 'career_explore' && careerExploreStep ? { careerExploreStep } : {}),
+    actionType: billing.actionType,
+    ...(billing.careerExploreStep ? { careerExploreStep: billing.careerExploreStep } : {}),
     ...(fallbackModels !== undefined ? { fallbackModels } : {}),
     ...(interviewSessionId ? { interviewSessionId } : {}),
   });
@@ -324,7 +340,7 @@ async function proxyGenerateRequest(options: ProxyGeminiOptions & {
  * 统一的 AI 客户端 — 自动选择代理或直连
  *
  * actionType 参数用于服务端使用量计数；
- * careerExploreStep 仅在 actionType === 'career_explore' 时必填（走代理时由服务端计次）。
+ * 走代理时：凡传入 careerExploreStep，请求体会固定带 actionType career_explore + step，由服务端计次。
  */
 export function createAIClient(actionType?: string, careerExploreStep?: CareerExploreStep) {
   const useProxy = shouldUseProxy();
