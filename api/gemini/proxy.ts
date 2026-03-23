@@ -109,14 +109,14 @@ let redis: Redis | null = null;
 let ratelimit: Ratelimit | null = null;
 
 function getRedisRatelimit(): Ratelimit | null {
-  const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
-  const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
-  
+  const redisUrl = process.env.UPSTASH_REDIS_REST_URL?.trim();
+  const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN?.trim();
+
   // 如果未配置 Upstash，返回 null（回退到内存限流）
   if (!redisUrl || !redisToken) {
     return null;
   }
-  
+
   if (!ratelimit) {
     redis = new Redis({
       url: redisUrl,
