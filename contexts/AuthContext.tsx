@@ -3,12 +3,20 @@ import type { User, Session } from '@supabase/supabase-js';
 import { supabase, UserProfile, isSupabaseConfigured } from '../services/supabaseClient';
 import { getUserProfile, onAuthStateChange } from '../services/authService';
 
+export type RefreshProfileOptions = {
+  /**
+   * 支付成功轮询到订单已 paid 时，服务端可能尚未写完 profiles（竞态）。
+   * 为 true 时多次短延迟重拉，直到读到付费档位或达到上限。
+   */
+  untilPaidMembership?: boolean;
+};
+
 interface AuthContextType {
   user: User | null;
   profile: UserProfile | null;
   session: Session | null;
   loading: boolean;
-  refreshProfile: () => Promise<void>;
+  refreshProfile: (options?: RefreshProfileOptions) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -17,7 +25,7 @@ const AuthContext = createContext<AuthContextType>({
   session: null,
   loading: true,
   refreshProfile: async () => {},
-});
+} as AuthContextType);
 
 export const useAuth = () => useContext(AuthContext);
 
@@ -31,10 +39,22 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const refreshProfile = async () => {
-    if (user) {
+  const refreshProfile = async (options?: RefreshProfileOptions) => {
+    if (!user) return;
+
+    const paidTiers = new Set(['vip', 'resume_pass', 'full_monthly', 'pro', 'special']);
+    const maxAttempts = options?.untilPaidMembership ? 8 : 1;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (attempt > 0) {
+        await new Promise((r) => setTimeout(r, 400));
+      }
       const userProfile = await getUserProfile(user.id);
-      setProfile(userProfile);
+      if (userProfile) setProfile(userProfile);
+      const mt = userProfile?.membership_type || 'free';
+      if (!options?.untilPaidMembership || paidTiers.has(mt)) {
+        return;
+      }
     }
   };
 

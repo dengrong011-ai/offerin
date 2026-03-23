@@ -567,22 +567,27 @@ async function authenticateUser(authHeader: string | undefined): Promise<AuthRes
     let membershipType = profileResult.data?.membership_type || 'free';
     let vipExpiresAt: string | null = profileResult.data?.vip_expires_at ?? null;
 
-    // 付费档位过期 → 视为 free（老 VIP 与新档位共用 vip_expires_at）
+    // 付费档位过期 → 先落库为 free 并清空到期时间，再参与白名单等逻辑（老用户到期先变 free，白名单再按需补 vip）
     if (PAID_MEMBERSHIP_TIERS.has(membershipType) && vipExpiresAt) {
       if (new Date(vipExpiresAt) < new Date()) {
         membershipType = 'free';
         vipExpiresAt = null;
-        Promise.resolve(
-          supabaseAdmin
-            .from('profiles')
-            .update({ membership_type: 'free', updated_at: new Date().toISOString() })
-            .eq('id', user.id)
-        ).catch(() => {});
+        void supabaseAdmin
+          .from('profiles')
+          .update({
+            membership_type: 'free',
+            vip_expires_at: null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', user.id)
+          .then(({ error }) => {
+            if (error) console.error('[gemini proxy] profile expiry normalize failed:', user.id, error);
+          });
       }
     }
 
-    // 白名单优先级最高；但若用户已购买「全局畅享 / 简历畅改」且在有效期内，不得以白名单里的老 vip 覆盖，
-    // 否则充值后 profiles 已是 full_monthly，仍走月 300 次面试等旧逻辑，表现为「付费了额度不刷新」。
+    // 白名单：不改动仍在期的老 vip 上限（月 300 次面试等）；仅当资料里已是「在期的」全局畅享/简历畅改时，
+    // 不得以白名单里的 vip 覆盖，否则新档位付费用户仍走旧额度。
     if (whitelistEntry) {
       const rawTier = profileResult.data?.membership_type || 'free';
       const rawExp = profileResult.data?.vip_expires_at;

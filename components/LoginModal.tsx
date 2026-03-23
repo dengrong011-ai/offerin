@@ -245,7 +245,7 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
   onResumeLibrary,
   onInterviewLibrary,
 }) => {
-  const { user, profile, loading } = useAuth();
+  const { user, profile, loading, refreshProfile } = useAuth();
   const [showDropdown, setShowDropdown] = useState(false);
 
   const handleSignOut = async () => {
@@ -297,7 +297,13 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
   return (
     <div className="relative">
       <button
-        onClick={() => setShowDropdown(!showDropdown)}
+        onClick={() => {
+          const opening = !showDropdown;
+          setShowDropdown(opening);
+          if (opening) {
+            void refreshProfile();
+          }
+        }}
         className="flex items-center gap-2 p-1 rounded-lg hover:bg-zinc-100 transition-colors"
       >
         <div className="w-8 h-8 rounded-full bg-zinc-900 flex items-center justify-center text-white font-medium text-[13px]">

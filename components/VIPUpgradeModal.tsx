@@ -157,7 +157,7 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
           if (!error && data && data.status === 'paid') {
             clearTimers();
             setPaymentStep('polling');
-            await refreshProfile();
+            await refreshProfile({ untilPaidMembership: true });
             setPaymentStep('success');
             setTimeout(() => {
               onSuccess?.();
@@ -186,7 +186,7 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
     clearTimers();
     setPaymentStep('polling');
     await handlePaymentSuccess(orderId, user.id, selectedPlan as XorPayProductType);
-    await refreshProfile();
+    await refreshProfile({ untilPaidMembership: true });
     setPaymentStep('success');
     setTimeout(() => {
       onSuccess?.();

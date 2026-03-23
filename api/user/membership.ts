@@ -78,12 +78,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     let membershipType = profileResult.data?.membership_type || 'free';
     const exp = profileResult.data?.vip_expires_at;
-    if (
+    const paidTierExpired =
       (membershipType === 'vip' || membershipType === 'resume_pass' || membershipType === 'full_monthly') &&
-      exp &&
-      new Date(exp) < new Date()
-    ) {
+      !!exp &&
+      new Date(exp) < new Date();
+
+    // 与 proxy 一致：会员到期先规范为 free（清空 vip_expires_at），再算白名单；老用户上限不因新档位逻辑被改写
+    if (paidTierExpired) {
       membershipType = 'free';
+      const { error: normErr } = await getSupabaseAdmin()
+        .from('profiles')
+        .update({
+          membership_type: 'free',
+          vip_expires_at: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', user.id);
+      if (normErr) console.error('[api/user/membership] expiry normalize failed:', user.id, normErr);
     }
 
     if (whitelistEntry) {
