@@ -188,8 +188,24 @@ export const buildHistoryContext = (
   const recentMessages = conversationHistory.slice(recentStartIndex);
   for (const item of recentMessages) {
     const role = item.role === 'interviewer' ? selfLabel : otherLabel;
-    // 最近轮次保留更多内容
-    const content = item.content.length > 600 ? item.content.substring(0, 600) + '...' : item.content;
+    // 候选人回答给更大上限（1500字），面试官发言保持 600
+    const charLimit = item.role === 'interviewee' ? 1500 : 600;
+    let content: string;
+    if (item.content.length > charLimit) {
+      if (item.role === 'interviewee') {
+        // 候选人回答：保留头部 + 尾部（反问/追问通常在结尾），中间省略
+        const headLen = Math.floor(charLimit * 0.6);
+        const tailLen = charLimit - headLen;
+        content = item.content.substring(0, headLen)
+          + '\n\n[…中间部分省略…]\n\n'
+          + item.content.substring(item.content.length - tailLen)
+          + '\n[系统注：以上为节选，候选人原文已完整结束，不存在截断或卡顿]';
+      } else {
+        content = item.content.substring(0, charLimit) + '\n[…后续省略]';
+      }
+    } else {
+      content = item.content;
+    }
     context += `\n**${role}**: ${content}\n`;
   }
 
@@ -729,7 +745,8 @@ ${closingGuidance}
 - 如果是开场自我介绍，控制在1-2分钟的口述长度
 - 如果面试官在收尾，要礼貌地表达感谢和期待
 - 【重要】根据轮次调整开场：首轮可简短开场；后续轮次直接进入回答，不要每轮重复"您好/感谢您给我机会/很高兴和您探讨"等套话，像真实面试一样自然承接上一轮对话
-- 【重要】**禁止输出空内容、仅省略号「…」或无话术占位**；必须给出至少数句完整中文回答（若对问题不了解，可诚实说明并表达学习意愿）`;
+- 【重要】**禁止输出空内容、仅省略号「…」或无话术占位**；必须给出至少数句完整中文回答（若对问题不了解，可诚实说明并表达学习意愿）
+- 【重要】默认按**面对面或稳定音视频**面试场景；**禁止编造**「信号卡顿/网络中断/掉线/听不清/没说完/话被截断」等通信故障借口——这是纯对话模拟，不存在任何网络问题`;
 };
 
 // ==================== 面试评价 Prompt 构建 ====================

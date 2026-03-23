@@ -201,22 +201,22 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
           {/* 权益说明 */}
           <div className="mt-5 pt-5 border-t border-zinc-100">
             <p className="text-[12px] text-zinc-400 mb-2">登录后可享受：</p>
-            <div className="grid grid-cols-2 gap-1.5 text-[12px]">
-              <div className="flex items-center gap-1.5 text-zinc-500">
-                <Check size={12} className="text-zinc-400" />
-                免费体验：诊断、面试、职业探索等
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[12px]">
+              <div className="flex items-start gap-1.5 text-zinc-500">
+                <Check size={12} className="text-zinc-400 shrink-0 mt-[2px]" />
+                <span>免费体验：诊断、面试、职业探索等</span>
               </div>
-              <div className="flex items-center gap-1.5 text-zinc-500">
-                <Check size={12} className="text-zinc-400" />
-                简历导出功能
+              <div className="flex items-start gap-1.5 text-zinc-500">
+                <Check size={12} className="text-zinc-400 shrink-0 mt-[2px]" />
+                <span>简历导出功能</span>
               </div>
-              <div className="flex items-center gap-1.5 text-zinc-500">
-                <Check size={12} className="text-zinc-400" />
-                模拟面试练习
+              <div className="flex items-start gap-1.5 text-zinc-500">
+                <Check size={12} className="text-zinc-400 shrink-0 mt-[2px]" />
+                <span>模拟面试练习</span>
               </div>
-              <div className="flex items-center gap-1.5 text-zinc-500">
-                <Crown size={12} className="text-zinc-400" />
-                可选：简历畅改 / 全局畅享会员
+              <div className="flex items-start gap-1.5 text-zinc-500">
+                <Crown size={12} className="text-zinc-400 shrink-0 mt-[2px]" />
+                <span>可选：简历畅改 / 全局畅享会员</span>
               </div>
             </div>
           </div>
@@ -245,7 +245,7 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
   onResumeLibrary,
   onInterviewLibrary,
 }) => {
-  const { user, profile, loading, refreshProfile } = useAuth();
+  const { user, profile, effectiveMembershipType, loading, refreshProfile } = useAuth();
   const [showDropdown, setShowDropdown] = useState(false);
 
   const handleSignOut = async () => {
@@ -289,7 +289,7 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
     special: 'bg-violet-700 text-white',
   };
 
-  const mt = profile?.membership_type || 'free';
+  const mt = effectiveMembershipType ?? profile?.membership_type ?? 'free';
   const showPaidBadge =
     mt === 'vip' || mt === 'pro' || mt === 'resume_pass' || mt === 'full_monthly' || mt === 'special';
   const showUpgradeEntry = mt === 'free' || mt === 'resume_pass';

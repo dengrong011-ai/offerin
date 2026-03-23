@@ -366,10 +366,22 @@ export const runInterview = async (
       });
 
       let interviewerResponse = '';
+      // 纯模拟非首轮：从对话历史末尾提取候选人上一轮回答，贴入 user message
+      const lastCandidateAnswer = roundNum > 1
+        ? conversationHistory.filter(m => m.role === 'interviewee').pop()?.content || ''
+        : '';
       const simulationInterviewerUserText =
         roundNum === 1
           ? '请开始面试（开场第 1 轮）。格式与约束见系统指令与「本轮要求」。'
-          : '请阅读对话历史中候选人上一轮的回答。若其中向你提出问题、反问或想了解团队/业务，请先真诚、简要回应，再自然衔接你的下一个考察问题；禁止无视对方追问、突兀跳到简历上另一段无关经历。请直接输出你作为面试官的完整发言。';
+          : `【核心要求】你必须先回应候选人上一轮回答中的反问/追问（如果有的话），再衔接你的新问题。禁止无视对方追问。
+
+以下是候选人上一轮的完整回答：
+\`\`\`
+${lastCandidateAnswer}
+\`\`\`
+
+请仔细阅读以上内容。如果候选人在回答中向你提出了问题、反问或想了解团队/业务/技术现状，你的发言**必须先用 2-4 句话真诚回应**（可结合 JD 合理虚构团队情况），然后再自然衔接你的下一个考察问题。
+禁止只做简短点评就跳到全新话题——候选人的追问需要得到具体的、有信息量的回答。`;
       try {
         const stream = await generateContentStreamWithRetry(client, {
           model: MODEL_PRIMARY_INTERVIEW,
@@ -826,7 +838,7 @@ export const processUserAnswer = async (
   // 收尾阶段：把候选人问题直接放在用户消息中，避免模型忽略 system prompt 中的内容
   const userPromptText = nextPhase === 'closing'
     ? `【重要】候选人已经提出了问题，请直接回答，不要再次邀请提问。\n\n候选人刚才的问题：\n${userAnswer}\n\n请针对以上问题给出回答，并感谢候选人的时间。`
-    : `请阅读候选人刚才的回答全文。\n若其中向你提出问题、反问或想了解团队/业务/JD 相关现状，你必须先真诚回应，再点评并衔接下一个考察问题；不要忽略对方的追问、也不要突然跳到简历上无关的另一段经历而不承上启下。\n\n候选人刚才的回答：\n${userAnswer}`;
+    : `请阅读候选人刚才的回答全文（以下即为完整原文，不存在截断、卡顿或丢失，严禁编造"语音卡断/信号不好/没说完"等说辞）。\n若其中向你提出问题、反问或想了解团队/业务/JD 相关现状，你必须先真诚回应，再点评并衔接下一个考察问题；不要忽略对方的追问、也不要突然跳到简历上无关的另一段经历而不承上启下。\n\n候选人刚才的回答（完整原文）：\n${userAnswer}`;
   try {
     const stream = await generateContentStreamWithRetry(client, {
       model: MODEL_PRIMARY_INTERVIEW,

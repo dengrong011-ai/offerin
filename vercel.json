@@ -51,6 +51,10 @@
       "dest": "/api/user/repair-subscription.ts"
     },
     {
+      "src": "/api/user/debug-heal",
+      "dest": "/api/user/debug-heal.ts"
+    },
+    {
       "handle": "filesystem"
     },
     {

@@ -112,7 +112,10 @@ function utcMonthRange(): { monthStart: string; monthEnd: string } {
   return { monthStart, monthEnd };
 }
 
-/** 全局畅享：当月 distinct 面试场次（有 session_id 按 distinct；无则每行算一场） */
+/** 全局畅享：当月 distinct 面试场次
+ *  - 有 session_id 的行 → 按 distinct session_id 计场次
+ *  - 无 session_id 的旧数据 → 按时间窗口聚合（同一场面试的多条请求间隔 < 10 分钟）
+ */
 async function countInterviewSessionsInMonth(
   supabaseAdmin: SupabaseClient,
   userId: string,
@@ -121,16 +124,35 @@ async function countInterviewSessionsInMonth(
 ): Promise<number> {
   const { data, error } = await supabaseAdmin
     .from('usage_logs')
-    .select('interview_session_id')
+    .select('interview_session_id, created_at')
     .eq('user_id', userId)
     .eq('action_type', 'interview')
     .gte('created_at', monthStart)
-    .lte('created_at', monthEnd);
+    .lte('created_at', monthEnd)
+    .order('created_at', { ascending: true });
 
   if (error || !data?.length) return 0;
-  const distinct = new Set(data.map((r) => r.interview_session_id).filter(Boolean));
-  const nullRows = data.filter((r) => !r.interview_session_id).length;
-  return distinct.size + nullRows;
+
+  // 有 session_id 的行：按 distinct session_id 计
+  const distinct = new Set(
+    data.map((r: { interview_session_id: string | null }) => r.interview_session_id).filter(Boolean)
+  );
+
+  // 无 session_id 的旧数据：按时间窗口聚合（间隔 > 10 分钟视为新的一场）
+  const nullRows = data.filter((r: { interview_session_id: string | null }) => !r.interview_session_id);
+  let nullSessions = 0;
+  if (nullRows.length > 0) {
+    nullSessions = 1;
+    for (let i = 1; i < nullRows.length; i++) {
+      const prev = new Date((nullRows[i - 1] as { created_at: string }).created_at).getTime();
+      const curr = new Date((nullRows[i] as { created_at: string }).created_at).getTime();
+      if (curr - prev > 10 * 60 * 1000) {
+        nullSessions++;
+      }
+    }
+  }
+
+  return distinct.size + nullSessions;
 }
 
 // ============ Upstash Redis Rate Limiting ============
@@ -418,12 +440,12 @@ async function checkCareerExplorePrecheck(
     return { allowed: true };
   }
 
-  // 老 VIP：保留「当日 career_explore* 总次数」上限（默认 50）
+  // 老 VIP：与全局畅享一致，职业探索按自然月计费步上限 200
   if (membershipType === 'vip') {
-    const dailyMax = getCareerExploreDailyMax();
-    const todayCount = await countCareerExploreCallsToday(supabaseAdmin, userId);
-    if (todayCount >= dailyMax) {
-      return { allowed: false, reason: 'CAREER_EXPLORE_DAILY_LIMIT_EXCEEDED' };
+    const { monthStart, monthEnd } = utcMonthRange();
+    const used = await countCareerBillableInMonth(supabaseAdmin, userId, monthStart, monthEnd);
+    if (used >= FULL_MONTHLY_CAREER_MONTHLY_CAP) {
+      return { allowed: false, reason: 'CAREER_EXPLORE_MONTHLY_LIMIT_EXCEEDED' };
     }
     return { allowed: true };
   }

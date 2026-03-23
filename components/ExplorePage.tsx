@@ -20,7 +20,7 @@ import type { UserPreferences, UserProfile, DirectionRecommendation, CareerPlan 
 function formatCareerExploreError(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
   if (msg.includes('CAREER_EXPLORE_DAILY_LIMIT_EXCEEDED')) {
-    return '今日职业探索 AI 调用已达上限（50 次），请明天再试。';
+    return '今日职业探索 AI 调用已达上限，请明天再试。';
   }
   if (msg.includes('CAREER_EXPLORE_MONTHLY_LIMIT_EXCEEDED')) {
     return '本月职业探索用量已达会员单月上限（200 步），下月自动恢复。若需更高用量请联系客服。';

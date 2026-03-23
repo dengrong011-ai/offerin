@@ -6,15 +6,76 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 // 环境变量
 const XUNHU_APP_SECRET = process.env.XUNHU_APP_SECRET || '';
-const SUPABASE_URL = process.env.VITE_SUPABASE_URL || '';
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const SUPABASE_URL = (process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || '').trim();
+const SUPABASE_SERVICE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
 
 // 初始化 Supabase 客户端（使用 Service Role Key 绕过 RLS）
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+
+// --- subscriptionGrant 内联（与 xorpay/notify 一致）---
+const SUBSCRIPTION_PRODUCT_IDS = [
+  'vip_sprint', 'vip_monthly', 'resume_pass_10d', 'full_monthly',
+] as const;
+type SubscriptionProductId = (typeof SUBSCRIPTION_PRODUCT_IDS)[number];
+function isSubscriptionProductId(id: string): id is SubscriptionProductId {
+  return (SUBSCRIPTION_PRODUCT_IDS as readonly string[]).includes(id);
+}
+const SUBSCRIPTION_CFG: Record<SubscriptionProductId, { membership: string; days: number }> = {
+  vip_sprint: { membership: 'vip', days: 10 },
+  vip_monthly: { membership: 'vip', days: 30 },
+  resume_pass_10d: { membership: 'resume_pass', days: 10 },
+  full_monthly: { membership: 'full_monthly', days: 30 },
+};
+
+async function applySubscriptionGrant(
+  sb: SupabaseClient,
+  userId: string,
+  productId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!isSubscriptionProductId(productId)) return { ok: true };
+  const { membership, days } = SUBSCRIPTION_CFG[productId];
+  const now = new Date();
+  const { data: profileData } = await sb
+    .from('profiles')
+    .select('vip_expires_at, membership_type')
+    .eq('id', userId)
+    .single();
+
+  // membership_type 为 free 但仍有未过期的 vip_expires_at：只需改 type 即可
+  if (profileData?.membership_type === 'free' && profileData?.vip_expires_at) {
+    const existingExpiry = new Date(profileData.vip_expires_at);
+    if (existingExpiry > now) {
+      const { error: profileError } = await sb
+        .from('profiles')
+        .update({ membership_type: membership, updated_at: now.toISOString() })
+        .eq('id', userId);
+      if (profileError) return { ok: false, error: profileError.message };
+      return { ok: true };
+    }
+  }
+
+  let baseDate = now;
+  if (profileData?.membership_type === membership && profileData?.vip_expires_at) {
+    const existingExpiry = new Date(profileData.vip_expires_at);
+    if (existingExpiry > now) baseDate = existingExpiry;
+  }
+  const expiresAt = new Date(baseDate.getTime() + days * 24 * 60 * 60 * 1000);
+
+  const { error: profileError } = await sb
+    .from('profiles')
+    .update({
+      membership_type: membership,
+      vip_expires_at: expiresAt.toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', userId);
+  if (profileError) return { ok: false, error: profileError.message };
+  return { ok: true };
+}
 
 /**
  * 简单的 MD5 实现
@@ -247,61 +308,72 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).send('order not found');
     }
 
-    // 检查订单是否已处理
+    // 检查订单是否已处理 — 仍需尝试补写 profiles（可能上次回调只改了 status 未写 profiles）
     if (order.status === 'paid') {
-      console.log('订单已处理:', trade_order_id);
+      console.log('订单已处理，检查 profiles 是否需补写:', trade_order_id);
+      if (isSubscriptionProductId(order.product_id)) {
+        const grant = await applySubscriptionGrant(supabase, order.user_id, order.product_id);
+        if (!grant.ok) {
+          console.error('补写会员失败(已付订单):', grant.error);
+        }
+      }
       return res.status(200).send('success');
     }
 
-    // 更新订单状态
-    const { error: updateError } = await supabase
+    // 金额校验：虎皮椒 total_fee 是元（字符串），订单 amount 是分（整数）
+    const payYuan = parseFloat(String(total_fee).replace(/[^\d.]/g, ''));
+    const payCents = Math.round(payYuan * 100);
+    const expectedCents = Number(order.amount);
+    if (!Number.isFinite(payCents) || payCents !== expectedCents) {
+      console.error('回调金额与订单不一致:', total_fee, 'parsed=', payCents, 'expected=', expectedCents);
+      return res.status(400).send('amount mismatch');
+    }
+
+    // CAS 乐观锁：仅将 pending → paid（并发回调只一方成功）
+    const paidAt = new Date().toISOString();
+    const { data: updatedRows, error: updateError } = await supabase
       .from('payment_orders')
       .update({
         status: 'paid',
-        paid_at: new Date().toISOString(),
+        paid_at: paidAt,
         xunhu_order_id: open_order_id,
         transaction_id: transaction_id,
       })
-      .eq('id', trade_order_id);
+      .eq('id', trade_order_id)
+      .eq('status', 'pending')
+      .select('id');
 
     if (updateError) {
       console.error('更新订单状态失败:', updateError);
       return res.status(500).send('update order failed');
     }
 
-    // 根据产品类型处理业务逻辑
-    if (order.product_id === 'vip_monthly' || order.product_id === 'vip_sprint') {
-      // VIP 会员：更新用户会员状态
-      const duration = order.product_id === 'vip_sprint' ? 10 : 30;
-      // 如果当前仍在 VIP 有效期内，从现有到期时间叠加；否则从当前时间开始
-      const now = new Date();
-      let baseDate = now;
-      const { data: profileData } = await supabase
-        .from('profiles')
-        .select('vip_expires_at, membership_type')
-        .eq('id', order.user_id)
+    // 如果没有更新到行，说明被并发请求抢先了
+    if (!updatedRows || updatedRows.length === 0) {
+      const { data: recheck } = await supabase
+        .from('payment_orders')
+        .select('status')
+        .eq('id', trade_order_id)
         .single();
-      if (profileData?.membership_type === 'vip' && profileData?.vip_expires_at) {
-        const existingExpiry = new Date(profileData.vip_expires_at);
-        if (existingExpiry > now) {
-          baseDate = existingExpiry;
+      if (recheck?.status === 'paid') {
+        console.log('订单已由并发请求标记为已支付:', trade_order_id);
+        if (isSubscriptionProductId(order.product_id)) {
+          const grant = await applySubscriptionGrant(supabase, order.user_id, order.product_id);
+          if (!grant.ok) console.error('并发路径补写会员失败:', grant.error);
         }
+        return res.status(200).send('success');
       }
-      const expiresAt = new Date(baseDate.getTime() + duration * 24 * 60 * 60 * 1000);
-      
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .update({
-          membership_type: 'vip',
-          vip_expires_at: expiresAt.toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', order.user_id);
+      console.error('订单非 pending，无法标记已支付:', trade_order_id);
+      return res.status(409).send('conflict');
+    }
 
-      if (profileError) {
-        console.error('更新用户会员状态失败:', profileError);
+    // 根据产品类型处理业务逻辑 — 使用统一的 applySubscriptionGrant
+    if (isSubscriptionProductId(order.product_id)) {
+      const grant = await applySubscriptionGrant(supabase, order.user_id, order.product_id);
+      if (!grant.ok) {
+        console.error('更新用户会员状态失败:', grant.error);
       }
-    } else if (order.product_id === 'resume_download') {
+    } else if (order.product_id === 'resume_download' || order.product_id === 'interview_export') {
       // 单次购买：记录购买记录
       const { error: purchaseError } = await supabase
         .from('single_purchases')

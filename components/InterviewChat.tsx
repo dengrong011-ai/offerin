@@ -70,7 +70,8 @@ interface InterviewChatProps {
 // showUpgrade=false：已是 VIP/Pro 等，仅额度用尽，不弹升级
 function getUsageLimitMessage(error: string): { message: string; showUpgrade: boolean } | null {
   if (error.includes('INTERVIEW_TRIAL_LIMIT_EXCEEDED')) return { message: '模拟面试免费体验次数已用完（共1次）。升级 VIP 享无限次面试！', showUpgrade: true };
-  if (error.includes('MONTHLY_INTERVIEW_LIMIT_EXCEEDED')) return { message: '本月面试额度已用完（300次/月），下月 1 号自动恢复。', showUpgrade: false };
+  if (error.includes('MONTHLY_INTERVIEW_SESSION_LIMIT_EXCEEDED')) return { message: '本月面试场次已用完（30场/月），下月 1 号自动恢复。', showUpgrade: false };
+  if (error.includes('MONTHLY_INTERVIEW_LIMIT_EXCEEDED')) return { message: '本月面试额度已用完，下月 1 号自动恢复。', showUpgrade: false };
   if (error.includes('DIAGNOSIS_TRIAL_LIMIT_EXCEEDED') || error.includes('USAGE_LIMIT_EXCEEDED')) return { message: '使用次数已用完。升级 VIP 享更多次数！', showUpgrade: true };
   if (error.includes('DAILY_LIMIT_EXCEEDED')) return { message: '今日使用次数已达上限，请明天再试。', showUpgrade: false };
   return null;
@@ -516,7 +517,8 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
           setUsageLimitError(`模拟面试免费体验次数已用完（共${limitCheck.limit}次）。升级 VIP 享无限次面试！`);
           setUsageLimitShowUpgrade(true);
         } else {
-          setUsageLimitError('本月面试额度已用完（300次/月），下月 1 号自动恢复。');
+          const unitLabel = limitCheck.limit <= 50 ? '场' : '次';
+          setUsageLimitError(`本月面试额度已用完（${limitCheck.limit}${unitLabel}/月），下月 1 号自动恢复。`);
           setUsageLimitShowUpgrade(false);
         }
         return;
@@ -645,7 +647,8 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
           setUsageLimitError(`模拟面试免费体验次数已用完（共${limitCheck.limit}次）。升级 VIP 享无限次面试！`);
           setUsageLimitShowUpgrade(true);
         } else {
-          setUsageLimitError('本月面试额度已用完（300次/月），下月 1 号自动恢复。');
+          const unitLabel = limitCheck.limit <= 50 ? '场' : '次';
+          setUsageLimitError(`本月面试额度已用完（${limitCheck.limit}${unitLabel}/月），下月 1 号自动恢复。`);
           setUsageLimitShowUpgrade(false);
         }
         return;

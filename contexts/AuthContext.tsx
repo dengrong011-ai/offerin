@@ -14,6 +14,8 @@ export type RefreshProfileOptions = {
 interface AuthContextType {
   user: User | null;
   profile: UserProfile | null;
+  /** 与 /api/user/membership 一致（含邮箱白名单 pro 等），用于展示；未拉取到时为 null */
+  effectiveMembershipType: string | null;
   session: Session | null;
   loading: boolean;
   refreshProfile: (options?: RefreshProfileOptions) => Promise<void>;
@@ -22,6 +24,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType>({
   user: null,
   profile: null,
+  effectiveMembershipType: null,
   session: null,
   loading: true,
   refreshProfile: async () => {},
@@ -36,8 +39,29 @@ interface AuthProviderProps {
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [effectiveMembershipType, setEffectiveMembershipType] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const fetchAndSetEffectiveMembership = async (accessToken: string | undefined) => {
+    if (!accessToken) {
+      setEffectiveMembershipType(null);
+      return;
+    }
+    try {
+      const res = await fetch('/api/user/membership', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!res.ok) {
+        setEffectiveMembershipType(null);
+        return;
+      }
+      const j = (await res.json()) as { membershipType?: string };
+      setEffectiveMembershipType(typeof j.membershipType === 'string' ? j.membershipType : null);
+    } catch {
+      setEffectiveMembershipType(null);
+    }
+  };
 
   const refreshProfile = async (options?: RefreshProfileOptions) => {
     if (!user) return;
@@ -46,19 +70,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       await repairSubscriptionAfterPay();
     }
 
-    // GET /api/user/membership 会按已付订单自愈 profiles（订单 paid 但 type 仍为 free 等）
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (session?.access_token) {
-        await fetch('/api/user/membership', {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        });
-      }
-    } catch {
-      /* ignore */
-    }
+    const {
+      data: { session: s },
+    } = await supabase.auth.getSession();
+    await fetchAndSetEffectiveMembership(s?.access_token);
 
     const paidTiers = new Set(['vip', 'resume_pass', 'full_monthly', 'pro', 'special']);
     const maxAttempts = options?.untilPaidMembership ? 8 : 1;
@@ -92,17 +107,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         setUser(session?.user ?? null);
         
         if (session?.user) {
-          if (session.access_token) {
-            try {
-              await fetch('/api/user/membership', {
-                headers: { Authorization: `Bearer ${session.access_token}` },
-              });
-            } catch {
-              /* ignore */
-            }
-          }
+          await fetchAndSetEffectiveMembership(session.access_token);
           const userProfile = await getUserProfile(session.user.id);
           setProfile(userProfile);
+        } else {
+          setEffectiveMembershipType(null);
         }
       } catch (error) {
         console.error('初始化认证失败:', error);
@@ -122,15 +131,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (session?.user) {
         // 获取 profile，带重试机制（新用户触发器创建可能需要时间）
         const fetchProfileWithRetry = async (userId: string, retries = 3, delay = 500) => {
-          if (session.access_token) {
-            try {
-              await fetch('/api/user/membership', {
-                headers: { Authorization: `Bearer ${session.access_token}` },
-              });
-            } catch {
-              /* ignore */
-            }
-          }
+          await fetchAndSetEffectiveMembership(session.access_token);
           for (let i = 0; i < retries; i++) {
             const userProfile = await getUserProfile(userId);
             if (userProfile) {
@@ -149,6 +150,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         });
       } else {
         setProfile(null);
+        setEffectiveMembershipType(null);
       }
       
       setLoading(false);
@@ -160,7 +162,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, profile, session, loading, refreshProfile }}>
+    <AuthContext.Provider
+      value={{ user, profile, effectiveMembershipType, session, loading, refreshProfile }}
+    >
       {children}
     </AuthContext.Provider>
   );

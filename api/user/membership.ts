@@ -63,6 +63,7 @@ async function findLatestPaidSubscriptionOrderInWindow(
   windowDays: number,
 ): Promise<SubscriptionProductId | null> {
   const cutoff = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
+  console.log('[findOrder] querying payment_orders for user:', userId, 'windowDays:', windowDays, 'cutoff:', cutoff);
   const { data: row, error } = await supabase
     .from('payment_orders')
     .select('product_id')
@@ -73,6 +74,7 @@ async function findLatestPaidSubscriptionOrderInWindow(
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
+  console.log('[findOrder] result:', { row, error: error?.message, errorCode: error?.code });
   if (error || !row?.product_id || !isSubscriptionProductId(row.product_id)) return null;
   return row.product_id;
 }
@@ -141,21 +143,27 @@ async function applySubscriptionGrant(
 }
 
 async function healStaleSubscriptionProfile(supabase: SupabaseClient, userId: string): Promise<void> {
-  const { data: p } = await supabase
+  console.log('[healStale] start for user:', userId);
+  const { data: p, error: pErr } = await supabase
     .from('profiles')
     .select('membership_type, vip_expires_at')
     .eq('id', userId)
     .single();
-  if (!p) return;
+  if (pErr) { console.error('[healStale] profile query error:', pErr.message, pErr.code); return; }
+  if (!p) { console.log('[healStale] no profile found'); return; }
   const type = p.membership_type || 'free';
   const exp = p.vip_expires_at ? new Date(p.vip_expires_at) : null;
   const expValid = !!exp && exp > new Date();
   const windowDays = type === 'free' && expValid ? 366 : 90;
+  console.log('[healStale] profile:', { type, exp: p.vip_expires_at, expValid, windowDays });
   const productId = await findLatestPaidSubscriptionOrderInWindow(supabase, userId, windowDays);
+  console.log('[healStale] findLatestPaidOrder result:', productId);
   if (!productId) return;
   const needs = await profileNeedsSubscriptionGrantForProduct(supabase, userId, productId);
+  console.log('[healStale] needs grant:', needs);
   if (!needs) return;
-  await applySubscriptionGrant(supabase, userId, productId);
+  const result = await applySubscriptionGrant(supabase, userId, productId);
+  console.log('[healStale] applyGrant result:', result);
 }
 
 const CORS_ORIGINS = ['https://offerin.co', 'https://www.offerin.co', 'http://localhost:3000', 'http://localhost:5173', 'http://localhost:5174'];

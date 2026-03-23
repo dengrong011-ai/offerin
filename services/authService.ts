@@ -150,18 +150,35 @@ async function countInterviewSessionsInMonthClient(
 ): Promise<number> {
   const { data, error } = await supabase
     .from('usage_logs')
-    .select('interview_session_id')
+    .select('interview_session_id, created_at')
     .eq('user_id', userId)
     .eq('action_type', 'interview')
     .gte('created_at', monthStart)
-    .lte('created_at', monthEnd);
+    .lte('created_at', monthEnd)
+    .order('created_at', { ascending: true });
 
   if (error || !data?.length) return 0;
+
+  // 有 session_id 的行：按 distinct session_id 计
   const distinct = new Set(
     data.map((r: { interview_session_id: string | null }) => r.interview_session_id).filter(Boolean)
   );
-  const nullRows = data.filter((r) => !r.interview_session_id).length;
-  return distinct.size + nullRows;
+
+  // 无 session_id 的旧数据：按时间窗口聚合（间隔 > 10 分钟视为新的一场）
+  const nullRows = data.filter((r: { interview_session_id: string | null }) => !r.interview_session_id);
+  let nullSessions = 0;
+  if (nullRows.length > 0) {
+    nullSessions = 1;
+    for (let i = 1; i < nullRows.length; i++) {
+      const prev = new Date((nullRows[i - 1] as { created_at: string }).created_at).getTime();
+      const curr = new Date((nullRows[i] as { created_at: string }).created_at).getTime();
+      if (curr - prev > 10 * 60 * 1000) {
+        nullSessions++;
+      }
+    }
+  }
+
+  return distinct.size + nullSessions;
 }
 
 // 获取「与后端一致」的有效会员类型（profiles + 白名单覆盖）
@@ -613,11 +630,24 @@ export const getCareerExploreQuota = async (userId: string): Promise<CareerExplo
     const dailyUsed = dailyCountRaw || 0;
 
     if (membership === 'vip') {
+      const { start, end } = getUtcMonthRange();
+      const { count: mCount, error: mErr } = await supabase
+        .from('usage_logs')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .in('action_type', [...CAREER_BILLABLE_ACTIONS])
+        .gte('created_at', start)
+        .lte('created_at', end);
+
+      if (mErr) throw mErr;
+      const monthlyUsed = mCount || 0;
       return {
         dailyUsed,
-        dailyRemaining: Math.max(0, CAREER_EXPLORE_DAILY_MAX - dailyUsed),
+        dailyRemaining: null,
         trialBillableUsed: 0,
         trialBillableRemaining: null,
+        monthlyCareerUsed: monthlyUsed,
+        monthlyCareerRemaining: Math.max(0, FULL_MONTHLY_CAREER_EXPLORE_CAP - monthlyUsed),
         membership,
       };
     }
