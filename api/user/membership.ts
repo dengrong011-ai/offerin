@@ -87,7 +87,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (whitelistEntry) {
-      membershipType = whitelistEntry.whitelist_type;
+      const rawTier = profileResult.data?.membership_type || 'free';
+      const rawExp = profileResult.data?.vip_expires_at;
+      const paidNewTierActive =
+        (rawTier === 'full_monthly' || rawTier === 'resume_pass') &&
+        !!rawExp &&
+        new Date(rawExp) >= new Date();
+      if (!(whitelistEntry.whitelist_type === 'vip' && paidNewTierActive)) {
+        membershipType = whitelistEntry.whitelist_type;
+      }
     }
 
     return res.status(200).json({ membershipType });

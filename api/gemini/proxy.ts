@@ -581,10 +581,22 @@ async function authenticateUser(authHeader: string | undefined): Promise<AuthRes
       }
     }
 
-    // 白名单优先级最高
+    // 白名单优先级最高；但若用户已购买「全局畅享 / 简历畅改」且在有效期内，不得以白名单里的老 vip 覆盖，
+    // 否则充值后 profiles 已是 full_monthly，仍走月 300 次面试等旧逻辑，表现为「付费了额度不刷新」。
     if (whitelistEntry) {
-      membershipType = whitelistEntry.whitelist_type;
-      vipExpiresAt = null;
+      const rawTier = profileResult.data?.membership_type || 'free';
+      const rawExp = profileResult.data?.vip_expires_at;
+      const paidNewTierActive =
+        (rawTier === 'full_monthly' || rawTier === 'resume_pass') &&
+        !!rawExp &&
+        new Date(rawExp) >= new Date();
+      const skipWhitelistVipForPaidNewTier =
+        whitelistEntry.whitelist_type === 'vip' && paidNewTierActive;
+
+      if (!skipWhitelistVipForPaidNewTier) {
+        membershipType = whitelistEntry.whitelist_type;
+        vipExpiresAt = null;
+      }
     }
 
     return {
