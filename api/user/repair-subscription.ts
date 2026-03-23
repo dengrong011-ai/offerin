@@ -4,17 +4,102 @@
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
-import {
-  applySubscriptionGrant,
-  findLatestPaidSubscriptionOrderInWindow,
-  isSubscriptionProductId,
-  profileNeedsSubscriptionGrantForProduct,
-} from '../../server/subscriptionGrant';
-import {
-  resolveSupabaseAnonKey,
-  resolveSupabaseServiceRoleKey,
-  resolveSupabaseUrl,
-} from '../../server/supabaseServerEnv';
+/**
+ * ⚠️ 以下代码从 ../../server/ 内联
+ * Vercel @vercel/node 打包 api/ 时无法解析 api/ 外部的相对路径
+ */
+// --- supabaseServerEnv ---
+function resolveSupabaseUrl(): string {
+  return (process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || '').trim();
+}
+function resolveSupabaseServiceRoleKey(): string {
+  return (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+}
+function resolveSupabaseAnonKey(): string {
+  return (process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '').trim();
+}
+
+// --- subscriptionGrant ---
+const SUBSCRIPTION_PRODUCT_IDS = ['vip_sprint', 'vip_monthly', 'resume_pass_10d', 'full_monthly'] as const;
+type SubscriptionProductId = (typeof SUBSCRIPTION_PRODUCT_IDS)[number];
+function isSubscriptionProductId(id: string): id is SubscriptionProductId {
+  return (SUBSCRIPTION_PRODUCT_IDS as readonly string[]).includes(id);
+}
+const SUBSCRIPTION_CFG: Record<SubscriptionProductId, { membership: string; days: number }> = {
+  vip_sprint: { membership: 'vip', days: 10 },
+  vip_monthly: { membership: 'vip', days: 30 },
+  resume_pass_10d: { membership: 'resume_pass', days: 10 },
+  full_monthly: { membership: 'full_monthly', days: 30 },
+};
+
+async function profileNeedsSubscriptionGrantForProduct(
+  supabase: import('@supabase/supabase-js').SupabaseClient,
+  userId: string,
+  productId: string,
+): Promise<boolean> {
+  if (!isSubscriptionProductId(productId)) return false;
+  const expectedMembership = SUBSCRIPTION_CFG[productId].membership;
+  const { data: profile } = await supabase.from('profiles').select('membership_type, vip_expires_at').eq('id', userId).single();
+  const type = profile?.membership_type || 'free';
+  const now = new Date();
+  const exp = profile?.vip_expires_at ? new Date(profile.vip_expires_at) : null;
+  const expValid = !!exp && exp > now;
+  if (type === 'free') return true;
+  if (type === expectedMembership) {
+    if (expValid) return false;
+    if (!profile?.vip_expires_at && type === 'vip') return false;
+    return true;
+  }
+  return true;
+}
+
+async function findLatestPaidSubscriptionOrderInWindow(
+  supabase: import('@supabase/supabase-js').SupabaseClient,
+  userId: string,
+  windowDays: number,
+): Promise<SubscriptionProductId | null> {
+  const cutoff = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
+  const { data: row, error } = await supabase
+    .from('payment_orders')
+    .select('product_id')
+    .eq('user_id', userId)
+    .eq('status', 'paid')
+    .in('product_id', [...SUBSCRIPTION_PRODUCT_IDS])
+    .or(`paid_at.gte.${cutoff},and(paid_at.is.null,created_at.gte.${cutoff})`)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error || !row?.product_id || !isSubscriptionProductId(row.product_id)) return null;
+  return row.product_id;
+}
+
+async function applySubscriptionGrant(
+  supabase: import('@supabase/supabase-js').SupabaseClient,
+  userId: string,
+  productId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!isSubscriptionProductId(productId)) return { ok: true };
+  const { membership, days } = SUBSCRIPTION_CFG[productId];
+  const now = new Date();
+  const { data: profileData } = await supabase.from('profiles').select('vip_expires_at, membership_type').eq('id', userId).single();
+  if (profileData?.membership_type === 'free' && profileData?.vip_expires_at) {
+    const existingExpiry = new Date(profileData.vip_expires_at);
+    if (existingExpiry > now) {
+      const { error: profileError } = await supabase.from('profiles').update({ membership_type: membership, updated_at: now.toISOString() }).eq('id', userId);
+      if (profileError) return { ok: false, error: profileError.message };
+      return { ok: true };
+    }
+  }
+  let baseDate = now;
+  if (profileData?.membership_type === membership && profileData?.vip_expires_at) {
+    const existingExpiry = new Date(profileData.vip_expires_at);
+    if (existingExpiry > now) baseDate = existingExpiry;
+  }
+  const expiresAt = new Date(baseDate.getTime() + days * 24 * 60 * 60 * 1000);
+  const { error: profileError } = await supabase.from('profiles').update({ membership_type: membership, vip_expires_at: expiresAt.toISOString(), updated_at: new Date().toISOString() }).eq('id', userId);
+  if (profileError) return { ok: false, error: profileError.message };
+  return { ok: true };
+}
 
 const CORS_ORIGINS = ['https://offerin.co', 'https://www.offerin.co', 'http://localhost:3000', 'http://localhost:5173', 'http://localhost:5174'];
 
