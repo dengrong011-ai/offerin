@@ -249,6 +249,9 @@ const generateSign = (...params: string[]): string => {
  * XorPay 错误码转中文消息
  */
 const getErrorMessage = (status: string): string => {
+  if (!status || status === 'undefined') {
+    return '支付网关返回异常（无错误码），请查看 Vercel 日志中的 XorPay 完整响应';
+  }
   const errorMessages: Record<string, string> = {
     'sign_error': '签名错误',
     'order_exist': '订单已存在',
@@ -376,42 +379,76 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       body: formData.toString(),
     });
 
-    const xorpayResult = await xorpayResponse.json();
+    const rawXorBody = await xorpayResponse.text();
+    let xorpayResult: Record<string, unknown>;
+    try {
+      xorpayResult = rawXorBody.trim() ? (JSON.parse(rawXorBody) as Record<string, unknown>) : {};
+    } catch (parseErr) {
+      console.error('XorPay 响应非 JSON:', {
+        httpStatus: xorpayResponse.status,
+        snippet: rawXorBody.slice(0, 800),
+        parseErr,
+      });
+      return res.status(502).json({
+        success: false,
+        orderId,
+        error: '支付网关返回格式异常，请稍后重试。若持续出现请查看 Vercel 日志中的 XorPay 响应片段。',
+      });
+    }
+
+    if (!xorpayResponse.ok) {
+      console.error('XorPay HTTP 非 2xx:', xorpayResponse.status, rawXorBody.slice(0, 500));
+      return res.status(502).json({
+        success: false,
+        orderId,
+        error: `支付网关请求失败（HTTP ${xorpayResponse.status}），请稍后重试`,
+      });
+    }
 
     console.log('XorPay 完整响应:', JSON.stringify(xorpayResult, null, 2));
 
     if (xorpayResult.status === 'ok') {
       // 更新订单的 XorPay 订单号
-      await supabase
-        .from('payment_orders')
-        .update({ xorpay_order_id: xorpayResult.aoid })
-        .eq('id', orderId);
+      const aoid = xorpayResult.aoid;
+      if (typeof aoid === 'string' && aoid.length > 0) {
+        await supabase.from('payment_orders').update({ xorpay_order_id: aoid }).eq('id', orderId);
+      }
 
       // 支付宝可能返回 info.qr 或 info.url_qrcode 或直接在 info 里
-      const qrCode = xorpayResult.info?.qr || xorpayResult.info?.url_qrcode || xorpayResult.qr || '';
+      const info = xorpayResult.info as Record<string, unknown> | undefined;
+      const qrCode =
+        (typeof info?.qr === 'string' && info.qr) ||
+        (typeof info?.url_qrcode === 'string' && info.url_qrcode) ||
+        (typeof xorpayResult.qr === 'string' && xorpayResult.qr) ||
+        '';
       console.log('提取的二维码:', qrCode);
 
       return res.status(200).json({
         success: true,
         orderId: orderId,
-        xorpayOrderId: xorpayResult.aoid,
+        xorpayOrderId: typeof aoid === 'string' ? aoid : '',
         qrCode: qrCode,
-        payUrl: xorpayResult.info?.url || '', // 支付宝可能返回支付链接
-        expiresIn: xorpayResult.expires_in || 7200,
+        payUrl: (info && typeof info.url === 'string' ? info.url : '') || '',
+        expiresIn: (typeof xorpayResult.expires_in === 'number' ? xorpayResult.expires_in : null) || 7200,
       });
     } else {
       console.error('XorPay 创建订单失败:', xorpayResult);
+      const st = xorpayResult.status;
       return res.status(400).json({
         success: false,
         orderId: orderId,
-        error: getErrorMessage(xorpayResult.status),
+        error: getErrorMessage(typeof st === 'string' ? st : String(st ?? '')),
       });
     }
   } catch (error: any) {
-    console.error('创建支付订单异常:', error);
+    console.error('创建支付订单异常:', error?.message || error, error?.stack);
+    const devHint =
+      process.env.VERCEL_ENV !== 'production' && typeof error?.message === 'string'
+        ? ` (${error.message})`
+        : '';
     return res.status(500).json({
       success: false,
-      error: '支付服务暂时不可用，请稍后重试',
+      error: `创建支付订单异常，请稍后重试${devHint}`,
     });
   }
 }
