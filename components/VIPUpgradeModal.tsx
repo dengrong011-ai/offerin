@@ -213,8 +213,8 @@ export const VIPUpgradeModal: React.FC<VIPUpgradeModalProps> = ({
         ]
       : [
           { icon: MessageSquare, text: '每月 30 场模拟面试', desc: '按场次计' },
-          { icon: Globe, text: '职业探索 50 次成功/月', desc: '分步计' },
-          { icon: FileText, text: '简历侧 50 次/月', desc: '诊断 + 划选 + 全局重构' },
+          { icon: Globe, text: '职业探索不限', desc: '' },
+          { icon: FileText, text: '简历侧不限', desc: '诊断 + 划选 + 全局重构' },
           { icon: Globe, text: '英文翻译不限', desc: '' },
           { icon: Download, text: 'PDF 与面试记录', desc: '' },
         ];

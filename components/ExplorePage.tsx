@@ -23,7 +23,7 @@ function formatCareerExploreError(e: unknown): string {
     return '今日职业探索 AI 调用已达上限（50 次），请明天再试。';
   }
   if (msg.includes('CAREER_EXPLORE_MONTHLY_LIMIT_EXCEEDED')) {
-    return '本月职业探索计费步数已达上限（50 次），下月再试或升级老 VIP 体系（如有）。';
+    return '本月职业探索用量已达会员单月上限（200 步），下月自动恢复。若需更高用量请联系客服。';
   }
   if (msg.includes('CAREER_EXPLORE_TRIAL_EXCEEDED')) {
     return '免费职业探索体验已用完（画像 / 方向 / 参考 JD（Demo）/ 计划：每次成功调用各计 1 次，共用 3 次计费额度；同一步 24h 内第 2 次成功不扣）。升级会员后可继续使用。';

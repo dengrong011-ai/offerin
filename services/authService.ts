@@ -230,7 +230,7 @@ export const checkUsageLimit = async (
       return { allowed: true, remaining: -1, limit: -1 };
     }
 
-    // —— 全局畅享：月 30 场面试、月 50 次简历侧 ——
+    // —— 全局畅享：月 30 场面试、简历侧月 200（与 proxy FULL_MONTHLY_RESUME_SIDE_MONTHLY_CAP 一致）——
     if (membership === 'full_monthly') {
       const { start: monthStart, end: monthEnd } = getUtcMonthRange();
 
@@ -256,7 +256,7 @@ export const checkUsageLimit = async (
 
         if (error) throw error;
         const usedCount = count || 0;
-        const cap = 50;
+        const cap = 200;
         const remaining = cap - usedCount;
         return { allowed: remaining > 0, remaining: Math.max(0, remaining), limit: cap };
       }
@@ -548,8 +548,9 @@ export const getTotalUsageStats = async (userId: string): Promise<{
   }
 };
 
-/** 与 api/gemini/proxy 中职业探索逻辑一致（日上限、免费 3 次计费池） */
+/** 与 api/gemini/proxy 中职业探索逻辑一致（日上限、免费 3 次计费池、全局畅享月 200） */
 const CAREER_EXPLORE_DAILY_MAX = 50;
+const FULL_MONTHLY_CAREER_EXPLORE_CAP = 200;
 const CAREER_EXPLORE_TRIAL_BILLABLE = 3;
 const CAREER_BILLABLE_ACTIONS = [
   'career_explore_profile',
@@ -613,7 +614,7 @@ export const getCareerExploreQuota = async (userId: string): Promise<CareerExplo
         trialBillableUsed: 0,
         trialBillableRemaining: null,
         monthlyCareerUsed: monthlyUsed,
-        monthlyCareerRemaining: Math.max(0, 50 - monthlyUsed),
+        monthlyCareerRemaining: Math.max(0, FULL_MONTHLY_CAREER_EXPLORE_CAP - monthlyUsed),
         membership,
       };
     }

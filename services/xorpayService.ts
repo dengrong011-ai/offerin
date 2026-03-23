@@ -256,7 +256,7 @@ export const XORPAY_PRODUCTS: Record<XorPayProductType, XorPayProduct> = {
     name: '全局畅享·月度',
     price: '39.90',
     priceInCents: 3990,
-    description: '每月 30 场面试、50 次职业探索成功、50 次简历侧用量（诊断+划选+全局重构）',
+    description: '每月 30 场面试；职业探索与简历侧单月各至多 200 次（产品展示为不限）',
   },
   resume_download: {
     id: 'resume_download',

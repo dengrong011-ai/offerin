@@ -103,7 +103,7 @@ export const MEMBERSHIP_LIMITS = {
     daily_diagnosis: -1,
     daily_interview: -1,
     daily_total: -1,
-    monthly_diagnosis: 50,
+    monthly_diagnosis: 200,
     monthly_interview: 30,
     can_download: true,
     can_export_interview: true,

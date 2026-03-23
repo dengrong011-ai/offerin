@@ -269,6 +269,9 @@ const CAREER_LOG_JD_DEMO = 'career_explore_jd_demo';
 const CAREER_LOG_RETRY_SUFFIX = '_retry';
 const CAREER_BILLABLE_TYPES = [CAREER_LOG_PROFILE, CAREER_LOG_DIRECTIONS, CAREER_LOG_PLAN, CAREER_LOG_JD_DEMO];
 const CAREER_FREE_TRIAL_BILLABLE = 3;
+/** 全局畅享：职业探索计费步、简历侧（诊断+划选+重构）各自自然月硬上限（产品文案可写「不限」） */
+const FULL_MONTHLY_CAREER_MONTHLY_CAP = 200;
+const FULL_MONTHLY_RESUME_SIDE_MONTHLY_CAP = 200;
 
 function careerStepToBaseLogType(step: string): string {
   if (step === 'profile') return CAREER_LOG_PROFILE;
@@ -385,11 +388,11 @@ async function checkCareerExplorePrecheck(
     return { allowed: true };
   }
 
-  // 全局畅享：职业探索按自然月（UTC）50 次成功（分步计，仅 base 类型）
+  // 全局畅享：职业探索按自然月（UTC）计费步上限（仅 base 类型；与 FULL_MONTHLY_CAREER_MONTHLY_CAP 一致）
   if (membershipType === 'full_monthly') {
     const { monthStart, monthEnd } = utcMonthRange();
     const used = await countCareerBillableInMonth(supabaseAdmin, userId, monthStart, monthEnd);
-    if (used >= 50) {
+    if (used >= FULL_MONTHLY_CAREER_MONTHLY_CAP) {
       return { allowed: false, reason: 'CAREER_EXPLORE_MONTHLY_LIMIT_EXCEEDED' };
     }
     return { allowed: true };
@@ -725,7 +728,7 @@ async function checkUsageEligibility(
     return { allowed: true };
   }
 
-  // —— 全局畅享（新）：月 30 场面试、月 50 次简历侧（诊断+划选+全局重构）、职业探索另计 ——
+  // —— 全局畅享（新）：月 30 场面试、简历侧月上限 FULL_MONTHLY_RESUME_SIDE_MONTHLY_CAP、职业探索月上限 FULL_MONTHLY_CAREER_MONTHLY_CAP ——
   if (membershipType === 'full_monthly') {
     const cached = getCachedUsage(userId, actionType);
     if (cached?.allowed) {
@@ -764,7 +767,7 @@ async function checkUsageEligibility(
         .gte('created_at', monthStart)
         .lte('created_at', monthEnd);
 
-      if ((count || 0) >= 50) {
+      if ((count || 0) >= FULL_MONTHLY_RESUME_SIDE_MONTHLY_CAP) {
         return { allowed: false, reason: 'MONTHLY_DIAGNOSIS_LIMIT_EXCEEDED' };
       }
       return { allowed: true };

@@ -650,7 +650,6 @@ const HomeMarketing: React.FC<HomeMarketingProps> = ({
                 '全局重构随诊断链路，不单独扣次',
                 '职业探索权益与免费档相同（共 3 次成功）',
                 '模拟面试 / 翻译 与免费体验一致',
-                '面试、职业探索、翻译与免费档共用已消耗额度，用尽后开通本档不会额外增加次数',
                 'PDF 导出',
               ].map((text) => (
                 <div key={text} className="flex items-start gap-3">
@@ -701,8 +700,8 @@ const HomeMarketing: React.FC<HomeMarketingProps> = ({
             <div className="space-y-3 mb-6 flex-grow text-[13px] text-zinc-700">
               {[
                 '每月最多开启 30 场模拟面试（按场次计）',
-                '职业探索 50 次成功 / 月（分步计）',
-                '简历侧 50 次 / 月（诊断 + 划选 + 全局重构）',
+                '职业探索不限',
+                '简历侧不限（诊断 + 划选 + 全局重构）',
                 '英文翻译不限',
                 'PDF 导出 · 面试记录保存',
               ].map((text) => (
