@@ -151,6 +151,9 @@ const ExplorePage: React.FC<ExplorePageProps> = ({
         setError('请先上传简历、粘贴文本或从简历库选择');
         return;
       }
+      // 画像+方向连续执行需 2 个计费槽位，先校验免费额度是否足够
+      const ok = await ensureTrialBillableSlots(2);
+      if (!ok) return;
       setLoading(true);
       setError(null);
       setSubStep('loading');
@@ -209,6 +212,9 @@ const ExplorePage: React.FC<ExplorePageProps> = ({
   const handleDemoJd = useCallback(
     async (direction: DirectionRecommendation) => {
       if (!profile) return;
+      // JD Demo 需 1 个计费槽位，先校验免费额度
+      const ok = await ensureTrialBillableSlots(1);
+      if (!ok) return;
       setDemoJdLoadingFor(direction.directionName);
       setError(null);
       try {
@@ -264,6 +270,9 @@ const ExplorePage: React.FC<ExplorePageProps> = ({
 
   const handleGeneratePlan = useCallback(async () => {
     if (!selectedDirection || !profile) return;
+    // 计划生成需 1 个计费槽位，先校验免费额度
+    const ok = await ensureTrialBillableSlots(1);
+    if (!ok) return;
     setLoading(true);
     setError(null);
     try {
