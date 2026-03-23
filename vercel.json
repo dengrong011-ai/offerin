@@ -43,6 +43,14 @@
       "dest": "/api/xunhupay/$1.ts"
     },
     {
+      "src": "/api/user/membership",
+      "dest": "/api/user/membership.ts"
+    },
+    {
+      "src": "/api/user/repair-subscription",
+      "dest": "/api/user/repair-subscription.ts"
+    },
+    {
       "handle": "filesystem"
     },
     {
