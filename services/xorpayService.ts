@@ -401,10 +401,35 @@ export const createXorPayOrder = async (
       }),
     });
 
+    const raw = await response.text();
+    let result: {
+      success?: boolean;
+      error?: string;
+      orderId?: string;
+      xorpayOrderId?: string;
+      qrCode?: string;
+      payUrl?: string;
+      expiresIn?: number;
+    } = {};
+    try {
+      if (raw.trim()) result = JSON.parse(raw) as typeof result;
+    } catch {
+      const isHtml = raw.trimStart().startsWith('<') || raw.includes('<!DOCTYPE');
+      console.error('支付 create 响应非 JSON:', response.status, raw.slice(0, 500));
+      return {
+        success: false,
+        error: isHtml
+          ? `当前页面未连上支付接口（返回了网页而非 JSON）。本地请用「vercel dev」或设置环境变量 VITE_DEV_API_PROXY 指向已部署站点；线上请强制刷新或检查 /api/xorpay/create 是否路由到 Vercel 函数。`
+          : `支付接口返回无法解析（HTTP ${response.status}），请稍后重试`,
+      };
+    }
+
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error('API 响应错误:', response.status, errorText);
-      const fromBody = parseApiErrorJson(errorText);
+      console.error('API 响应错误:', response.status, raw.slice(0, 800));
+      const fromBody =
+        typeof result.error === 'string' && result.error.trim()
+          ? result.error.trim()
+          : parseApiErrorJson(raw);
       if (fromBody) {
         return { success: false, error: fromBody };
       }
@@ -420,8 +445,6 @@ export const createXorPayOrder = async (
       };
     }
 
-    const result = await response.json();
-    
     console.log('服务端返回结果:', result);
 
     if (result.success) {
