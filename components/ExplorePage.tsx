@@ -361,17 +361,6 @@ const ExplorePage: React.FC<ExplorePageProps> = ({
 
   const visibleDirections = directions.filter(d => !dismissedDirections.has(d.directionName));
 
-  const showQuotaDaily =
-    !!quota &&
-    quota.dailyRemaining !== null &&
-    quota.dailyRemaining < 50;
-  const showQuotaMonthly =
-    !!quota &&
-    quota.monthlyCareerRemaining !== undefined &&
-    quota.monthlyCareerRemaining < 50;
-  const showQuotaTrial = !!quota && quota.trialBillableRemaining !== null;
-  const showCareerQuotaBanner =
-    showQuotaDaily || showQuotaMonthly || showQuotaTrial;
   /** 免费档：画像+方向首步需 2 格；JD / 计划各 1 格；四步共用 3 格 */
   const trialQuotaBlocksFirstFlow =
     !!quota && quota.trialBillableRemaining !== null && quota.trialBillableRemaining < 2;
@@ -406,31 +395,9 @@ const ExplorePage: React.FC<ExplorePageProps> = ({
       <main className="container mx-auto px-6 py-8 max-w-4xl">
         {localDirectGeminiSkipsServerQuota && (
           <div className="mb-4 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-[12px] text-amber-900">
-            开发环境：当前为<strong className="font-medium">本地直连 Gemini</strong>（未走线上代理），用量<strong>不会写入</strong>数据库，下方「免费体验计费额度」不会减少。验证扣减请在{' '}
+            开发环境：当前为<strong className="font-medium">本地直连 Gemini</strong>（未走线上代理），用量<strong>不会写入</strong>数据库。验证扣减请在{' '}
             <span className="font-medium">offerin.co</span> 测试，或在 <code className="text-[11px] bg-amber-100/80 px-1 rounded">.env.local</code> 中配置{' '}
             <code className="text-[11px] bg-amber-100/80 px-1 rounded">VITE_REMOTE_PROXY_URL</code> 指向线上同源以走代理。
-          </div>
-        )}
-        {showCareerQuotaBanner && quota && (
-          <div className="mb-4 px-3 py-2.5 rounded-xl bg-zinc-50 border border-zinc-100 text-[12px] text-zinc-600 flex flex-wrap gap-x-4 gap-y-1">
-            {showQuotaDaily && (
-              <span>
-                今日职业探索剩余 <strong className="text-zinc-800">{quota.dailyRemaining}</strong> / 50 次
-              </span>
-            )}
-            {showQuotaMonthly && (
-              <span>
-                本月职业探索计费步剩余 <strong className="text-zinc-800">{quota.monthlyCareerRemaining}</strong> / 50
-              </span>
-            )}
-            {showQuotaTrial && (
-              <span>
-                免费体验计费额度剩余 <strong className="text-zinc-800">{quota.trialBillableRemaining}</strong> / 3
-                <span className="text-zinc-400 ml-1">
-                  （上限共 3 次计费：画像、方向、JD Demo、计划四步共用；点一次「AI 推荐方向」会先画像再方向共 2 次；同一步 24h 内第 2 次成功不扣）
-                </span>
-              </span>
-            )}
           </div>
         )}
         {saveStatus === 'saved' && (
