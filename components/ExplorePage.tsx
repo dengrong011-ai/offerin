@@ -568,6 +568,7 @@ const ExplorePage: React.FC<ExplorePageProps> = ({
                     onDismiss={handleDismissDirection}
                     onDemoJd={handleDemoJd}
                     demoJdLoadingFor={demoJdLoadingFor}
+                    demoJdDisabled={trialQuotaBlocksOneStep}
                   />
                 ))}
               </div>
