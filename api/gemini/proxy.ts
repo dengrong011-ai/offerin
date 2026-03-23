@@ -1,6 +1,36 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { mergeWhitelistIntoPaidProfile } from '../../server/membershipWhitelistMerge';
+/**
+ * ⚠️ 以下代码从 ../../server/membershipWhitelistMerge 内联
+ * Vercel @vercel/node 打包 api/ 时无法解析 api/ 外部的相对路径
+ */
+const PAID_PROFILE_TIERS = new Set(['vip', 'resume_pass', 'full_monthly']);
+type WhitelistType = 'vip' | 'special' | 'pro';
+interface WhitelistEntryLike {
+  whitelist_type: WhitelistType;
+}
+function mergeWhitelistIntoPaidProfile(
+  membershipType: string,
+  vipExpiresAt: string | null,
+  whitelistEntry: WhitelistEntryLike | null,
+): { membershipType: string; vipExpiresAt: string | null } {
+  if (!whitelistEntry) {
+    return { membershipType, vipExpiresAt };
+  }
+  if (whitelistEntry.whitelist_type === 'pro') {
+    return { membershipType: 'pro', vipExpiresAt: null };
+  }
+  if (membershipType === 'pro') {
+    return { membershipType, vipExpiresAt };
+  }
+  if (PAID_PROFILE_TIERS.has(membershipType)) {
+    return { membershipType, vipExpiresAt };
+  }
+  return {
+    membershipType: whitelistEntry.whitelist_type,
+    vipExpiresAt: null,
+  };
+}
 import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
 /**

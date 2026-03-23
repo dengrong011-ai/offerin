@@ -6,11 +6,28 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
-import {
-  resolveSupabaseAnonKey,
-  resolveSupabaseServiceRoleKey,
-  resolveSupabaseUrl,
-} from '../../server/supabaseServerEnv';
+/**
+ * ⚠️ 以下函数从 ../../server/supabaseServerEnv 内联
+ * Vercel @vercel/node 打包 api/ 时无法解析 api/ 外部的相对路径
+ */
+function resolveSupabaseUrl(): string {
+  return (
+    process.env.VITE_SUPABASE_URL ||
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    process.env.SUPABASE_URL ||
+    ''
+  ).trim();
+}
+function resolveSupabaseServiceRoleKey(): string {
+  return (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+}
+function resolveSupabaseAnonKey(): string {
+  return (
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    ''
+  ).trim();
+}
 
 const CORS_ORIGINS = ['https://offerin.co', 'https://www.offerin.co', 'http://localhost:3000', 'http://localhost:5173', 'http://localhost:5174'];
 
