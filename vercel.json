@@ -1,5 +1,10 @@
 {
   "version": 2,
+  "functions": {
+    "api/gemini/proxy.ts": {
+      "maxDuration": 300
+    }
+  },
   "builds": [
     {
       "src": "api/**/*.ts",

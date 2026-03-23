@@ -1421,16 +1421,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (isStream) {
+      const body = googleResponse.body;
+      // 必须先检查 body，再设 SSE 头；否则设了 text/event-stream 后又 res.json 会头冲突，Vercel 常报 FUNCTION_INVOCATION_FAILED
+      if (!body) {
+        console.error('[gemini proxy] stream: upstream body is null');
+        return res.status(502).json({
+          error: 'AI_STREAM_BODY_MISSING',
+          message: '上游未返回可读的响应流，请稍后重试',
+        });
+      }
+
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
       res.setHeader('X-Gemini-Model', resolvedModel);
       res.setHeader('Access-Control-Expose-Headers', 'X-Gemini-Model');
-
-      const body = googleResponse.body;
-      if (!body) {
-        return res.status(500).json({ error: 'Failed to get response stream' });
-      }
 
       const sseAcc: SseUsageAcc = { sawModelText: false, blocked: false, carry: '', bytesIn: 0 };
       let streamCompleted = false;
