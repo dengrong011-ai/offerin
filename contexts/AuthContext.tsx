@@ -43,9 +43,18 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchAndSetEffectiveMembership = async (accessToken: string | undefined) => {
+  // 防抖：30 秒内复用上次结果，避免多处同时触发导致密集轮询
+  const membershipFetchRef = React.useRef<{ ts: number; value: string | null }>({ ts: 0, value: null });
+  const MEMBERSHIP_FETCH_TTL = 30_000; // 30 秒
+
+  const fetchAndSetEffectiveMembership = async (accessToken: string | undefined, force?: boolean) => {
     if (!accessToken) {
       setEffectiveMembershipType(null);
+      return;
+    }
+    const now = Date.now();
+    if (!force && membershipFetchRef.current.ts && now - membershipFetchRef.current.ts < MEMBERSHIP_FETCH_TTL) {
+      setEffectiveMembershipType(membershipFetchRef.current.value);
       return;
     }
     try {
@@ -57,7 +66,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         return;
       }
       const j = (await res.json()) as { membershipType?: string };
-      setEffectiveMembershipType(typeof j.membershipType === 'string' ? j.membershipType : null);
+      const mt = typeof j.membershipType === 'string' ? j.membershipType : null;
+      membershipFetchRef.current = { ts: Date.now(), value: mt };
+      setEffectiveMembershipType(mt);
     } catch {
       setEffectiveMembershipType(null);
     }
@@ -73,7 +84,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const {
       data: { session: s },
     } = await supabase.auth.getSession();
-    await fetchAndSetEffectiveMembership(s?.access_token);
+    await fetchAndSetEffectiveMembership(s?.access_token, true);
 
     const paidTiers = new Set(['vip', 'resume_pass', 'full_monthly', 'pro', 'special']);
     const maxAttempts = options?.untilPaidMembership ? 8 : 1;

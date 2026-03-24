@@ -146,6 +146,12 @@ async function proxyStreamRequest(options: ProxyGeminiOptions & {
       if (errorJson.error === 'AI_RATE_LIMIT_EXCEEDED') {
         throw new Error('AI_RATE_LIMIT_EXCEEDED');
       }
+      if (errorJson.error === 'UNSUPPORTED_MIME_TYPE') {
+        throw new Error(errorJson.message || '不支持的文件格式，请使用 PDF、图片或纯文本');
+      }
+      if (errorJson.error === 'AI_BAD_REQUEST') {
+        throw new Error(errorJson.message || '请求内容格式有误，请检查附件格式后重试');
+      }
       if (errorJson.error?.includes('LIMIT_EXCEEDED')) {
         throw new Error(errorJson.error);
       }
@@ -159,7 +165,9 @@ async function proxyStreamRequest(options: ProxyGeminiOptions & {
         e.message === 'AI_RATE_LIMIT_EXCEEDED' ||
         e.message === 'PAYLOAD_TOO_LARGE' ||
         e.message?.includes('LIMIT_EXCEEDED') ||
-        e.message?.startsWith('CAREER_')
+        e.message?.startsWith('CAREER_') ||
+        e.message?.includes('不支持的文件格式') ||
+        e.message?.includes('请求内容格式有误')
       ) {
         throw e;
       }
@@ -302,6 +310,12 @@ async function proxyGenerateRequest(options: ProxyGeminiOptions & {
       if (errorJson.error === 'AI_RATE_LIMIT_EXCEEDED') {
         throw new Error('AI_RATE_LIMIT_EXCEEDED');
       }
+      if (errorJson.error === 'UNSUPPORTED_MIME_TYPE') {
+        throw new Error(errorJson.message || '不支持的文件格式，请使用 PDF、图片或纯文本');
+      }
+      if (errorJson.error === 'AI_BAD_REQUEST') {
+        throw new Error(errorJson.message || '请求内容格式有误，请检查附件格式后重试');
+      }
       if (errorJson.error?.includes('LIMIT_EXCEEDED')) {
         throw new Error(errorJson.error);
       }
@@ -323,7 +337,9 @@ async function proxyGenerateRequest(options: ProxyGeminiOptions & {
         e.message?.startsWith('CAREER_') ||
         e.message?.includes('上游模型响应超时') ||
         e.message?.includes('模型返回为空或无法解析') ||
-        e.message?.includes('请求体过大')
+        e.message?.includes('请求体过大') ||
+        e.message?.includes('不支持的文件格式') ||
+        e.message?.includes('请求内容格式有误')
       ) {
         throw e;
       }

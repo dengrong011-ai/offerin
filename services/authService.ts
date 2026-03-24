@@ -182,7 +182,15 @@ async function countInterviewSessionsInMonthClient(
 }
 
 // 获取「与后端一致」的有效会员类型（profiles + 白名单覆盖）
+// 客户端缓存：30 秒内同一用户复用上次结果，避免短时间内大量重复请求
+const membershipCache: { userId: string; value: string; ts: number } = { userId: '', value: '', ts: 0 };
+const MEMBERSHIP_CACHE_TTL = 30_000; // 30 秒
+
 async function getEffectiveMembership(userId: string): Promise<string> {
+  const now = Date.now();
+  if (membershipCache.userId === userId && now - membershipCache.ts < MEMBERSHIP_CACHE_TTL) {
+    return membershipCache.value;
+  }
   try {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token) return (await getUserProfile(userId))?.membership_type || 'free';
@@ -191,7 +199,11 @@ async function getEffectiveMembership(userId: string): Promise<string> {
     });
     if (!res.ok) return (await getUserProfile(userId))?.membership_type || 'free';
     const { membershipType } = await res.json();
-    return membershipType || 'free';
+    const result = membershipType || 'free';
+    membershipCache.userId = userId;
+    membershipCache.value = result;
+    membershipCache.ts = Date.now();
+    return result;
   } catch {
     return (await getUserProfile(userId))?.membership_type || 'free';
   }

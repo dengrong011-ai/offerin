@@ -142,28 +142,62 @@ async function applySubscriptionGrant(
   return { ok: true };
 }
 
+// ============ healStale 防抖缓存 ============
+// 同一用户 5 分钟内只执行一次 healStale，避免高频轮询时对 Supabase 的无效查询
+const HEAL_DEBOUNCE_TTL = 5 * 60 * 1000; // 5 分钟
+const healDebounceCache = new Map<string, number>();
+// 防止内存泄漏：超过 2000 条时清理过期条目
+const HEAL_CACHE_MAX_SIZE = 2000;
+
+function cleanupHealDebounceCache(): void {
+  if (healDebounceCache.size <= HEAL_CACHE_MAX_SIZE) return;
+  const now = Date.now();
+  for (const [key, ts] of healDebounceCache) {
+    if (now - ts > HEAL_DEBOUNCE_TTL) {
+      healDebounceCache.delete(key);
+    }
+  }
+}
+
 async function healStaleSubscriptionProfile(supabase: SupabaseClient, userId: string): Promise<void> {
-  console.log('[healStale] start for user:', userId);
-  const { data: p, error: pErr } = await supabase
-    .from('profiles')
-    .select('membership_type, vip_expires_at')
-    .eq('id', userId)
-    .single();
-  if (pErr) { console.error('[healStale] profile query error:', pErr.message, pErr.code); return; }
-  if (!p) { console.log('[healStale] no profile found'); return; }
-  const type = p.membership_type || 'free';
-  const exp = p.vip_expires_at ? new Date(p.vip_expires_at) : null;
-  const expValid = !!exp && exp > new Date();
-  const windowDays = type === 'free' && expValid ? 366 : 90;
-  console.log('[healStale] profile:', { type, exp: p.vip_expires_at, expValid, windowDays });
-  const productId = await findLatestPaidSubscriptionOrderInWindow(supabase, userId, windowDays);
-  console.log('[healStale] findLatestPaidOrder result:', productId);
-  if (!productId) return;
-  const needs = await profileNeedsSubscriptionGrantForProduct(supabase, userId, productId);
-  console.log('[healStale] needs grant:', needs);
-  if (!needs) return;
-  const result = await applySubscriptionGrant(supabase, userId, productId);
-  console.log('[healStale] applyGrant result:', result);
+  // 防抖：5 分钟内已执行过则跳过
+  const lastRun = healDebounceCache.get(userId);
+  const now = Date.now();
+  if (lastRun && now - lastRun < HEAL_DEBOUNCE_TTL) {
+    console.log('[healStale] skipped (debounced), user:', userId);
+    return;
+  }
+
+  try {
+    console.log('[healStale] start for user:', userId);
+    const { data: p, error: pErr } = await supabase
+      .from('profiles')
+      .select('membership_type, vip_expires_at')
+      .eq('id', userId)
+      .single();
+    if (pErr) { console.error('[healStale] profile query error:', pErr.message, pErr.code); return; }
+    if (!p) { console.log('[healStale] no profile found'); return; }
+    const type = p.membership_type || 'free';
+    const exp = p.vip_expires_at ? new Date(p.vip_expires_at) : null;
+    const expValid = !!exp && exp > new Date();
+    const windowDays = type === 'free' && expValid ? 366 : 90;
+    console.log('[healStale] profile:', { type, exp: p.vip_expires_at, expValid, windowDays });
+    const productId = await findLatestPaidSubscriptionOrderInWindow(supabase, userId, windowDays);
+    console.log('[healStale] findLatestPaidOrder result:', productId);
+    if (!productId) return;
+    const needs = await profileNeedsSubscriptionGrantForProduct(supabase, userId, productId);
+    console.log('[healStale] needs grant:', needs);
+    if (!needs) return;
+    const result = await applySubscriptionGrant(supabase, userId, productId);
+    console.log('[healStale] applyGrant result:', result);
+
+    // 成功执行完毕后才写入防抖缓存，确保失败时下次请求可重试
+    healDebounceCache.set(userId, Date.now());
+    cleanupHealDebounceCache();
+  } catch (err: any) {
+    // 执行失败：不写入缓存，下次请求仍可重试（如刚付费用户不会被阻塞 5 分钟）
+    console.error('[healStale] unexpected error, debounce NOT cached:', err?.message || err);
+  }
 }
 
 const CORS_ORIGINS = ['https://offerin.co', 'https://www.offerin.co', 'http://localhost:3000', 'http://localhost:5173', 'http://localhost:5174'];

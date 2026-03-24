@@ -1179,6 +1179,46 @@ function recordUsageSuccess(
 /** Vercel Serverless 请求体约 4.5MB 上限；多模态 JSON 过大易 OOM 导致 FUNCTION_INVOCATION_FAILED */
 const MAX_PROXY_BODY_BYTES = 4_100_000;
 
+// ============ MIME 类型校验 ============
+
+/** Google Gemini API 支持的 inlineData MIME 类型白名单（参考 https://ai.google.dev/gemini-api/docs/vision） */
+const GEMINI_SUPPORTED_MIME_TYPES = new Set([
+  // 图片
+  'image/png', 'image/jpeg', 'image/webp', 'image/heic', 'image/heif',
+  // PDF
+  'application/pdf',
+  // 音频
+  'audio/wav', 'audio/mp3', 'audio/mpeg', 'audio/aiff', 'audio/aac',
+  'audio/ogg', 'audio/flac', 'audio/webm',
+  // 视频
+  'video/mp4', 'video/mpeg', 'video/mov', 'video/avi', 'video/x-flv',
+  'video/mpg', 'video/webm', 'video/wmv', 'video/3gpp',
+  // 文本
+  'text/plain', 'text/html', 'text/css', 'text/javascript',
+  'application/x-javascript', 'text/x-typescript', 'application/x-typescript',
+  'text/csv', 'text/markdown', 'text/x-python', 'application/x-python-code',
+  'application/json', 'application/xml', 'text/xml',
+]);
+
+/**
+ * 扫描 contents 中所有 inlineData.mimeType，返回第一个不受支持的 MIME 类型；
+ * 全部合法则返回 null。
+ */
+function findUnsupportedMimeInContents(contents: unknown): string | null {
+  if (!Array.isArray(contents)) return null;
+  for (const item of contents) {
+    const parts = (item as any)?.parts;
+    if (!Array.isArray(parts)) continue;
+    for (const part of parts) {
+      const mime = (part as any)?.inlineData?.mimeType;
+      if (typeof mime === 'string' && mime && !GEMINI_SUPPORTED_MIME_TYPES.has(mime.toLowerCase())) {
+        return mime;
+      }
+    }
+  }
+  return null;
+}
+
 // ============ 主处理函数 ============
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -1274,6 +1314,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     if (!Array.isArray(contents)) {
       return res.status(400).json({ error: 'contents must be an array' });
+    }
+
+    // ---- MIME 类型前置校验：拦截 Google 不支持的附件格式，提前返回有意义的错误 ----
+    const unsupportedMime = findUnsupportedMimeInContents(contents);
+    if (unsupportedMime) {
+      console.warn(`[gemini proxy] unsupported MIME rejected: ${unsupportedMime}`);
+      return res.status(400).json({
+        error: 'UNSUPPORTED_MIME_TYPE',
+        message: `不支持的文件格式: ${unsupportedMime}。请使用 PDF、图片（PNG/JPEG/WebP）或纯文本格式。`,
+        mime: unsupportedMime,
+      });
     }
 
     // ---- 模型白名单校验 ----
@@ -1485,6 +1536,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
       console.error('Google API error:', googleResponse.status, errorText);
+      // Google 400 = 客户端输入问题（MIME 不支持、格式错误等），映射为 400 而非 502
+      if (googleResponse.status === 400) {
+        let userMessage = '请求内容格式有误，请检查附件格式或输入内容后重试。';
+        try {
+          const errBody = JSON.parse(errorText);
+          const googleMsg = errBody?.error?.message || '';
+          if (googleMsg.toLowerCase().includes('unsupported mime')) {
+            userMessage = '附件格式不被 AI 服务支持。请使用 PDF、图片（PNG/JPEG/WebP）或纯文本格式。';
+          } else if (googleMsg.toLowerCase().includes('invalid')) {
+            // 仅提取关键描述，截断并过滤，避免泄露 API Key/模型内部信息
+            const sanitized = googleMsg
+              .replace(/key[=:\s]*\S+/gi, 'key=***')
+              .replace(/projects\/[^\s,)]+/g, 'projects/***')
+              .slice(0, 120);
+            userMessage = `请求被 AI 服务拒绝: ${sanitized}`;
+          }
+        } catch (_) { /* 非 JSON 错误体，用默认提示 */ }
+        return res.status(400).json({
+          error: 'AI_BAD_REQUEST',
+          message: userMessage,
+        });
+      }
       return res.status(502).json({
         error: 'AI_SERVICE_ERROR',
       });
