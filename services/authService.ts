@@ -291,7 +291,7 @@ export const checkUsageLimit = async (
 
       if (actionType === 'interview') {
         const sessionsUsed = await countInterviewSessionsInMonthClient(userId, monthStart, monthEnd);
-        const cap = 30;
+        const cap = 50;
         const remaining = cap - sessionsUsed;
         return {
           allowed: remaining > 0,

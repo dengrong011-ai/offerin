@@ -80,8 +80,8 @@ const PRODUCTS: Record<string, { name: string; price: string; priceInCents: numb
   },
   full_monthly: {
     name: '全局畅享·月度',
-    price: '39.90',
-    priceInCents: 3990,
+    price: '19.90',
+    priceInCents: 1990,
   },
   resume_download: {
     name: '简历下载',

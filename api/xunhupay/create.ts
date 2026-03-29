@@ -20,7 +20,7 @@ const XUNHU_PRODUCTS: Record<XunhuProductType, XunhuProduct> = {
   vip_sprint: { id: 'vip_sprint', name: 'Offerin 冲刺计划', price: '19.90', priceInCents: 1990, description: '10天无限简历诊断、模拟面试、PDF导出' },
   vip_monthly: { id: 'vip_monthly', name: 'Offerin VIP月度会员', price: '29.90', priceInCents: 2990, description: '无限简历诊断、模拟面试无限次、PDF导出' },
   resume_pass_10d: { id: 'resume_pass_10d', name: 'Offerin 简历畅改·10天', price: '9.90', priceInCents: 990, description: '10天无限简历诊断、PDF导出' },
-  full_monthly: { id: 'full_monthly', name: 'Offerin 全局畅享·月度', price: '39.90', priceInCents: 3990, description: '30天无限简历诊断、模拟面试、PDF导出' },
+  full_monthly: { id: 'full_monthly', name: 'Offerin 全局畅享·月度', price: '19.90', priceInCents: 1990, description: '30天无限简历诊断、模拟面试、PDF导出' },
   resume_download: { id: 'resume_download', name: 'Offerin 简历下载', price: '4.90', priceInCents: 490, description: '下载当前优化后的简历PDF' },
   interview_export: { id: 'interview_export', name: 'Offerin 面试记录保存', price: '4.90', priceInCents: 490, description: '保存面试记录PDF' },
 };

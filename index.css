@@ -42,6 +42,22 @@
   opacity: 0;
 }
 
+/* Toast 弹出动画 */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.3s ease-out forwards;
+}
+
 /* 面试评估报告样式优化 */
 .interview-report,
 .interview-questions {

@@ -818,7 +818,7 @@ async function checkUsageEligibility(
       }
 
       const sessionsUsed = await countInterviewSessionsInMonth(supabaseAdmin, userId, monthStart, monthEnd);
-      if (sessionsUsed >= 30) {
+      if (sessionsUsed >= 50) {
         return { allowed: false, reason: 'MONTHLY_INTERVIEW_SESSION_LIMIT_EXCEEDED' };
       }
       return { allowed: true };

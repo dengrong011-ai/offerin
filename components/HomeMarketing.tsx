@@ -699,7 +699,7 @@ const HomeMarketing: React.FC<HomeMarketingProps> = ({
 
             <div className="space-y-3 mb-6 flex-grow text-[13px] text-zinc-700">
               {[
-                '每月最多开启 30 场模拟面试（按场次计）',
+                '每月最多开启 50 场模拟面试（按场次计）',
                 '职业探索不限',
                 '简历侧不限（诊断 + 划选 + 全局重构）',
                 '英文翻译不限',
@@ -716,7 +716,7 @@ const HomeMarketing: React.FC<HomeMarketingProps> = ({
 
             <div className="pt-5 border-t border-zinc-200/80">
               <div className="flex items-baseline gap-1.5 flex-wrap">
-                <span className="text-[24px] font-bold text-zinc-800">¥39.9</span>
+                <span className="text-[24px] font-bold text-zinc-800">¥19.9</span>
                 <span className="text-zinc-500 text-[13px]">· 单次购买 30 天有效</span>
               </div>
               <p className="text-[11px] text-zinc-500 mt-0.5">不设自动续费，到期恢复免费用户</p>

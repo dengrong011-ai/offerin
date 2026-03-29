@@ -501,6 +501,78 @@ export const analyzeResumeStream = async (
   }
 };
 
+// 错别字纠正 + 排版整理（进入编辑模式，纠正错别字并整理为 Markdown 格式）
+export interface TypoFixCallbacks {
+  onChunk: (chunk: string) => void;
+  onComplete: (content: string) => void;
+  onError: (error: string) => void;
+}
+
+export const fixTyposStream = async (
+  resumeText: string,
+  callbacks: TypoFixCallbacks,
+) => {
+  const client = createAIClient('typo_fix');
+
+  const systemInstruction = `你是一个严谨的简历文字校对与排版助手。你有**三个**任务：
+1. 纠正简历中的错别字和明显语法错误（错字、别字、多字、少字）
+2. 统一标点符号：中文语境一律使用全角标点（，、。、；、：、！、？、（）、""），禁止在中文句子中混用半角标点（, . ; : !）；仅在纯英文、纯数字、URL、邮箱等场景使用半角标点
+3. 将简历整理为清晰的 Markdown 排版格式
+
+**严格规则（不可违反）**：
+1. **只纠正错别字、标点和明显语法错误**，绝对不要修改措辞、调整语序、优化表达、添加内容或删除内容
+2. **不要改写、润色或精简任何句子**，原文怎么写就怎么保留，仅修错别字和标点
+3. **不要添加任何注释、说明、备注**
+4. **直接输出结果**，从"# 姓名"开始，不要任何前缀或后缀
+5. **事实性字段零修改**：公司名称、时间、学校、学历等客观事实逐字保留
+
+**排版格式要求**：
+- 用 \`# 姓名\` 作为标题
+- 用 \`> 电话 | 邮箱 | 城市\` 放个人信息
+- 用 \`## 模块标题\` 划分板块（如：教育背景、实习经历、工作经历、专业技能、校园经历、科研经历、项目经历等）
+- 用 \`### 机构名 | 角色/专业 | 地点 | 时间\` 作为子标题（地点在时间前面，二者必须在同一行；如果原文没有地点信息则省略地点字段）
+- 用 \`- \` 列出具体描述条目
+- 各板块之间用空行分隔
+- 如果原文已有 Markdown 标记，保留并修正格式即可`;
+
+  const prompt = `请纠正以下简历中的错别字，统一中英文标点（中文语境用全角标点），并整理为清晰的 Markdown 排版格式（不要改写任何措辞和内容）：
+
+${resumeText}`;
+
+  try {
+    const stream = await generateContentStreamWithRetry(client, {
+      model: MODEL_PRIMARY_RESUME_EDIT,
+      fallbackModels: [...FALLBACK_RESUME_EDIT],
+      contents: [{ parts: [{ text: prompt }] }],
+      config: {
+        systemInstruction,
+        temperature: 0.1, // 极低温度，确保只纠正错别字不做其他改动
+        maxOutputTokens: 8192,
+        safetySettings: [
+          { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+        ] as any,
+      },
+    });
+
+    let fullContent = '';
+    for await (const chunk of stream) {
+      const text = chunk.text || '';
+      fullContent += text;
+      callbacks.onChunk(text);
+    }
+    callbacks.onComplete(fullContent);
+    return fullContent;
+  } catch (error: any) {
+    devWarn('Typo Fix Stream Error:', error);
+    const errMsg = handleApiError(error);
+    callbacks.onError(errMsg);
+    throw new Error(errMsg);
+  }
+};
+
 // 全局重构（基于诊断结果，用户点击后才触发）
 export interface ResumeRewriteCallbacks {
   onResumeChunk: (chunk: string) => void;

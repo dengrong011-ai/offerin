@@ -1,6 +1,6 @@
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { analyzeResumeStream, rewriteResumeStream, translateResume, FileData, condenseResume, extractTextFromFile } from './services/geminiService';
+import { analyzeResumeStream, rewriteResumeStream, translateResume, FileData, condenseResume, extractTextFromFile, fixTyposStream } from './services/geminiService';
 import MarkdownRenderer from './components/MarkdownRenderer';
 import type { ResumeTemplate } from './components/MarkdownRenderer';
 import InterviewChat from './components/InterviewChat';
@@ -156,6 +156,9 @@ const App: React.FC = () => {
   
   
   const [isRewriting, setIsRewriting] = useState(false); // 全局重构 loading
+  const [isDirectEditing, setIsDirectEditing] = useState(false); // 进入编辑（纠正错别字）loading
+  const [toastMessage, setToastMessage] = useState<string | null>(null); // 轻量 toast 提示
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showPhotoPanel, setShowPhotoPanel] = useState(false);
   const editorTextareaRef = useRef<HTMLTextAreaElement>(null);
   const [previewScale, setPreviewScale] = useState(0.65);
@@ -639,6 +642,72 @@ const App: React.FC = () => {
     }
   };
 
+  // Toast 提示辅助函数
+  const showToast = useCallback((message: string, duration = 3000) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToastMessage(message);
+    toastTimerRef.current = setTimeout(() => setToastMessage(null), duration);
+  }, []);
+
+  // 进入编辑：先纠正错别字+排版整理，完成后再进入编辑器
+  const handleDirectEdit = useCallback(async () => {
+    const resumeTextSnapshot = resume.trim() || editableResume.trim();
+    if (!resumeTextSnapshot && !resumeFile) {
+      setError('请先提供简历内容。');
+      return;
+    }
+
+    // 需要登录
+    if (!user) {
+      setShowLoginModal(true);
+      return;
+    }
+
+    setError(null);
+    setIsDirectEditing(true);
+    showToast('正在整理排版并纠正错别字，请稍候…', 30000); // 长时间显示，完成后会替换
+
+    if (resumeTextSnapshot) {
+      try {
+        await fixTyposStream(resumeTextSnapshot, {
+          onChunk: () => {
+            // 流式处理中，等完整结果
+          },
+          onComplete: (corrected) => {
+            const finalText = corrected.trim() || resumeTextSnapshot;
+            setEditableResume(finalText);
+            setEnglishResume('');
+            setDiagnosisContent('');
+            setResumeContent('');
+            setIsDirectEditing(false);
+            setStep('EDITOR');
+            showToast('排版整理与错别字纠正完成 ✓', 2500);
+          },
+          onError: (errMsg) => {
+            console.error('Typo fix error:', errMsg);
+            // 纠错失败也进编辑器，用原文
+            setEditableResume(resumeTextSnapshot);
+            setEnglishResume('');
+            setDiagnosisContent('');
+            setResumeContent('');
+            setIsDirectEditing(false);
+            setStep('EDITOR');
+            showToast('排版处理遇到问题，已用原文进入编辑', 3000);
+          },
+        });
+      } catch {
+        // 异常兜底：用原文进编辑器
+        setEditableResume(resumeTextSnapshot);
+        setEnglishResume('');
+        setDiagnosisContent('');
+        setResumeContent('');
+        setIsDirectEditing(false);
+        setStep('EDITOR');
+        showToast('排版处理遇到问题，已用原文进入编辑', 3000);
+      }
+    }
+  }, [resume, editableResume, resumeFile, user, showToast]);
+
   const handleAnalysis = useCallback(async () => {
     // 与「简历输入」页文本框、编辑器双缓冲对齐：从简历库进编辑器时可能只有 editableResume 有字
     const resumeTextSnapshot = resume.trim() || editableResume.trim();
@@ -845,6 +914,8 @@ const App: React.FC = () => {
       abortControllerRef.current = null;
     }
     setIsAnalyzing(false);
+    setIsDirectEditing(false);
+    setToastMessage(null);
     setJd('');
     setResume('');
     setAspiration('');
@@ -2121,18 +2192,25 @@ const App: React.FC = () => {
               </div>
 
               {/* Action Bar */}
-              <div className="px-6 md:px-8 py-4 bg-zinc-50 border-t border-zinc-100 flex items-center justify-between">
-                <span className="text-[11px] text-zinc-400">
-                  分析约需 30 秒，请耐心等待
-                </span>
-                <button
-                  onClick={handleAnalysis}
-                  disabled={isAnalyzing || processingState.jd || processingState.resume}
-                  className={`px-6 py-2.5 rounded-md flex items-center gap-2 text-[13px] font-medium transition-all ${isAnalyzing || processingState.jd || processingState.resume ? 'bg-zinc-200 text-zinc-400 cursor-not-allowed' : 'bg-zinc-900 text-white hover:bg-zinc-800'}`}
-                >
-                  {isAnalyzing ? <Loader2 className="animate-spin" size={15} /> : <Send size={15} />}
-                  <span>{isAnalyzing ? '分析中...' : '开始分析'}</span>
-                </button>
+              <div className="px-6 md:px-8 py-4 bg-zinc-50 border-t border-zinc-100 flex items-center justify-end">
+                <div className="flex items-center gap-2.5">
+                  <button
+                    onClick={handleDirectEdit}
+                    disabled={isAnalyzing || isDirectEditing || processingState.jd || processingState.resume}
+                    className={`px-5 py-2.5 rounded-md flex items-center gap-2 text-[13px] font-medium transition-all border ${isAnalyzing || isDirectEditing || processingState.jd || processingState.resume ? 'border-zinc-200 bg-zinc-100 text-zinc-400 cursor-not-allowed' : 'border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 hover:border-zinc-400'}`}
+                  >
+                    {isDirectEditing ? <Loader2 className="animate-spin" size={15} /> : <PenTool size={15} />}
+                    <span>{isDirectEditing ? '进入中...' : '进入编辑'}</span>
+                  </button>
+                  <button
+                    onClick={handleAnalysis}
+                    disabled={isAnalyzing || isDirectEditing || processingState.jd || processingState.resume}
+                    className={`px-5 py-2.5 rounded-md flex items-center gap-2 text-[13px] font-medium transition-all ${isAnalyzing || isDirectEditing || processingState.jd || processingState.resume ? 'bg-zinc-200 text-zinc-400 cursor-not-allowed' : 'bg-zinc-900 text-white hover:bg-zinc-800'}`}
+                  >
+                    {isAnalyzing ? <Loader2 className="animate-spin" size={15} /> : <Send size={15} />}
+                    <span>{isAnalyzing ? '分析中...' : '进入诊断重构'}</span>
+                  </button>
+                </div>
               </div>
               
                {error && (
@@ -2685,6 +2763,15 @@ const App: React.FC = () => {
          </footer>
       )}
       </>
+      )}
+      {/* 全局 Toast 提示 */}
+      {toastMessage && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[9999] animate-fade-in-up">
+          <div className="bg-zinc-900 text-white text-[13px] px-5 py-3 rounded-lg shadow-lg flex items-center gap-2 max-w-md">
+            <CheckCircle2 size={15} className="text-emerald-400 shrink-0" />
+            <span>{toastMessage}</span>
+          </div>
+        </div>
       )}
     </div>
   );
