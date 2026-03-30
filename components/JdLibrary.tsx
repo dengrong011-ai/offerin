@@ -26,8 +26,6 @@ const SUPPORTED_JD_FILE_TYPES = [
   'image/png',
   'image/webp',
   'image/heic',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/msword',
 ];
 
 function jdSourceTagClass(tag: string): string {
@@ -169,7 +167,7 @@ const JdLibrary: React.FC<JdLibraryProps> = ({ onBack }) => {
 
       <main className="max-w-3xl mx-auto px-4 py-6">
         <p className="text-[13px] text-zinc-500 mb-4 leading-relaxed">
-          支持<strong className="text-zinc-700">上传 PDF / Word / 截图</strong>自动识别，或<strong className="text-zinc-700">粘贴文本</strong>；标题会根据正文自动生成，可改。也可在职业探索里生成参考 JD 后点「保存到 JD 库」。可用
+          支持<strong className="text-zinc-700">上传 PDF / 截图</strong>自动识别，或<strong className="text-zinc-700">粘贴文本</strong>；标题会根据正文自动生成，可改。也可在职业探索里生成参考 JD 后点「保存到 JD 库」。可用
           <strong className="text-zinc-700">标签</strong>与简历、计划笔记等自行对应。使用已保存的 JD 时，请在<strong className="text-zinc-700">简历输入</strong>或<strong className="text-zinc-700">模拟面试</strong>中点「从 JD 库载入」。
         </p>
 
@@ -263,7 +261,7 @@ const JdLibrary: React.FC<JdLibraryProps> = ({ onBack }) => {
                 <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{addError}</p>
               )}
               <div className="flex flex-wrap gap-2">
-                <input ref={fileInputRef} type="file" className="hidden" accept=".pdf,.doc,.docx,image/*" onChange={e => void handleJdFileChange(e)} />
+                <input ref={fileInputRef} type="file" className="hidden" accept=".pdf,image/*" onChange={e => void handleJdFileChange(e)} />
                 <button
                   type="button"
                   disabled={extracting}

@@ -44,16 +44,12 @@ interface ExplorePreferencesProps {
 const SUPPORTED_RESUME_TYPES = [
   'application/pdf',
   'image/jpeg', 'image/png', 'image/webp', 'image/heic',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/msword',
 ];
 
 /** 部分浏览器对 PDF 的 file.type 为空或 octet-stream，需按扩展名补全 */
 function inferResumeMimeFromFileName(name: string): string | null {
   const n = name.toLowerCase();
   if (n.endsWith('.pdf')) return 'application/pdf';
-  if (n.endsWith('.docx')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-  if (n.endsWith('.doc')) return 'application/msword';
   if (n.endsWith('.jpg') || n.endsWith('.jpeg')) return 'image/jpeg';
   if (n.endsWith('.png')) return 'image/png';
   if (n.endsWith('.webp')) return 'image/webp';
@@ -172,7 +168,7 @@ const ExplorePreferences: React.FC<ExplorePreferencesProps> = ({
     setResumeFileError(null);
     const mime = effectiveResumeMime(file);
     if (!mime) {
-      setResumeFileError('无法识别文件类型。请使用 PDF、Word（.doc/.docx）或常见图片；若已是 PDF，请确认扩展名为 .pdf。');
+      setResumeFileError('无法识别文件类型。请使用 PDF 或常见图片；若已是 PDF，请确认扩展名为 .pdf。');
       return;
     }
     setResumeExtracting(true);
@@ -363,7 +359,7 @@ const ExplorePreferences: React.FC<ExplorePreferencesProps> = ({
         <label className="block text-sm font-medium text-zinc-700 mb-2">
           上传简历 <span className="text-red-400 font-normal">*</span>
         </label>
-        <p className="text-[11px] text-zinc-400 mb-3">AI 需要你的简历来分析技能和经验，精准匹配方向。支持 PDF、Word、图片或直接粘贴文本。</p>
+        <p className="text-[11px] text-zinc-400 mb-3">AI 需要你的简历来分析技能和经验，精准匹配方向。支持 PDF、图片或直接粘贴文本。</p>
         <div className="flex flex-wrap items-center gap-2 mb-3">
           <button
             type="button"
@@ -378,7 +374,7 @@ const ExplorePreferences: React.FC<ExplorePreferencesProps> = ({
             ref={resumeFileInputRef}
             type="file"
             className="hidden"
-            accept=".pdf,.doc,.docx,image/*"
+            accept=".pdf,image/*"
             onChange={handleResumeFileChange}
           />
           <button

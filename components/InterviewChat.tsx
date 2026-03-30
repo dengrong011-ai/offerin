@@ -779,22 +779,10 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
         return;
       }
 
-      // Word 文档处理（.doc 和 .docx）
+      // Word 文档不支持（Gemini API 无法处理 docx/doc MIME）
       if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
           file.type === 'application/msword') {
-        if (file.size > 3 * 1024 * 1024) { 
-          reject(new Error('Word文件过大，请上传小于3MB的文件'));
-          return;
-        }
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = () => {
-          let base64String = (reader.result as string).split(',')[1];
-          base64String = base64String.replace(/\s/g, '');
-          // 对于 Word 文档，我们将其作为 PDF 处理（Gemini 支持）
-          resolve({ data: base64String, mime: file.type });
-        };
-        reader.onerror = error => reject(error);
+        reject(new Error('暂不支持 Word 文件，请转为 PDF 后重新上传。'));
         return;
       }
 
@@ -854,12 +842,10 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
       'image/png', 
       'image/webp', 
       'image/heic',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
-      'application/msword' // .doc
     ];
     
     if (!supportedTypes.includes(file.type)) {
-      setFileError('格式错误：目前支持 PDF、Word（.doc/.docx）、JPG、PNG 或 WebP。');
+      setFileError('格式错误：目前支持 PDF、JPG、PNG 或 WebP。Word 文件请先转为 PDF。');
       return;
     }
 
@@ -1763,7 +1749,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
                   type="file" 
                   ref={jdFileInputRef} 
                   className="hidden" 
-                  accept=".pdf,.doc,.docx,image/*" 
+                  accept=".pdf,image/*" 
                   onChange={(e) => handleFileChange(e, 'jd')} 
                 />
                 <textarea
@@ -1805,7 +1791,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
                   type="file" 
                   ref={resumeFileInputRef} 
                   className="hidden" 
-                  accept=".pdf,.doc,.docx,image/*" 
+                  accept=".pdf,image/*" 
                   onChange={(e) => handleFileChange(e, 'resume')} 
                 />
                 <textarea

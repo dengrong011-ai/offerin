@@ -386,12 +386,32 @@ const handleApiError = (error: any): string => {
 // Vercel Serverless Function 请求体限制约 4.5MB，预留 0.5MB 给 prompt/config
 const MAX_PAYLOAD_BASE64_BYTES = 3 * 1024 * 1024; // 3MB base64 数据上限
 
+// Gemini API 支持的 inlineData MIME 类型（与 proxy.ts 中 GEMINI_SUPPORTED_MIME_TYPES 保持一致）
+const GEMINI_INLINE_SUPPORTED_MIMES = new Set([
+  'image/png', 'image/jpeg', 'image/webp', 'image/heic', 'image/heif',
+  'application/pdf',
+  'audio/wav', 'audio/mp3', 'audio/mpeg', 'audio/aiff', 'audio/aac',
+  'audio/ogg', 'audio/flac', 'audio/webm',
+  'text/plain', 'text/html', 'text/csv', 'text/markdown',
+  'application/json', 'application/xml', 'text/xml',
+]);
+
 // 构建分析请求的共享上下文
 const buildAnalysisContext = (
   jd: string, resume: string, aspiration: string,
   jdFile?: FileData, resumeFile?: FileData
 ) => {
   const simulationDate = getCurrentDateChinese();
+
+  // 过滤 Gemini 不支持的 MIME（如 .docx/.doc），避免 proxy 400 拒绝
+  if (jdFile && !GEMINI_INLINE_SUPPORTED_MIMES.has(jdFile.mimeType.toLowerCase())) {
+    devWarn(`[buildAnalysisContext] JD 附件 MIME ${jdFile.mimeType} 不被 Gemini 支持，降级为纯文本`);
+    jdFile = undefined;
+  }
+  if (resumeFile && !GEMINI_INLINE_SUPPORTED_MIMES.has(resumeFile.mimeType.toLowerCase())) {
+    devWarn(`[buildAnalysisContext] 简历附件 MIME ${resumeFile.mimeType} 不被 Gemini 支持，降级为纯文本`);
+    resumeFile = undefined;
+  }
 
   // 估算附件总 base64 大小，超限时降级：优先保留简历附件，丢弃 JD 附件
   const estimateBase64Size = (file?: FileData) => file ? file.data.length : 0;
@@ -805,7 +825,7 @@ export const extractTextFromFile = async (
   const client = createAIClient(actionType);
   const mimeType = coalesceMimeForFileExtract(fileData);
   if (!mimeType) {
-    throw new Error('无法识别文件类型，请使用 PDF、Word 或图片，并确保扩展名正确');
+    throw new Error('无法识别文件类型，请使用 PDF 或图片，并确保扩展名正确');
   }
 
   try {

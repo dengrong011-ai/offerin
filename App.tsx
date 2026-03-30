@@ -444,21 +444,10 @@ const App: React.FC = () => {
          return;
       }
 
-      // Word 文档处理（.doc 和 .docx）
+      // Word 文档不支持（Gemini API 无法处理 docx/doc MIME）
       if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
           file.type === 'application/msword') {
-        if (file.size > 3 * 1024 * 1024) { 
-          reject(new Error('Word文件过大，请上传小于3MB的文件'));
-          return;
-        }
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = () => {
-          let base64String = (reader.result as string).split(',')[1];
-          base64String = base64String.replace(/\s/g, '');
-          resolve({ data: base64String, mime: file.type });
-        };
-        reader.onerror = error => reject(error);
+        reject(new Error('暂不支持 Word 文件，请转为 PDF 后重新上传。'));
         return;
       }
 
@@ -517,12 +506,10 @@ const App: React.FC = () => {
       'image/png', 
       'image/webp', 
       'image/heic',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
-      'application/msword' // .doc
     ];
     
     if (!supportedTypes.includes(file.type)) {
-      setError('格式错误：目前支持 PDF、Word（.doc/.docx）、JPG、PNG 或 WebP。');
+      setError('格式错误：目前支持 PDF、JPG、PNG 或 WebP。Word 文件请先转为 PDF。');
       return;
     }
 
@@ -2132,8 +2119,8 @@ const App: React.FC = () => {
                       <span className="font-semibold">💡 提示：</span>请提供尽可能<span className="font-semibold">详细、完整</span>的 JD 内容（包括岗位职责、任职要求、团队介绍等），这将帮助 AI 更精准地优化你的简历。
                     </p>
                   </div>
-                  <p className="text-[11px] text-zinc-400">支持 PDF、Word（.doc/.docx）、图片，单文件 ≤3MB；建议优先使用 PDF 或 .docx 以获得更好解析。</p>
-                  <input type="file" ref={jdFileInputRef} className="hidden" accept=".pdf,.doc,.docx,image/*" onChange={(e) => handleFileChange(e, 'jd')} />
+                  <p className="text-[11px] text-zinc-400">支持 PDF、图片，单文件 ≤3MB；建议优先使用 PDF 以获得更好解析。</p>
+                  <input type="file" ref={jdFileInputRef} className="hidden" accept=".pdf,image/*" onChange={(e) => handleFileChange(e, 'jd')} />
                   <textarea
                     value={jd}
                     onChange={(e) => setJd(e.target.value)}
@@ -2161,8 +2148,8 @@ const App: React.FC = () => {
                       </button>
                     </div>
                   </div>
-                  <p className="text-[11px] text-zinc-400">支持 PDF、Word（.doc/.docx）、图片，单文件 ≤3MB；建议优先使用 PDF 或 .docx。</p>
-                  <input type="file" ref={resumeFileInputRef} className="hidden" accept=".pdf,.doc,.docx,image/*" onChange={(e) => handleFileChange(e, 'resume')} />
+                  <p className="text-[11px] text-zinc-400">支持 PDF、图片，单文件 ≤3MB；建议优先使用 PDF。</p>
+                  <input type="file" ref={resumeFileInputRef} className="hidden" accept=".pdf,image/*" onChange={(e) => handleFileChange(e, 'resume')} />
                   <textarea
                     value={resume}
                     onChange={(e) => setResume(e.target.value)}
