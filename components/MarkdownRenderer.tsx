@@ -697,4 +697,10 @@ const MarkdownRenderer: React.FC<Props> = ({
   );
 };
 
-export default MarkdownRenderer;
+export default React.memo(MarkdownRenderer, (prev, next) => (
+  prev.content === next.content &&
+  prev.isResumePreview === next.isResumePreview &&
+  prev.densityMultiplier === next.densityMultiplier &&
+  prev.mode === next.mode &&
+  prev.template === next.template
+));

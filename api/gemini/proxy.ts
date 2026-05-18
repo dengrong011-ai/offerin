@@ -1201,6 +1201,14 @@ const GEMINI_SUPPORTED_MIME_TYPES = new Set([
 ]);
 
 /**
+ * 提取 MIME 类型的基础部分（去掉 ;codecs=xxx 等参数）。
+ * 例如 "audio/webm;codecs=opus" → "audio/webm"
+ */
+function baseMime(mime: string): string {
+  return mime.split(';')[0].trim().toLowerCase();
+}
+
+/**
  * 扫描 contents 中所有 inlineData.mimeType，返回第一个不受支持的 MIME 类型；
  * 全部合法则返回 null。
  */
@@ -1211,7 +1219,7 @@ function findUnsupportedMimeInContents(contents: unknown): string | null {
     if (!Array.isArray(parts)) continue;
     for (const part of parts) {
       const mime = (part as any)?.inlineData?.mimeType;
-      if (typeof mime === 'string' && mime && !GEMINI_SUPPORTED_MIME_TYPES.has(mime.toLowerCase())) {
+      if (typeof mime === 'string' && mime && !GEMINI_SUPPORTED_MIME_TYPES.has(baseMime(mime))) {
         return mime;
       }
     }

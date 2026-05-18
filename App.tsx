@@ -204,8 +204,51 @@ const App: React.FC = () => {
     if (step !== 'EDITOR' && step !== 'ENGLISH_VERSION') return;
 
     let cancelled = false;
-    
-    // 计算分页点：使用和 PDF 导出完全相同的像素扫描逻辑
+
+    // 轻量级 DOM 测量：编辑时实时跑，纯同步、零成本
+    // 用 scrollHeight 估算分页点，和 PDF 导出像素扫描会有 ±10px 偏差，但预览分页够用
+    const quickEstimatePageBreaks = () => {
+      const measureContainer = document.getElementById('resume-measure-container');
+      if (!measureContainer) return;
+      const height = measureContainer.scrollHeight;
+      if (cancelled) return;
+      setResumeHeight(height);
+
+      const maxDrawable = A4_HEIGHT_PX - PAGE_PADDING_TOP - PAGE_PADDING_BOTTOM;
+      // 单页：直接返回
+      if (height <= maxDrawable + PAGE_TOLERANCE) {
+        setPreviewPageBreaks([0, height]);
+        return;
+      }
+      // 多页：尝试用 DOM 节点边界找安全分页点
+      const breaks: number[] = [0];
+      const blocks = Array.from(measureContainer.querySelectorAll<HTMLElement>('p, h1, h2, h3, h4, ul, ol, li, table, blockquote, pre, div'));
+      let pageBottom = maxDrawable;
+      while (pageBottom < height) {
+        // 找出在当前页底之前结束的最后一个块
+        let safeY = pageBottom;
+        for (let i = blocks.length - 1; i >= 0; i--) {
+          const el = blocks[i];
+          const top = el.offsetTop;
+          const bottom = top + el.offsetHeight;
+          // 选完全位于当前页内、且离 pageBottom 最近的块尾
+          if (bottom <= pageBottom && bottom > pageBottom - maxDrawable * 0.4) {
+            safeY = bottom + 4;
+            break;
+          }
+        }
+        // 兜底：找不到安全点就硬切
+        if (safeY === pageBottom || safeY <= breaks[breaks.length - 1]) {
+          safeY = breaks[breaks.length - 1] + maxDrawable;
+        }
+        breaks.push(safeY);
+        pageBottom = safeY + maxDrawable;
+      }
+      if (breaks[breaks.length - 1] < height) breaks.push(height);
+      if (!cancelled) setPreviewPageBreaks(breaks);
+    };
+
+    // 精确像素扫描：仅在编辑停止 1.2s 后跑一次，做最终对齐
     const computePageBreaks = async () => {
       const measureContainer = document.getElementById('resume-measure-container');
       if (!measureContainer) return;
@@ -393,31 +436,18 @@ const App: React.FC = () => {
       }
     };
 
-    // 初次计算
-    const timer = setTimeout(computePageBreaks, 300);
-    
-    // 监听内容变化时重新计算
-    // 使用防抖避免频繁渲染 canvas
-    let debounceTimer: ReturnType<typeof setTimeout>;
-    const observer = new ResizeObserver(() => {
-      const measureContainer = document.getElementById('resume-measure-container');
-      if (measureContainer) {
-        setResumeHeight(measureContainer.scrollHeight);
-      }
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(computePageBreaks, 500);
-    });
+    // 1) 立刻用轻量 DOM 估算，保证输入时分页能跟得上
+    const rafId = requestAnimationFrame(quickEstimatePageBreaks);
 
-    const target = document.getElementById('resume-measure-container');
-    if (target) {
-      observer.observe(target);
-    }
+    // 2) 编辑停止 1200ms 后再用精确像素扫描对齐一次（输入过程中不跑）
+    const preciseTimer = setTimeout(() => {
+      if (!cancelled) computePageBreaks();
+    }, 1200);
 
     return () => {
       cancelled = true;
-      clearTimeout(timer);
-      clearTimeout(debounceTimer);
-      observer.disconnect();
+      cancelAnimationFrame(rafId);
+      clearTimeout(preciseTimer);
     };
   }, [step, editableResume, englishResume, densityMultiplier, selectedTemplate]);
 
@@ -1117,6 +1147,16 @@ const App: React.FC = () => {
       contentContainer.style.width = `${contentWidth}px`;
       contentContainer.style.backgroundColor = '#ffffff';
       contentContainer.style.overflow = 'visible'; // 确保不裁剪
+      // 关键：与预览容器对齐字体基线（避免克隆后丢失继承导致 h2 容器/横线间距与预览不一致）
+      // 预览页面外层有全局 line-height、font-size、font-family 等继承，克隆到独立 tempContainer 后会丢失
+      // 必须显式设置与原渲染上下文相同的基线，否则下载版会出现"标题贴近横线、横线下方留白"的视觉偏差
+      const previewSource = element as HTMLElement;
+      const sourceStyle = window.getComputedStyle(previewSource);
+      contentContainer.style.fontFamily = sourceStyle.fontFamily;
+      contentContainer.style.fontSize = sourceStyle.fontSize;
+      contentContainer.style.lineHeight = sourceStyle.lineHeight;
+      contentContainer.style.color = sourceStyle.color;
+      contentContainer.style.letterSpacing = sourceStyle.letterSpacing;
       
       const contentClone = element.cloneNode(true) as HTMLElement;
       contentClone.id = '';
@@ -1360,30 +1400,19 @@ const App: React.FC = () => {
           ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
           
           if (srcHeight > 0) {
-            // 计算实际可用的绘制空间：如果内容超出标准可绘制区域，
-            // 则压缩底部 padding（最少保留 10px 底部边距）
+            // 1:1 原比例绘制，绝不缩放（缩放会让标题、间距、行距整页被压缩，下载后明显比预览拥挤）
+            // 若 srcHeight 略超可用空间，直接绘制并允许侵入底部 padding；
+            // 极端情况下（侵入超过 minBottomPadding）直接裁切多余部分，损失的只是底部安全留白，不会丢字。
             const minBottomPadding = 10 * canvasScale;
             const availableForContent = pageHeightInCanvas - paddingTopInCanvas - minBottomPadding;
-            
-            if (srcHeight > availableForContent) {
-              // 内容太高，需要微缩以适应页面
-              // 计算缩放比：让内容完整放入可用空间
-              const fitScale = availableForContent / srcHeight;
-              const scaledWidth = contentCanvas.width * fitScale;
-              const scaledHeight = srcHeight * fitScale;
-              ctx.drawImage(
-                contentCanvas,
-                0, srcY, contentCanvas.width, srcHeight,
-                paddingLeftInCanvas, paddingTopInCanvas, scaledWidth, scaledHeight
-              );
-              console.log(`第 ${i + 1} 页内容微缩: ${(fitScale * 100).toFixed(1)}%`);
-            } else {
-              // 内容可以完整放入，正常绘制
-              ctx.drawImage(
-                contentCanvas,
-                0, srcY, contentCanvas.width, srcHeight,
-                paddingLeftInCanvas, paddingTopInCanvas, contentCanvas.width, srcHeight
-              );
+            const drawHeight = Math.min(srcHeight, availableForContent);
+            ctx.drawImage(
+              contentCanvas,
+              0, srcY, contentCanvas.width, drawHeight,
+              paddingLeftInCanvas, paddingTopInCanvas, contentCanvas.width, drawHeight
+            );
+            if (drawHeight < srcHeight) {
+              console.log(`第 ${i + 1} 页内容轻微超出，已按原比例绘制并裁切 ${Math.round((srcHeight - drawHeight) / canvasScale)}px 底部空白`);
             }
           }
         }
@@ -1397,10 +1426,8 @@ const App: React.FC = () => {
         // 固定使用标准 A4 尺寸，确保不超出 PDF 页面边界
         pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
         
-        // 叠加本页的可点击链接
-        const minBottomPadding = 10 * canvasScale;
-        const availableForContent = pageHeightInCanvas - paddingTopInCanvas - minBottomPadding;
-        const fitScale = srcHeight > availableForContent ? availableForContent / srcHeight : 1;
+        // 叠加本页的可点击链接（与上方绘制保持一致：1:1 原比例，不缩放）
+        const fitScale = 1;
         linkRects.forEach((lr) => {
           const lcLeft = lr.left * canvasScale;
           const lcTop = lr.top * canvasScale;

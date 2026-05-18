@@ -404,11 +404,13 @@ const buildAnalysisContext = (
   const simulationDate = getCurrentDateChinese();
 
   // 过滤 Gemini 不支持的 MIME（如 .docx/.doc），避免 proxy 400 拒绝
-  if (jdFile && !GEMINI_INLINE_SUPPORTED_MIMES.has(jdFile.mimeType.toLowerCase())) {
+  // 使用 baseMime 去掉 ;codecs=xxx 等参数后再比对
+  const baseMime = (m: string) => m.split(';')[0].trim().toLowerCase();
+  if (jdFile && !GEMINI_INLINE_SUPPORTED_MIMES.has(baseMime(jdFile.mimeType))) {
     devWarn(`[buildAnalysisContext] JD 附件 MIME ${jdFile.mimeType} 不被 Gemini 支持，降级为纯文本`);
     jdFile = undefined;
   }
-  if (resumeFile && !GEMINI_INLINE_SUPPORTED_MIMES.has(resumeFile.mimeType.toLowerCase())) {
+  if (resumeFile && !GEMINI_INLINE_SUPPORTED_MIMES.has(baseMime(resumeFile.mimeType))) {
     devWarn(`[buildAnalysisContext] 简历附件 MIME ${resumeFile.mimeType} 不被 Gemini 支持，降级为纯文本`);
     resumeFile = undefined;
   }
@@ -736,6 +738,9 @@ export interface AudioTranscriptionCallbacks {
   onError: (error: string) => void;
 }
 
+// 音频 Blob 原始大小上限（3MB），base64 编码后约 4MB，接近 Vercel 限制
+const MAX_AUDIO_BLOB_BYTES = 3 * 1024 * 1024;
+
 export const transcribeAudio = async (
   audioBlob: Blob,
   callbacks: AudioTranscriptionCallbacks,
@@ -743,6 +748,14 @@ export const transcribeAudio = async (
 ) => {
   const client = createAIClient(actionType);
   
+
+  // 前置检查：音频大小校验，避免 base64 编码后超出 Vercel Serverless 请求体限制
+  if (audioBlob.size > MAX_AUDIO_BLOB_BYTES) {
+    const sizeMB = (audioBlob.size / 1024 / 1024).toFixed(1);
+    const errMsg = `AUDIO_TOO_LARGE: 录音文件 ${sizeMB}MB 超出 ${(MAX_AUDIO_BLOB_BYTES / 1024 / 1024).toFixed(0)}MB 限制，请缩短录音时长（建议不超过 2 分钟）`;
+    callbacks.onError(errMsg);
+    throw new Error(errMsg);
+  }
 
   callbacks.onTranscribing();
 

@@ -26,6 +26,66 @@ import SavedResumePickModal, { type SavedResumePickMode } from './SavedResumePic
 import SavedJdPickModal from './SavedJdPickModal';
 import type { SavedResume, SavedJd } from '../types';
 
+/**
+ * 智能合并面试消息：
+ * - streaming 消息合并到最后一条同类型的 streaming 消息上
+ * - 结束消息（!isStreaming）替换最后一条同类型 streaming 消息
+ * - 对于 interviewer/interviewee/summary 类型：同一轮内不应出现多条独立消息，
+ *   如果新来的 streaming 消息与列表中已有的同类型已结束消息（round 相同或无 round），
+ *   则替换它而不是追加（防止因竞态或重试产生重复气泡）
+ */
+function mergeInterviewMessage(prev: InterviewMessage[], msg: InterviewMessage): InterviewMessage[] {
+  // 类型白名单：只对这些角色消息做智能合并
+  const MERGE_TYPES = new Set(['interviewer', 'interviewee', 'summary']);
+
+  if (msg.isStreaming) {
+    // 1. 向上查找最后一条同类型 streaming 消息进行合并
+    for (let i = prev.length - 1; i >= 0; i--) {
+      if (prev[i].type === msg.type && prev[i].isStreaming) {
+        const newMessages = [...prev];
+        newMessages[i] = msg;
+        return newMessages;
+      }
+      // 遇到非同类型消息就停止搜索（避免跨轮合并）
+      if (prev[i].type !== msg.type && MERGE_TYPES.has(prev[i].type as string)) break;
+    }
+
+    // 2. 没有找到同类型 streaming 消息，检查是否有同类型已完成消息（round 匹配）需要替换
+    //    这处理的场景是：流中断重试时，前一条已标记为 isStreaming:false，新来的是新一轮 isStreaming:true
+    if (MERGE_TYPES.has(msg.type)) {
+      for (let i = prev.length - 1; i >= 0; i--) {
+        if (prev[i].type === msg.type && !prev[i].isStreaming) {
+          // round 匹配时替换（同一轮内不应有两条面试官消息）
+          if (msg.round !== undefined && prev[i].round === msg.round) {
+            const newMessages = [...prev];
+            newMessages[i] = msg;
+            return newMessages;
+          }
+          break;
+        }
+        if (prev[i].type !== msg.type && MERGE_TYPES.has(prev[i].type as string)) break;
+      }
+    }
+
+    // 3. 没有找到可合并的，追加
+    return [...prev, msg];
+  }
+
+  // 非 streaming（结束消息）：替换最后一条同类型 streaming 消息
+  if (!msg.isStreaming && prev.length > 0) {
+    for (let i = prev.length - 1; i >= 0; i--) {
+      if (prev[i].type === msg.type && prev[i].isStreaming) {
+        const newMessages = [...prev];
+        newMessages[i] = msg;
+        return newMessages;
+      }
+      if (prev[i].type !== msg.type && MERGE_TYPES.has(prev[i].type as string)) break;
+    }
+  }
+
+  return [...prev, msg];
+}
+
 // Markdown 预处理：确保标题、列表等块级元素前后有空行，增强渲染鲁棒性
 const normalizeMarkdown = (text: string): string => {
   return text
@@ -189,10 +249,13 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   
   // 语音录制状态（使用 Gemini API）
+  const MAX_RECORDING_SECONDS = 120; // 最大录音时长 2 分钟
+  const MAX_AUDIO_BLOB_BYTES = 3 * 1024 * 1024; // 音频 Blob 上限 3MB（base64 后 ≈4MB，接近 Vercel 限制）
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [audioLevel, setAudioLevel] = useState(0);
+  const [audioError, setAudioError] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -284,6 +347,18 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
           micStreamRef.current = null;
         }
         
+        // 清除之前的错误
+        setAudioError(null);
+
+        // 检查音频大小：base64 编码后膨胀约 33%，超过 Vercel 限制会触发 413
+        if (audioBlob.size > MAX_AUDIO_BLOB_BYTES) {
+          const sizeMB = (audioBlob.size / 1024 / 1024).toFixed(1);
+          setAudioError(`录音文件过大（${sizeMB}MB），请缩短录音时长后重试（建议不超过 2 分钟）`);
+          setRecordingTime(0);
+          setAudioLevel(0);
+          return;
+        }
+
         // 如果有录音数据，发送给 Gemini 转文字
         if (audioBlob.size > 0) {
           setIsTranscribing(true);
@@ -303,7 +378,12 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
               onError: (error) => {
                 console.error('Transcription error:', error);
                 setIsTranscribing(false);
-                alert('语音转文字失败: ' + error);
+                // 针对 PAYLOAD_TOO_LARGE 给出友好提示
+                if (error.includes('PAYLOAD_TOO_LARGE')) {
+                  setAudioError('录音时间过长，语音文件超出服务器限制。请缩短录音后重试（建议不超过 2 分钟）');
+                } else {
+                  setAudioError('语音转文字失败: ' + error);
+                }
               }
             });
           } catch (error) {
@@ -325,6 +405,15 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
       recordingTimerRef.current = setInterval(() => {
         seconds++;
         setRecordingTime(seconds);
+
+        // 到达最大录音时长时自动停止
+        if (seconds >= MAX_RECORDING_SECONDS) {
+          if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+            mediaRecorderRef.current.stop();
+            setIsRecording(false);
+          }
+          return;
+        }
         
         // 检测音量
         if (analyserRef.current) {
@@ -541,25 +630,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
         settings,
         {
           onMessage: (msg) => {
-            setMessages(prev => {
-              if (msg.isStreaming) {
-                const lastIndex = prev.length - 1;
-                if (lastIndex >= 0 && prev[lastIndex].type === msg.type && prev[lastIndex].isStreaming) {
-                  const newMessages = [...prev];
-                  newMessages[lastIndex] = msg;
-                  return newMessages;
-                }
-              }
-              if (!msg.isStreaming && prev.length > 0) {
-                const lastIndex = prev.length - 1;
-                if (prev[lastIndex].type === msg.type && prev[lastIndex].isStreaming) {
-                  const newMessages = [...prev];
-                  newMessages[lastIndex] = msg;
-                  return newMessages;
-                }
-              }
-              return [...prev, msg];
-            });
+            setMessages(prev => mergeInterviewMessage(prev, msg));
           },
           onComplete: () => {
             setStatus('completed');
@@ -671,25 +742,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
         settings,
         {
           onMessage: (msg) => {
-            setMessages(prev => {
-              if (msg.isStreaming) {
-                const lastIndex = prev.length - 1;
-                if (lastIndex >= 0 && prev[lastIndex].type === msg.type && prev[lastIndex].isStreaming) {
-                  const newMessages = [...prev];
-                  newMessages[lastIndex] = msg;
-                  return newMessages;
-                }
-              }
-              if (!msg.isStreaming && prev.length > 0) {
-                const lastIndex = prev.length - 1;
-                if (prev[lastIndex].type === msg.type && prev[lastIndex].isStreaming) {
-                  const newMessages = [...prev];
-                  newMessages[lastIndex] = msg;
-                  return newMessages;
-                }
-              }
-              return [...prev, msg];
-            });
+            setMessages(prev => mergeInterviewMessage(prev, msg));
           },
           onComplete: () => {
             setStatus('completed');
@@ -980,25 +1033,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
         answer,
         {
           onMessage: (msg) => {
-            setMessages(prev => {
-              if (msg.isStreaming) {
-                const lastIndex = prev.length - 1;
-                if (lastIndex >= 0 && prev[lastIndex].type === msg.type && prev[lastIndex].isStreaming) {
-                  const newMessages = [...prev];
-                  newMessages[lastIndex] = msg;
-                  return newMessages;
-                }
-              }
-              if (!msg.isStreaming && prev.length > 0) {
-                const lastIndex = prev.length - 1;
-                if (prev[lastIndex].type === msg.type && prev[lastIndex].isStreaming) {
-                  const newMessages = [...prev];
-                  newMessages[lastIndex] = msg;
-                  return newMessages;
-                }
-              }
-              return [...prev, msg];
-            });
+            setMessages(prev => mergeInterviewMessage(prev, msg));
           },
           onComplete: () => {
             setStatus('completed');
@@ -2020,7 +2055,7 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
               <div className="mt-2 flex items-center gap-3 text-[12px]">
                 <div className="flex items-center gap-2 text-red-500">
                   <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                  正在录音 {recordingTime}s
+                  正在录音 {recordingTime}s / {MAX_RECORDING_SECONDS}s
                 </div>
                 {/* 音量电平指示器 */}
                 <div className="flex items-center gap-1.5">
@@ -2035,7 +2070,9 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
                   </div>
                 </div>
                 <span className="text-zinc-400">
-                  点击停止按钮结束录音
+                  {recordingTime >= MAX_RECORDING_SECONDS - 10 
+                    ? `即将自动停止（剩余 ${MAX_RECORDING_SECONDS - recordingTime}s）` 
+                    : '点击停止按钮结束录音'}
                 </span>
               </div>
             )}
@@ -2043,6 +2080,21 @@ const InterviewChat: React.FC<InterviewChatProps> = ({
               <div className="mt-2 flex items-center gap-2 text-[12px] text-blue-500">
                 <Loader2 size={14} className="animate-spin" />
                 正在将语音转换为文字，请稍候...
+              </div>
+            )}
+            {/* 语音转文字错误提示 */}
+            {audioError && (
+              <div className="mt-2 flex items-start gap-2 p-2.5 bg-red-50 border border-red-100 rounded-md">
+                <AlertCircle size={14} className="text-red-500 mt-0.5 shrink-0" />
+                <div className="flex-1">
+                  <p className="text-[12px] text-red-600">{audioError}</p>
+                </div>
+                <button 
+                  onClick={() => setAudioError(null)} 
+                  className="text-red-400 hover:text-red-600 transition-colors shrink-0"
+                >
+                  <X size={14} />
+                </button>
               </div>
             )}
           </div>
